@@ -49,6 +49,38 @@ body {
     pointer-events: none;
 }
 
+.loading-toast {
+    position: fixed;
+    top: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--espresso-dark);
+    color: var(--cream-bg);
+    border: 1px solid #453d37;
+    padding: 10px 18px;
+    font-size: 0.74rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 999;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.loading-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(244, 241, 234, 0.25);
+    border-top-color: var(--terracotta);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 /* =========================================================
    SHELL 1: STUDIO SHELL (HOME / LIBRARY / LUTS)
    ========================================================= */
@@ -1027,6 +1059,36 @@ body {
     color: var(--dark-bg);
     border-color: var(--dark-text);
 }
+
+/* Tone Curve Editor */
+.curves-editor {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0 2px;
+}
+
+.curves-canvas {
+    width: min(100%, 240px);
+    aspect-ratio: 1 / 1;
+    background: var(--dark-surface);
+    border: 1px solid var(--dark-border);
+    touch-action: none;
+    cursor: crosshair;
+}
+
+.curves-hint {
+    font-size: 0.58rem;
+    letter-spacing: 0.14em;
+    color: var(--dark-muted);
+    text-align: center;
+    margin: 0;
+}
+
+.dark-chip.chip-r.active { background: #f87171; border-color: #f87171; color: #1c1917; }
+.dark-chip.chip-g.active { background: #4ade80; border-color: #4ade80; color: #1c1917; }
+.dark-chip.chip-b.active { background: #60a5fa; border-color: #60a5fa; color: #1c1917; }
 
 /* ==========================================
    PANEL 04: TEXT (Rearrange the light UI)

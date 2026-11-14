@@ -4,13 +4,15 @@
  * dan fallback ke Cache perangkat saat offline 100%.
  */
 
-const CACHE_NAME = 'svnlens-studio-offline-v2';
+const CACHE_NAME = 'svnlens-studio-offline-v5';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
     './manifest.json',
     './icon.svg',
     './css/style.css',
+    './js/heic2any.min.js',
+    './js/sample-photos.js',
     './js/lut-presets.js',
     './js/ai-tools.js',
     './js/app.js',

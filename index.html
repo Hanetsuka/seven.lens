@@ -18,9 +18,15 @@
 </head>
 <body>
     <!-- Hidden Global Inputs (visually hidden instead of display:none for full mobile/desktop compatibility) -->
-    <input type="file" id="photoFileInput" class="visually-hidden-input" accept="image/*" multiple>
+    <input type="file" id="photoFileInput" class="visually-hidden-input" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple>
     <input type="file" id="lutFileInput" class="visually-hidden-input" accept=".cube" multiple>
     <input type="file" id="customFontInput" class="visually-hidden-input" accept=".ttf,.otf,.woff,.woff2">
+
+    <!-- Loading Status Toast (e.g., for HEIC decoding) -->
+    <div id="loadingToast" class="loading-toast hidden">
+        <span class="loading-spinner"></span>
+        <span id="loadingToastText">Memuat foto...</span>
+    </div>
 
     <!-- =========================================================
          SHELL 1: STUDIO SHELL (HOME / LIBRARY / LUTS — WARM CREAM)
@@ -230,7 +236,11 @@
                 <div class="subcat-bar" id="presetCatBar">
                     <button class="subcat-btn" data-pcat="favorites">★ MY PRESETS</button>
                     <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
-                    <button class="subcat-btn active" data-pcat="negative">NEGATIVE</button>
+                    <button class="subcat-btn active" data-pcat="genz">GEN Z ✦</button>
+                    <button class="subcat-btn" data-pcat="digicam">Y2K DIGICAM</button>
+                    <button class="subcat-btn" data-pcat="korean">K-SOFT</button>
+                    <button class="subcat-btn" data-pcat="moody">MOODY</button>
+                    <button class="subcat-btn" data-pcat="negative">NEGATIVE</button>
                     <button class="subcat-btn" data-pcat="slide">SLIDE</button>
                     <button class="subcat-btn" data-pcat="cinema">CINEMA</button>
                     <button class="subcat-btn" data-pcat="instant">INSTANT</button>
@@ -259,6 +269,12 @@
                 <!-- Extra contextual sub-bar when Crop, BG Color, or Brush is selected -->
                 <div id="toolContextExtras" class="tool-context-extras hidden">
                     <!-- Populated dynamically for Crop Aspect Ratios, BG Swatches, or Brush controls -->
+                </div>
+
+                <!-- Tone Curve Editor (RGB / R / G / B) -->
+                <div id="curvesEditor" class="curves-editor hidden">
+                    <canvas id="curvesCanvas" class="curves-canvas" width="512" height="512"></canvas>
+                    <p class="curves-hint">TAP UNTUK TAMBAH TITIK · GESER UNTUK MENGATUR · DOUBLE-TAP UNTUK HAPUS</p>
                 </div>
 
                 <div id="toolsStrip" class="tools-icon-strip">
@@ -462,6 +478,8 @@
         </div>
     </div>
 
+    <script src="js/heic2any.min.js"></script>
+    <script src="js/sample-photos.js"></script>
     <script src="js/lut-presets.js"></script>
     <script src="js/ai-tools.js"></script>
     <script src="js/app.js"></script>

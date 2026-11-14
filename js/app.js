@@ -33,6 +33,15 @@
     const thumbGenCtx = thumbGenCanvas.getContext('2d');
 
     // Default Non-Destructive Edit State per Photo
+    function createIdentityCurves() {
+        return {
+            rgb: [[0, 0], [255, 255]],
+            r: [[0, 0], [255, 255]],
+            g: [[0, 0], [255, 255]],
+            b: [[0, 0], [255, 255]]
+        };
+    }
+
     function createDefaultEditState() {
         return {
             presetId: 'original',
@@ -43,7 +52,6 @@
                 contrast: 0,
                 highlights: 0,
                 shadows: 0,
-                curves: 0,
                 brightness: 0,
                 fade: 0,
                 temperature: 0,
@@ -58,6 +66,7 @@
                 vignette: 0,
                 straighten: 0
             },
+            curves: createIdentityCurves(),
             flipH: false,
             flipV: false,
             bgReplaceColor: 'transparent',
@@ -74,10 +83,11 @@
 
     // Active UI Context inside Editor
     let activeEditorMainTab = 'Presets'; // 'Presets' | 'Tools' | 'Effects' | 'Text'
-    let activePresetCat = 'negative';
+    let activePresetCat = 'genz';
     let activeToolCat = 'all';
     let activeToolKey = 'exposure';
     let activeEffectCat = 'leaks';
+    let activeCurveChannel = 'rgb'; // 'rgb' | 'r' | 'g' | 'b'
 
     // Slider binding mode: 'preset' | 'tool' | 'effect'
     let masterSliderMode = 'preset';
@@ -116,7 +126,7 @@
         { key: 'contrast', name: 'Contrast', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/>` },
         { key: 'highlights', name: 'Highlights', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M3 12a9 9 0 0 1 18 0Z" fill="currentColor"/>` },
         { key: 'shadows', name: 'Shadows', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M3 12a9 9 0 0 0 18 0Z" fill="currentColor"/>` },
-        { key: 'curves', name: 'Curves', cat: 'light', min: -100, max: 100, def: 0, icon: `<rect x="3" y="3" width="18" height="18"/><path d="M3 21C9 21 9 3 21 3"/>` },
+        { key: 'context_curves', name: 'Tone Curve', cat: 'light', isContext: 'curves', icon: `<rect x="3" y="3" width="18" height="18"/><path d="M3 21C9 21 9 3 21 3"/>` },
         { key: 'brightness', name: 'Brightness', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="6"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>` },
         { key: 'fade', name: 'Fade', cat: 'light', min: 0, max: 100, def: 0, icon: `<rect x="3" y="5" width="18" height="14"/><line x1="3" y1="14" x2="21" y2="14"/>` },
 
@@ -164,144 +174,70 @@
         renderMyLutsView();
         bindStudioNavigation();
         bindEditorEvents();
+        bindCurvesEditorEvents();
     }
 
     /**
-     * Membuat 3 Foto Awal di "Your library" yang menyerupai foto pada Screenshot 9:
-     * 01: Dreamy Cloud in Blue Sky (dengan teks contoh "Rearrange the light")
-     * 02: Overhead Matcha & Iced Coffee Table
-     * 03: Warm Living Room Interior
+     * Memuat 3 Foto Awal di "Your library" dari sample-photos.js (Image 2, 3, 4)
+     * menggunakan Data URI agar 100% bebas Canvas Taint di mode offline (file://).
      */
     function generateStarterLibraryPhotos() {
-        // Photo 01: Dreamy Cloud in Blue Sky (Matches screenshots 2, 3, 4, 5, 6, 7, 9, 10)
-        const c1 = document.createElement('canvas');
-        c1.width = 900;
-        c1.height = 1125; // 4:5 portrait
-        const ctx1 = c1.getContext('2d');
+        const samples = Array.isArray(window.STARTER_SAMPLE_PHOTOS) ? window.STARTER_SAMPLE_PHOTOS : [];
 
-        const skyGrad = ctx1.createLinearGradient(0, 0, 0, c1.height);
-        skyGrad.addColorStop(0, '#3e6294');
-        skyGrad.addColorStop(0.45, '#5c7ea8');
-        skyGrad.addColorStop(1, '#798da3');
-        ctx1.fillStyle = skyGrad;
-        ctx1.fillRect(0, 0, c1.width, c1.height);
+        if (!samples.length) {
+            const fallback = document.createElement('canvas');
+            fallback.width = 764;
+            fallback.height = 1024;
+            const ctx = fallback.getContext('2d');
+            ctx.fillStyle = '#e7e2d8';
+            ctx.fillRect(0, 0, fallback.width, fallback.height);
+            addPhotoToLibrary(fallback, 'Studio Canvas 01', false);
+            currentPhotoId = libraryPhotos[0].id;
+            return;
+        }
 
-        // Gambar awan kumulus lembut berlapis
-        const puffs = [
-            // Dasar awan abu-kebiruan
-            { x: 450, y: 820, r: 340, col: 'rgba(130, 146, 168, 0.85)' },
-            { x: 240, y: 760, r: 260, col: 'rgba(138, 154, 175, 0.85)' },
-            { x: 680, y: 780, r: 280, col: 'rgba(134, 150, 172, 0.85)' },
-            // Bagian tengah awan hangat
-            { x: 380, y: 520, r: 210, col: 'rgba(220, 224, 230, 0.92)' },
-            { x: 540, y: 580, r: 190, col: 'rgba(210, 216, 224, 0.9)' },
-            { x: 240, y: 590, r: 165, col: 'rgba(195, 204, 215, 0.88)' },
-            { x: 690, y: 600, r: 175, col: 'rgba(205, 212, 222, 0.88)' },
-            // Puncak awan terang terkena cahaya matahari
-            { x: 370, y: 390, r: 135, col: 'rgba(252, 250, 245, 0.96)' },
-            { x: 465, y: 440, r: 120, col: 'rgba(254, 252, 247, 0.96)' },
-            { x: 250, y: 420, r: 95, col: 'rgba(244, 244, 242, 0.92)' },
-            { x: 635, y: 490, r: 115, col: 'rgba(248, 247, 244, 0.94)' }
-        ];
+        // addPhotoToLibrary memakai unshift(), jadi kita iterasi terbalik agar urutannya 01, 02, 03
+        samples.slice().reverse().forEach((sample) => {
+            const w = sample.width || 764;
+            const h = sample.height || 1024;
 
-        puffs.forEach((p) => {
-            const g = ctx1.createRadialGradient(p.x - p.r * 0.15, p.y - p.r * 0.15, p.r * 0.1, p.x, p.y, p.r);
-            g.addColorStop(0, p.col);
-            g.addColorStop(0.65, p.col);
-            g.addColorStop(1, 'rgba(125, 145, 170, 0)');
-            ctx1.fillStyle = g;
-            ctx1.beginPath();
-            ctx1.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx1.fill();
+            const placeholder = document.createElement('canvas');
+            placeholder.width = w;
+            placeholder.height = h;
+            const pCtx = placeholder.getContext('2d');
+            pCtx.fillStyle = '#e7e2d8';
+            pCtx.fillRect(0, 0, w, h);
+
+            const item = addPhotoToLibrary(placeholder, sample.title || 'Sample Photo', !!sample.markEdited);
+            if (sample.dataUrl) {
+                item.thumbUrl = sample.dataUrl;
+                item.editedThumbUrl = sample.dataUrl;
+
+                const img = new Image();
+                img.onload = () => {
+                    const realCanvas = document.createElement('canvas');
+                    realCanvas.width = img.naturalWidth || w;
+                    realCanvas.height = img.naturalHeight || h;
+                    realCanvas.getContext('2d').drawImage(img, 0, 0, realCanvas.width, realCanvas.height);
+
+                    item.originalCanvas = realCanvas;
+                    item.workingBaseCanvas = cloneCanvas(realCanvas);
+                    item.workingBrushCanvas = createBlankCanvas(realCanvas.width, realCanvas.height);
+
+                    const thumb = generateThumbnailDataUrl(realCanvas, 480) || sample.dataUrl;
+                    item.thumbUrl = thumb;
+                    item.editedThumbUrl = thumb;
+
+                    if (editorShell && !editorShell.classList.contains('hidden') && currentPhotoId === item.id) {
+                        openPhotoInEditor(item.id);
+                    }
+                    renderLibraryGrid();
+                };
+                img.src = sample.dataUrl;
+            }
         });
 
-        addPhotoToLibrary(c1, 'Cloud Study 01', true);
-
-        // Photo 02: Overhead Matcha & Iced Latte Cafe Table
-        const c2 = document.createElement('canvas');
-        c2.width = 900;
-        c2.height = 1125;
-        const ctx2 = c2.getContext('2d');
-        ctx2.fillStyle = '#6c6f74';
-        ctx2.fillRect(0, 0, c2.width, c2.height);
-        // Tekstur kayu meja
-        for (let i = 0; i < 60; i++) {
-            ctx2.fillStyle = i % 2 === 0 ? 'rgba(40,42,46,0.18)' : 'rgba(210,210,210,0.08)';
-            ctx2.fillRect(0, i * 19, c2.width, 8);
-        }
-        // Majalah terbuka di kiri atas
-        ctx2.save();
-        ctx2.translate(220, 340);
-        ctx2.rotate(-0.42);
-        ctx2.fillStyle = '#e5e7eb';
-        ctx2.fillRect(-180, -220, 360, 440);
-        ctx2.fillStyle = '#9ca3af';
-        ctx2.fillRect(-150, -180, 130, 160);
-        ctx2.restore();
-        // Gelas Matcha Latte
-        drawCafeCup(ctx2, 510, 450, 92, '#84a98c');
-        // Gelas Iced Coffee Latte
-        drawCafeCup(ctx2, 430, 740, 96, '#b08968');
-
-        addPhotoToLibrary(c2, 'Matcha & Coffee 02', false);
-
-        // Photo 03: Warm Aesthetic Interior & Studio Subject (Bagus untuk tes Hapus BG & LUT)
-        const c3 = document.createElement('canvas');
-        c3.width = 900;
-        c3.height = 1125;
-        const ctx3 = c3.getContext('2d');
-        ctx3.fillStyle = '#e7e2d8';
-        ctx3.fillRect(0, 0, c3.width, c3.height);
-        // Lantai hangat
-        ctx3.fillStyle = '#9c826b';
-        ctx3.fillRect(0, 760, c3.width, 365);
-        // Dekorasi dinding & tanaman
-        ctx3.fillStyle = '#283618';
-        ctx3.fillRect(580, 260, 180, 500);
-        // Subjek utama kontras di tengah (mudah dihapus BG-nya dengan Magic Wand / Auto BG)
-        ctx3.fillStyle = '#bc6c25';
-        ctx3.beginPath();
-        ctx3.arc(450, 620, 190, 0, Math.PI * 2);
-        ctx3.fill();
-        ctx3.fillStyle = '#dda15e';
-        ctx3.beginPath();
-        ctx3.arc(450, 460, 110, 0, Math.PI * 2);
-        ctx3.fill();
-
-        addPhotoToLibrary(c3, 'Warm Interior 03', false);
-
         currentPhotoId = libraryPhotos[0].id;
-    }
-
-    function drawCafeCup(c, x, y, r, drinkColor) {
-        c.save();
-        c.fillStyle = 'rgba(0,0,0,0.28)';
-        c.beginPath();
-        c.arc(x + 12, y + 16, r, 0, Math.PI * 2);
-        c.fill();
-
-        c.fillStyle = '#f8fafc';
-        c.beginPath();
-        c.arc(x, y, r, 0, Math.PI * 2);
-        c.fill();
-
-        c.fillStyle = drinkColor;
-        c.beginPath();
-        c.arc(x, y, r * 0.84, 0, Math.PI * 2);
-        c.fill();
-
-        // Es batu & sedotan
-        c.fillStyle = 'rgba(255,255,255,0.45)';
-        c.fillRect(x - 25, y - 20, 26, 26);
-        c.fillRect(x + 6, y + 4, 24, 24);
-
-        c.strokeStyle = '#1e293b';
-        c.lineWidth = 8;
-        c.beginPath();
-        c.moveTo(x + 10, y + 10);
-        c.lineTo(x + 55, y + 60);
-        c.stroke();
-        c.restore();
     }
 
     function generateThumbnailDataUrl(canvasEl, maxSide = 480) {
@@ -441,7 +377,21 @@
             a.click();
         });
 
-        function loadImageFileToCanvas(file) {
+        function showLoadingToast(msg) {
+            const toast = document.getElementById('loadingToast');
+            const textEl = document.getElementById('loadingToastText');
+            if (toast && textEl) {
+                textEl.textContent = msg;
+                toast.classList.remove('hidden');
+            }
+        }
+
+        function hideLoadingToast() {
+            const toast = document.getElementById('loadingToast');
+            if (toast) toast.classList.add('hidden');
+        }
+
+        function decodeBlobToCanvas(blob, fileName) {
             return new Promise((resolve, reject) => {
                 const maxEditorDim = 2400;
 
@@ -464,20 +414,20 @@
                             const nw = img.naturalWidth || img.width;
                             const nh = img.naturalHeight || img.height;
                             if (!nw || !nh) {
-                                reject(new Error('Dimensi gambar tidak valid.'));
+                                reject(new Error(`Dimensi foto "${fileName}" tidak valid.`));
                                 return;
                             }
                             resolve(drawScaled(img, nw, nh));
                         };
-                        img.onerror = () => reject(new Error(`Format foto "${file.name}" tidak didukung browser.`));
+                        img.onerror = () => reject(new Error(`Format foto "${fileName}" tidak didukung browser.`));
                         img.src = ev.target.result;
                     };
-                    reader.onerror = () => reject(new Error(`Gagal membaca file "${file.name}".`));
-                    reader.readAsDataURL(file);
+                    reader.onerror = () => reject(new Error(`Gagal membaca file "${fileName}".`));
+                    reader.readAsDataURL(blob);
                 };
 
                 if (typeof URL !== 'undefined' && URL.createObjectURL) {
-                    const objectUrl = URL.createObjectURL(file);
+                    const objectUrl = URL.createObjectURL(blob);
                     const img = new Image();
                     img.onload = () => {
                         const nw = img.naturalWidth || img.width;
@@ -500,6 +450,54 @@
             });
         }
 
+        async function loadImageFileToCanvas(file) {
+            const isHeic =
+                /\.(heic|heif)$/i.test(file.name) ||
+                file.type === 'image/heic' ||
+                file.type === 'image/heif';
+
+            const convertWithHeic2Any = async () => {
+                if (typeof window.heic2any !== 'function') {
+                    throw new Error(`Decoder HEIC belum siap untuk "${file.name}".`);
+                }
+                showLoadingToast(`Mengonversi HEIC: ${file.name.slice(0, 22)}...`);
+                const converted = await window.heic2any({
+                    blob: file,
+                    toType: 'image/jpeg',
+                    quality: 0.94
+                });
+                const resultBlob = Array.isArray(converted) ? converted[0] : converted;
+                return decodeBlobToCanvas(resultBlob, file.name);
+            };
+
+            if (isHeic) {
+                try {
+                    return await convertWithHeic2Any();
+                } catch (heicErr) {
+                    // Jika file .heic ternyata sudah JPEG/browser-readable (code 1), coba decode langsung
+                    try {
+                        return await decodeBlobToCanvas(file, file.name);
+                    } catch (nativeErr) {
+                        throw new Error(`Gagal membuka file HEIC "${file.name}".`);
+                    }
+                }
+            }
+
+            try {
+                return await decodeBlobToCanvas(file, file.name);
+            } catch (nativeErr) {
+                // Fallback jika file tanpa ekstensi .heic ternyata berformat HEIC
+                if (typeof window.heic2any === 'function') {
+                    try {
+                        return await convertWithHeic2Any();
+                    } catch (_) {
+                        throw nativeErr;
+                    }
+                }
+                throw nativeErr;
+            }
+        }
+
         async function handleImportedPhotoFiles(fileList) {
             const files = Array.from(fileList || []);
             if (!files.length) return;
@@ -507,20 +505,25 @@
             let lastAdded = null;
             let errorMessages = [];
 
-            for (const file of files) {
-                try {
-                    const canvas = await loadImageFileToCanvas(file);
-                    lastAdded = addPhotoToLibrary(canvas, file.name);
-                } catch (err) {
-                    errorMessages.push(err.message);
+            showLoadingToast('Memuat foto...');
+            try {
+                for (const file of files) {
+                    try {
+                        const canvas = await loadImageFileToCanvas(file);
+                        lastAdded = addPhotoToLibrary(canvas, file.name);
+                    } catch (err) {
+                        errorMessages.push(err.message || `Gagal memuat ${file.name}`);
+                    }
                 }
+            } finally {
+                hideLoadingToast();
             }
 
             if (lastAdded) {
                 renderLibraryGrid();
                 openPhotoInEditor(lastAdded.id, 'Presets');
             } else if (errorMessages.length) {
-                alert('Tidak dapat memuat foto:\n' + errorMessages.join('\n') + '\n\nPastikan format foto adalah JPG, PNG, atau WebP.');
+                alert('Tidak dapat memuat foto:\n' + errorMessages.join('\n') + '\n\nPastikan format foto adalah JPG, PNG, WebP, atau HEIC.');
             }
         }
 
@@ -533,7 +536,7 @@
             photoInput.value = '';
         });
 
-        // Drag & Drop foto atau file .cube langsung ke jendela aplikasi
+        // Drag & Drop foto (termasuk HEIC) langsung ke jendela aplikasi
         window.addEventListener('dragover', (e) => {
             e.preventDefault();
         });
@@ -542,7 +545,7 @@
             const files = Array.from(e.dataTransfer?.files || []);
             if (!files.length) return;
 
-            const imageFiles = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/i.test(f.name));
+            const imageFiles = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name));
             if (imageFiles.length) {
                 await handleImportedPhotoFiles(imageFiles);
             }
@@ -668,6 +671,7 @@
 
         currentPhotoId = photo.id;
         state = JSON.parse(JSON.stringify(photo.editState));
+        if (!state.curves) state.curves = createIdentityCurves();
 
         const w = photo.workingBaseCanvas.width;
         const h = photo.workingBaseCanvas.height;
@@ -722,6 +726,7 @@
             !state.activeCubeLutId &&
             state.effectId === 'none_leak' &&
             state.texts.length === 0 &&
+            isCurvesIdentity(state.curves) &&
             Object.values(state.adjust).every((v) => v === 0);
         photo.isEdited = !isDefault;
     }
@@ -871,17 +876,18 @@
 
         const exposure = adj.exposure + (p.exposure || 0) * pStr;
         const brightness = adj.brightness + (p.brightness || 0) * pStr;
-        const contrast = adj.contrast + (p.contrast || 0) * pStr + adj.curves * 0.65;
-        const highlights = adj.highlights;
-        const shadows = adj.shadows;
+        const contrast = adj.contrast + (p.contrast || 0) * pStr;
+        const highlights = adj.highlights + (p.highlights || 0) * pStr;
+        const shadows = adj.shadows + (p.shadows || 0) * pStr;
         const fade = adj.fade + (p.fade || 0) * pStr;
         const warmth = adj.temperature + (p.warmth || 0) * pStr;
         const tint = adj.tint + (p.tint || 0) * pStr;
         const saturation = adj.saturation + (p.saturation || 0) * pStr;
-        const vibrance = adj.vibrance;
+        const vibrance = adj.vibrance + (p.vibrance || 0) * pStr;
         const hueDeg = adj.hue;
         const sepiaAmt = adj.sepia / 100;
-        const grainAmt = adj.grain;
+        const grainAmt = adj.grain + (p.grain || 0) * pStr;
+        const curveLuts = buildCombinedCurveLuts(p.curve, pStr, currentState.curves);
 
         const isNeutral =
             exposure === 0 && brightness === 0 && contrast === 0 &&
@@ -889,7 +895,7 @@
             warmth === 0 && tint === 0 && saturation === 0 &&
             vibrance === 0 && hueDeg === 0 && sepiaAmt === 0 &&
             grainAmt === 0 && adj.sharpness === 0 &&
-            !p.splitStrength && !currentState.activeCubeLutId;
+            !curveLuts && !p.splitStrength && !currentState.activeCubeLutId;
 
         if (isNeutral) return;
 
@@ -1019,6 +1025,13 @@
             d[i] = r < 0 ? 0 : r > 255 ? 255 : r;
             d[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
             d[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+
+            // Tone Curve (Preset curve + User curve, per channel)
+            if (curveLuts) {
+                d[i] = curveLuts.r[d[i]];
+                d[i + 1] = curveLuts.g[d[i + 1]];
+                d[i + 2] = curveLuts.b[d[i + 2]];
+            }
         }
 
         // Jika pengguna memilih 3D LUT dari My LUTs
@@ -1028,6 +1041,116 @@
                 window.applyCubeLUTToImageData(imgData, lutObj, pStr);
             }
         }
+    }
+
+    // ==========================================
+    // TONE CURVE ENGINE (Monotone Cubic / Fritsch–Carlson)
+    // ==========================================
+    function isIdentityCurve(points) {
+        return !points || (points.length === 2 &&
+            points[0][0] === 0 && points[0][1] === 0 &&
+            points[1][0] === 255 && points[1][1] === 255);
+    }
+
+    function isCurvesIdentity(curves) {
+        return !curves || ['rgb', 'r', 'g', 'b'].every((ch) => isIdentityCurve(curves[ch]));
+    }
+
+    /** Menghasilkan tabel 256 nilai dari titik-titik kurva (halus & tanpa overshoot). */
+    function buildCurveTable(points) {
+        const table = new Float32Array(256);
+        const pts = (points || [[0, 0], [255, 255]]).slice().sort((a, b) => a[0] - b[0]);
+        const n = pts.length;
+        if (n < 2) {
+            for (let x = 0; x < 256; x++) table[x] = x;
+            return table;
+        }
+
+        const xs = pts.map((pt) => pt[0]);
+        const ys = pts.map((pt) => pt[1]);
+        const dx = [], slope = [];
+        for (let i = 0; i < n - 1; i++) {
+            dx[i] = Math.max(1e-6, xs[i + 1] - xs[i]);
+            slope[i] = (ys[i + 1] - ys[i]) / dx[i];
+        }
+
+        const m = new Array(n);
+        m[0] = slope[0];
+        m[n - 1] = slope[n - 2];
+        for (let i = 1; i < n - 1; i++) {
+            m[i] = slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2;
+        }
+        for (let i = 0; i < n - 1; i++) {
+            if (slope[i] === 0) {
+                m[i] = 0; m[i + 1] = 0;
+                continue;
+            }
+            const a = m[i] / slope[i];
+            const b = m[i + 1] / slope[i];
+            const s = a * a + b * b;
+            if (s > 9) {
+                const t = 3 / Math.sqrt(s);
+                m[i] = t * a * slope[i];
+                m[i + 1] = t * b * slope[i];
+            }
+        }
+
+        let seg = 0;
+        for (let x = 0; x < 256; x++) {
+            if (x <= xs[0]) { table[x] = ys[0]; continue; }
+            if (x >= xs[n - 1]) { table[x] = ys[n - 1]; continue; }
+            while (seg < n - 2 && x > xs[seg + 1]) seg++;
+            const h = dx[seg];
+            const t = (x - xs[seg]) / h;
+            const t2 = t * t, t3 = t2 * t;
+            table[x] =
+                (2 * t3 - 3 * t2 + 1) * ys[seg] +
+                (t3 - 2 * t2 + t) * h * m[seg] +
+                (-2 * t3 + 3 * t2) * ys[seg + 1] +
+                (t3 - t2) * h * m[seg + 1];
+        }
+        for (let x = 0; x < 256; x++) table[x] = Math.min(255, Math.max(0, table[x]));
+        return table;
+    }
+
+    /**
+     * Menggabungkan kurva preset (dengan strength) + kurva pengguna menjadi 3 tabel per channel.
+     * Mengembalikan null jika keduanya identitas (tanpa biaya proses).
+     */
+    function buildCombinedCurveLuts(presetCurve, presetStrength, userCurves) {
+        const hasPreset = presetCurve && presetStrength > 0 && !isCurvesIdentity(presetCurve);
+        const hasUser = !isCurvesIdentity(userCurves);
+        if (!hasPreset && !hasUser) return null;
+
+        const stage = (curves, strength) => {
+            const rgb = buildCurveTable(curves.rgb);
+            const out = {};
+            ['r', 'g', 'b'].forEach((ch) => {
+                const chan = buildCurveTable(curves[ch]);
+                const t = new Float32Array(256);
+                for (let x = 0; x < 256; x++) {
+                    const v = chan[Math.round(rgb[x])];
+                    t[x] = x + (v - x) * strength;
+                }
+                out[ch] = t;
+            });
+            return out;
+        };
+
+        const pre = hasPreset ? stage(presetCurve, presetStrength) : null;
+        const usr = hasUser ? stage(userCurves, 1) : null;
+
+        const result = {};
+        ['r', 'g', 'b'].forEach((ch) => {
+            const lut = new Uint8ClampedArray(256);
+            for (let x = 0; x < 256; x++) {
+                let v = pre ? pre[ch][x] : x;
+                if (usr) v = usr[ch][Math.round(Math.min(255, Math.max(0, v)))];
+                lut[x] = v;
+            }
+            result[ch] = lut;
+        });
+        return result;
     }
 
     /**
@@ -1303,7 +1426,9 @@
 
         list.forEach((tool) => {
             const isSelected = activeToolKey === tool.key;
-            const isModified = !tool.isAction && !tool.isContext && state.adjust[tool.key] !== 0;
+            const isModified = tool.isContext === 'curves'
+                ? !isCurvesIdentity(state.curves)
+                : !tool.isAction && !tool.isContext && state.adjust[tool.key] !== 0;
 
             const btn = document.createElement('button');
             btn.className = `tool-icon-card ${isSelected ? 'active' : ''}`;
@@ -1327,6 +1452,7 @@
         if (tool.isContext !== 'crop') closeCropOverlay();
         if (tool.isContext !== 'wand') magicWandActive = false;
         if (tool.isContext !== 'brush') brushModeActive = false;
+        if (tool.isContext !== 'curves') document.getElementById('curvesEditor').classList.add('hidden');
         mainCanvas.style.cursor = 'default';
 
         // Jika tool merupakan aksi instan (Rotate, Flip, AI Enhance, Bokeh, Glitch, Halation, Auto Hapus BG)
@@ -1349,9 +1475,21 @@
     }
 
     function selectToolKey(key) {
-        const tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
+        let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
+
+        // Tone Curve tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
+        if (tool.isContext === 'curves') {
+            activeToolKey = tool.key;
+            renderToolsStrip();
+            openToolContextBar('curves', tool.name);
+            return;
+        }
+        // Tool non-slider lain tidak bisa diikat ke slider utama
+        if (tool.isContext || tool.isAction) tool = TOOLS_CONFIG[0];
+
         activeToolKey = tool.key;
         masterSliderMode = 'tool';
+        document.getElementById('curvesEditor').classList.add('hidden');
 
         const val = state.adjust[tool.key] ?? 0;
         const slider = document.getElementById('masterSlider');
@@ -1402,10 +1540,18 @@
         const bar = document.getElementById('toolContextExtras');
         bar.classList.remove('hidden');
         bar.innerHTML = '';
+        masterSliderMode = 'context'; // Slider utama tidak mengubah apapun saat tool kontekstual aktif
 
         document.getElementById('activeParamCategory').textContent = 'STUDIO TOOL';
         document.getElementById('activeParamTitle').textContent = title;
         document.getElementById('activeParamValue').textContent = '';
+
+        if (contextType === 'curves') {
+            renderCurvesContextBar(bar);
+            document.getElementById('curvesEditor').classList.remove('hidden');
+            drawCurvesEditor();
+            return;
+        }
 
         if (contextType === 'crop') {
             openCropOverlay();
@@ -1510,6 +1656,262 @@
             });
             bar.appendChild(clearBtn);
         }
+    }
+
+    // ==========================================
+    // TONE CURVE EDITOR UI (02 TOOLS → Tone Curve)
+    // ==========================================
+    const CURVE_PAD = 18;
+    const CURVE_MAX_POINTS = 14;
+    const CURVE_CHANNEL_COLORS = { rgb: '#f4f1ea', r: '#f87171', g: '#4ade80', b: '#60a5fa' };
+    const CURVE_QUICK_PRESETS = [
+        { label: 'LINEAR', curves: null },
+        { label: 'SOFT S', curves: { rgb: [[0, 0], [64, 54], [192, 202], [255, 255]] } },
+        { label: 'STRONG S', curves: { rgb: [[0, 0], [64, 40], [192, 218], [255, 255]] } },
+        { label: 'MATTE', curves: { rgb: [[0, 36], [64, 70], [192, 196], [255, 240]] } },
+        { label: 'FADED', curves: { rgb: [[0, 50], [128, 134], [255, 226]] } },
+        {
+            label: 'CROSS',
+            curves: {
+                r: [[0, 0], [64, 50], [192, 210], [255, 255]],
+                g: [[0, 0], [64, 58], [192, 204], [255, 255]],
+                b: [[0, 28], [255, 224]]
+            }
+        }
+    ];
+
+    let curveDragIdx = -1;
+    let curveDidChange = false;
+    let curveRenderQueued = false;
+    let curveLastTap = { time: 0, idx: -1 };
+
+    function renderCurvesContextBar(bar) {
+        [
+            { id: 'rgb', label: 'RGB' },
+            { id: 'r', label: 'R' },
+            { id: 'g', label: 'G' },
+            { id: 'b', label: 'B' }
+        ].forEach((ch) => {
+            const chip = document.createElement('button');
+            chip.className = `dark-chip chip-${ch.id} ${activeCurveChannel === ch.id ? 'active' : ''}`;
+            chip.textContent = ch.label;
+            chip.addEventListener('click', () => {
+                activeCurveChannel = ch.id;
+                openToolContextBar('curves', 'Tone Curve');
+            });
+            bar.appendChild(chip);
+        });
+
+        CURVE_QUICK_PRESETS.forEach((qp) => {
+            const chip = document.createElement('button');
+            chip.className = 'dark-chip';
+            chip.textContent = qp.label;
+            chip.addEventListener('click', () => {
+                const next = createIdentityCurves();
+                if (qp.curves) {
+                    Object.keys(qp.curves).forEach((ch) => {
+                        next[ch] = qp.curves[ch].map((pt) => pt.slice());
+                    });
+                }
+                state.curves = next;
+                commitCurveChange(`Curve ${qp.label}`);
+            });
+            bar.appendChild(chip);
+        });
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'dark-chip';
+        resetBtn.textContent = `RESET ${activeCurveChannel.toUpperCase()}`;
+        resetBtn.addEventListener('click', () => {
+            state.curves[activeCurveChannel] = [[0, 0], [255, 255]];
+            commitCurveChange('Reset Curve');
+        });
+        bar.appendChild(resetBtn);
+    }
+
+    function commitCurveChange(label) {
+        drawCurvesEditor();
+        renderEditorCanvas();
+        renderToolsStrip();
+        pushHistory(label);
+    }
+
+    function curveValueToCanvas(v, size) {
+        return CURVE_PAD + (v / 255) * (size - CURVE_PAD * 2);
+    }
+
+    function drawCurveLine(c, points, size, color, width) {
+        const table = buildCurveTable(points);
+        c.strokeStyle = color;
+        c.lineWidth = width;
+        c.beginPath();
+        for (let x = 0; x < 256; x++) {
+            const px = curveValueToCanvas(x, size);
+            const py = size - curveValueToCanvas(table[x], size);
+            if (x === 0) c.moveTo(px, py);
+            else c.lineTo(px, py);
+        }
+        c.stroke();
+    }
+
+    function drawCurvesEditor() {
+        const canvas = document.getElementById('curvesCanvas');
+        if (!canvas || !state.curves) return;
+        const c = canvas.getContext('2d');
+        const size = canvas.width;
+        const inner = size - CURVE_PAD * 2;
+        c.clearRect(0, 0, size, size);
+
+        // Histogram (dari thumbnail foto)
+        const hist = new Uint32Array(256);
+        const tData = thumbGenCtx.getImageData(0, 0, 96, 96).data;
+        const chIdx = { r: 0, g: 1, b: 2 }[activeCurveChannel];
+        for (let i = 0; i < tData.length; i += 4) {
+            const v = chIdx === undefined
+                ? Math.round(0.299 * tData[i] + 0.587 * tData[i + 1] + 0.114 * tData[i + 2])
+                : tData[i + chIdx];
+            hist[v]++;
+        }
+        let maxH = 1;
+        for (let i = 0; i < 256; i++) if (hist[i] > maxH) maxH = hist[i];
+        c.fillStyle = 'rgba(244, 241, 234, 0.10)';
+        for (let i = 0; i < 256; i++) {
+            const hh = Math.sqrt(hist[i] / maxH) * inner * 0.9;
+            c.fillRect(curveValueToCanvas(i, size), size - CURVE_PAD - hh, inner / 256 + 1, hh);
+        }
+
+        // Grid 4x4 + garis diagonal referensi
+        c.strokeStyle = 'rgba(244, 241, 234, 0.12)';
+        c.lineWidth = 1;
+        for (let i = 0; i <= 4; i++) {
+            const p = CURVE_PAD + (inner * i) / 4;
+            c.beginPath(); c.moveTo(p, CURVE_PAD); c.lineTo(p, size - CURVE_PAD); c.stroke();
+            c.beginPath(); c.moveTo(CURVE_PAD, p); c.lineTo(size - CURVE_PAD, p); c.stroke();
+        }
+        c.setLineDash([6, 6]);
+        c.beginPath(); c.moveTo(CURVE_PAD, size - CURVE_PAD); c.lineTo(size - CURVE_PAD, CURVE_PAD); c.stroke();
+        c.setLineDash([]);
+
+        // Kurva channel lain (samar) lalu channel aktif
+        ['rgb', 'r', 'g', 'b'].forEach((ch) => {
+            if (ch !== activeCurveChannel && !isIdentityCurve(state.curves[ch])) {
+                c.globalAlpha = 0.35;
+                drawCurveLine(c, state.curves[ch], size, CURVE_CHANNEL_COLORS[ch], 2);
+                c.globalAlpha = 1;
+            }
+        });
+        const activeColor = CURVE_CHANNEL_COLORS[activeCurveChannel];
+        drawCurveLine(c, state.curves[activeCurveChannel], size, activeColor, 3.5);
+
+        // Titik kontrol
+        state.curves[activeCurveChannel].forEach((pt, idx) => {
+            const px = curveValueToCanvas(pt[0], size);
+            const py = size - curveValueToCanvas(pt[1], size);
+            c.beginPath();
+            c.arc(px, py, idx === curveDragIdx ? 11 : 8, 0, Math.PI * 2);
+            c.fillStyle = idx === curveDragIdx ? activeColor : '#2a2420';
+            c.fill();
+            c.lineWidth = 3;
+            c.strokeStyle = activeColor;
+            c.stroke();
+        });
+    }
+
+    function curveEventToValue(e) {
+        const canvas = document.getElementById('curvesCanvas');
+        const rect = canvas.getBoundingClientRect();
+        const size = canvas.width;
+        const sx = ((e.clientX - rect.left) / rect.width) * size;
+        const sy = ((e.clientY - rect.top) / rect.height) * size;
+        const inner = size - CURVE_PAD * 2;
+        const clamp = (v) => Math.round(Math.min(255, Math.max(0, v)));
+        return {
+            x: clamp(((sx - CURVE_PAD) / inner) * 255),
+            y: clamp(((size - sy - CURVE_PAD) / inner) * 255)
+        };
+    }
+
+    function scheduleCurveRender() {
+        if (curveRenderQueued) return;
+        curveRenderQueued = true;
+        requestAnimationFrame(() => {
+            curveRenderQueued = false;
+            drawCurvesEditor();
+            renderEditorCanvas();
+        });
+    }
+
+    function bindCurvesEditorEvents() {
+        const canvas = document.getElementById('curvesCanvas');
+        if (!canvas) return;
+
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            const pts = state.curves[activeCurveChannel];
+            const v = curveEventToValue(e);
+
+            // Cari titik terdekat (radius ~14 dari 255)
+            let idx = -1;
+            let best = 14;
+            pts.forEach((pt, i) => {
+                const dist = Math.hypot(pt[0] - v.x, pt[1] - v.y);
+                if (dist < best) { best = dist; idx = i; }
+            });
+
+            // Double-tap pada titik tengah → hapus titik
+            const now = Date.now();
+            if (idx > 0 && idx < pts.length - 1 && curveLastTap.idx === idx && now - curveLastTap.time < 320) {
+                pts.splice(idx, 1);
+                curveLastTap = { time: 0, idx: -1 };
+                commitCurveChange('Remove Curve Point');
+                return;
+            }
+            curveLastTap = { time: now, idx };
+
+            // Tambah titik baru jika tidak menyentuh titik yang ada
+            if (idx === -1) {
+                if (pts.length >= CURVE_MAX_POINTS) return;
+                if (pts.some((pt) => Math.abs(pt[0] - v.x) < 4)) return;
+                pts.push([v.x, v.y]);
+                pts.sort((a, b) => a[0] - b[0]);
+                idx = pts.findIndex((pt) => pt[0] === v.x && pt[1] === v.y);
+                curveLastTap = { time: now, idx };
+                curveDidChange = true;
+            }
+
+            curveDragIdx = idx;
+            canvas.setPointerCapture(e.pointerId);
+            scheduleCurveRender();
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (curveDragIdx < 0) return;
+            const pts = state.curves[activeCurveChannel];
+            const pt = pts[curveDragIdx];
+            if (!pt) return;
+            const v = curveEventToValue(e);
+
+            // Titik ujung hanya bergerak vertikal; titik tengah dibatasi oleh tetangganya
+            if (curveDragIdx > 0 && curveDragIdx < pts.length - 1) {
+                pt[0] = Math.min(pts[curveDragIdx + 1][0] - 3, Math.max(pts[curveDragIdx - 1][0] + 3, v.x));
+            }
+            pt[1] = v.y;
+            curveDidChange = true;
+            scheduleCurveRender();
+        });
+
+        const endDrag = () => {
+            if (curveDragIdx < 0) return;
+            curveDragIdx = -1;
+            if (curveDidChange) {
+                curveDidChange = false;
+                commitCurveChange('Tone Curve');
+            } else {
+                drawCurvesEditor();
+            }
+        };
+        canvas.addEventListener('pointerup', endDrag);
+        canvas.addEventListener('pointercancel', endDrag);
     }
 
     /**
