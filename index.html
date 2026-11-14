@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#211d1a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="svn.lens">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <title>svn.lens — Craft the light.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Caveat:wght@500;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,400;1,600&family=DM+Serif+Display:ital@0;1&family=Dancing+Script:wght@500;700&family=Great+Vibes&family=Inter:wght@300;400;500;600&family=Oswald:wght@400;600&family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Hidden Global Inputs -->
+    <input type="file" id="photoFileInput" accept="image/*" multiple hidden>
+    <input type="file" id="lutFileInput" accept=".cube" multiple hidden>
+    <input type="file" id="customFontInput" accept=".ttf,.otf,.woff,.woff2" hidden>
+
+    <!-- =========================================================
+         SHELL 1: STUDIO SHELL (HOME / LIBRARY / LUTS — WARM CREAM)
+         ========================================================= -->
+    <div id="studioShell" class="studio-shell">
+        <div class="studio-container">
+            <!-- VIEW 01: HOME -->
+            <section id="viewHome" class="studio-view active">
+                <header class="studio-topbar">
+                    <button id="btnOpenSettings" class="link-underlined">SETTINGS</button>
+                    <span id="homePhotoCount" class="meta-label">03 PHOTOS</span>
+                </header>
+
+                <div class="hero-brand">
+                    <h1 class="brand-logo-text">svn<span class="brand-dot">.</span>lens</h1>
+                    <p class="brand-tagline">Craft the <em>light.</em></p>
+                </div>
+
+                <div class="promo-card">
+                    <h3>svn.lens Studio — 100% Offline Ready</h3>
+                    <p>Semua foto, preset film analog, efek Light Leak, dan 3D LUT (.cube) diproses langsung di perangkat Anda tanpa perlu koneksi internet.</p>
+                    <div class="promo-actions">
+                        <button id="btnInstallPwa" class="link-underlined-accent hidden">INSTALL OFFLINE APP →</button>
+                        <button id="btnBackupData" class="link-underlined-light">BACK UP →</button>
+                        <button id="btnShowGuideModal" class="link-underlined-accent">THREE GESTURES GUIDE →</button>
+                    </div>
+                </div>
+
+                <div class="tip-banner" id="tipBanner">
+                    <div class="tip-icon">s<span class="brand-dot">.</span></div>
+                    <div class="tip-text">
+                        <strong>Studio Siap Digunakan</strong>
+                        <p>Import foto Anda sendiri atau langsung coba koleksi foto contoh di Library.</p>
+                    </div>
+                    <button class="tip-close" id="btnCloseTip">×</button>
+                </div>
+
+                <nav class="home-menu-list">
+                    <button class="home-menu-row" id="btnContinueEditing">
+                        <span class="row-num">01</span>
+                        <span class="row-title">Continue editing</span>
+                        <span class="row-arrow">→</span>
+                    </button>
+                    <button class="home-menu-row" id="btnHomeImportPhoto">
+                        <span class="row-num">02</span>
+                        <span class="row-title">Import photos</span>
+                        <span class="row-arrow">→</span>
+                    </button>
+                    <button class="home-menu-row" id="btnHomeBrowsePresets">
+                        <span class="row-num">03</span>
+                        <span class="row-title">Browse film presets</span>
+                        <span class="row-arrow">→</span>
+                    </button>
+                </nav>
+            </section>
+
+            <!-- VIEW 02: YOUR LIBRARY -->
+            <section id="viewLibrary" class="studio-view">
+                <header class="studio-topbar">
+                    <span id="libTopMeta" class="meta-label">STUDIO / 03 PHOTOS</span>
+                    <button id="btnLibImport" class="link-underlined">IMPORT →</button>
+                </header>
+
+                <div class="editorial-header">
+                    <h1>Your <em>library</em></h1>
+                    <p>Imported photos and edits are kept on this device.</p>
+                </div>
+
+                <div class="library-toolbar">
+                    <div class="lib-filter-tabs">
+                        <button class="lib-filter-btn active" data-filter="all">ALL</button>
+                        <button class="lib-filter-btn" data-filter="edited">EDITED</button>
+                    </div>
+                    <div class="lib-grid-toggles">
+                        <button class="grid-mode-btn active" data-cols="3" title="3 Kolom">
+                            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="4" height="4"/><rect x="7" y="1" width="4" height="4"/><rect x="13" y="1" width="4" height="4"/><rect x="1" y="7" width="4" height="4"/><rect x="7" y="7" width="4" height="4"/><rect x="13" y="7" width="4" height="4"/><rect x="1" y="13" width="4" height="4"/><rect x="7" y="13" width="4" height="4"/><rect x="13" y="13" width="4" height="4"/></svg>
+                        </button>
+                        <button class="grid-mode-btn" data-cols="1" title="1 Kolom Besar">
+                            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="14" height="11"/><line x1="2" y1="16" x2="16" y2="16"/></svg>
+                        </button>
+                        <button class="grid-mode-btn" data-cols="2" title="2 Kolom">
+                            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="6.5" height="6.5"/><rect x="10" y="1.5" width="6.5" height="6.5"/><rect x="1.5" y="10" width="6.5" height="6.5"/><rect x="10" y="10" width="6.5" height="6.5"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="libraryGrid" class="library-grid cols-3">
+                    <!-- Rendered by JS -->
+                </div>
+            </section>
+
+            <!-- VIEW 03: MY LUTS -->
+            <section id="viewLuts" class="studio-view">
+                <header class="studio-topbar">
+                    <span class="meta-label">COLOR / 3D LUT</span>
+                    <span id="lutCountMeta" class="meta-label">/ 02</span>
+                </header>
+
+                <div class="editorial-header">
+                    <h1>My <em>LUTs</em></h1>
+                    <p>Import your own .cube files from Lightroom, Photoshop, DaVinci Resolve or any color tool. They appear in the editor under My LUTs.</p>
+                </div>
+
+                <div id="myLutsList" class="luts-list">
+                    <!-- Rendered by JS -->
+                </div>
+
+                <button id="btnImportCubeMain" class="btn-espresso-block">
+                    IMPORT .CUBE FILE →
+                </button>
+
+                <p class="luts-footnote">3D LUTs up to 65 points. 1D LUTs aren't supported yet.</p>
+            </section>
+        </div>
+
+        <!-- Bottom Navigation Bar (01 HOME | 02 LIBRARY | 03 LUTS) -->
+        <nav class="studio-bottom-nav">
+            <button class="studio-nav-item active" data-view="viewHome">
+                <span class="nav-num">01</span>
+                <span class="nav-label">HOME</span>
+                <span class="nav-dot"></span>
+            </button>
+            <button class="studio-nav-item" data-view="viewLibrary">
+                <span class="nav-num">02</span>
+                <span class="nav-label">LIBRARY</span>
+                <span class="nav-dot"></span>
+            </button>
+            <button class="studio-nav-item" data-view="viewLuts">
+                <span class="nav-num">03</span>
+                <span class="nav-label">LUTS</span>
+                <span class="nav-dot"></span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- =========================================================
+         SHELL 2: DARKROOM EDITOR SHELL (WARM ESPRESSO DARK THEME)
+         ========================================================= -->
+    <div id="editorShell" class="editor-shell hidden">
+        <!-- Editor Top Bar -->
+        <header class="editor-topbar">
+            <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
+
+            <div class="editor-history-btns">
+                <button id="btnUndo" class="hist-icon-btn" title="Undo (Ctrl+Z)" disabled>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+                </button>
+                <button id="btnRedo" class="hist-icon-btn" title="Redo (Ctrl+Y)" disabled>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
+                </button>
+                <button id="btnResetPhoto" class="hist-icon-btn" title="Reset Semua Editan">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                </button>
+            </div>
+
+            <button id="btnOpenExport" class="editor-export-link">EXPORT →</button>
+        </header>
+
+        <!-- Center Photo Viewport -->
+        <main class="editor-stage-area">
+            <div class="canvas-wrapper" id="canvasWrapper">
+                <canvas id="mainCanvas"></canvas>
+
+                <!-- Crop Interactive Box Overlay -->
+                <div id="cropOverlay" class="crop-overlay hidden">
+                    <div id="cropBox" class="crop-box">
+                        <div class="crop-grid-h1"></div>
+                        <div class="crop-grid-h2"></div>
+                        <div class="crop-grid-v1"></div>
+                        <div class="crop-grid-v2"></div>
+                        <div class="crop-handle nw" data-handle="nw"></div>
+                        <div class="crop-handle ne" data-handle="ne"></div>
+                        <div class="crop-handle sw" data-handle="sw"></div>
+                        <div class="crop-handle se" data-handle="se"></div>
+                    </div>
+                </div>
+            </div>
+
+            <p id="gestureHintText" class="gesture-hint">HOLD PHOTO TO COMPARE · HOLD A PRESET TO FAVORITE</p>
+        </main>
+
+        <!-- Editor Control Deck (Dynamic per Tab: 01 PRESETS, 02 TOOLS, 03 EFFECTS, 04 TEXT) -->
+        <section class="editor-deck">
+            <!-- Common Active Parameter Header + Slider (Used by Presets, Tools, Effects) -->
+            <div id="masterSliderBlock" class="master-slider-block">
+                <div class="param-header">
+                    <div class="param-titles">
+                        <span id="activeParamCategory" class="param-cat">NO PRESET</span>
+                        <h2 id="activeParamTitle" class="param-name">Original</h2>
+                    </div>
+                    <div class="param-right">
+                        <span id="activeParamValue" class="param-val">100</span>
+                    </div>
+                </div>
+                <div class="sleek-slider-wrap">
+                    <input type="range" id="masterSlider" class="sleek-slider" min="0" max="100" value="100">
+                </div>
+            </div>
+
+            <!-- ==========================================
+                 PANEL 01: PRESETS (Film, Slide, Cinema, LUTs)
+                 ========================================== -->
+            <div id="panelPresets" class="deck-panel active">
+                <div class="subcat-bar" id="presetCatBar">
+                    <button class="subcat-btn" data-pcat="favorites">★ MY PRESETS</button>
+                    <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
+                    <button class="subcat-btn active" data-pcat="negative">NEGATIVE</button>
+                    <button class="subcat-btn" data-pcat="slide">SLIDE</button>
+                    <button class="subcat-btn" data-pcat="cinema">CINEMA</button>
+                    <button class="subcat-btn" data-pcat="instant">INSTANT</button>
+                    <button class="subcat-btn" data-pcat="aesthetic">AESTHETIC</button>
+                </div>
+
+                <div id="presetStrip" class="thumb-strip">
+                    <!-- Rendered dynamically with live photo thumbnails -->
+                </div>
+            </div>
+
+            <!-- ==========================================
+                 PANEL 02: TOOLS (Light, Color, Detail, Optics, Geo, AI & BG)
+                 ========================================== -->
+            <div id="panelTools" class="deck-panel">
+                <div class="subcat-bar" id="toolCatBar">
+                    <button class="subcat-btn active" data-tcat="all">ALL TOOLS</button>
+                    <button class="subcat-btn" data-tcat="light">LIGHT</button>
+                    <button class="subcat-btn" data-tcat="color">COLOR</button>
+                    <button class="subcat-btn" data-tcat="detail">DETAIL</button>
+                    <button class="subcat-btn" data-tcat="optics">OPTICS</button>
+                    <button class="subcat-btn" data-tcat="geo">GEO & CROP</button>
+                    <button class="subcat-btn" data-tcat="ai">AI & BRUSH</button>
+                </div>
+
+                <!-- Extra contextual sub-bar when Crop, BG Color, or Brush is selected -->
+                <div id="toolContextExtras" class="tool-context-extras hidden">
+                    <!-- Populated dynamically for Crop Aspect Ratios, BG Swatches, or Brush controls -->
+                </div>
+
+                <div id="toolsStrip" class="tools-icon-strip">
+                    <!-- Rendered dynamically with geometric icons -->
+                </div>
+            </div>
+
+            <!-- ==========================================
+                 PANEL 03: EFFECTS (Light Leaks, Film Burns, Grain/Dust, Date Stamp)
+                 ========================================== -->
+            <div id="panelEffects" class="deck-panel">
+                <div class="subcat-bar" id="effectCatBar">
+                    <button class="subcat-btn active" data-ecat="leaks">LIGHT LEAKS</button>
+                    <button class="subcat-btn" data-ecat="burns">FILM BURNS</button>
+                    <button class="subcat-btn" data-ecat="dust">VINTAGE DUST</button>
+                    <button class="subcat-btn" data-ecat="stamps">STAMPS & STICKERS</button>
+                </div>
+
+                <div id="effectsStrip" class="thumb-strip">
+                    <!-- Rendered dynamically with Light Leak & Film Burn previews -->
+                </div>
+            </div>
+
+            <!-- ==========================================
+                 PANEL 04: TEXT (Rearrange the light style)
+                 ========================================== -->
+            <div id="panelText" class="deck-panel">
+                <div class="text-header-bar">
+                    <div>
+                        <span id="activeFontLabel" class="param-cat">ADD A LINE OF TEXT</span>
+                        <h2 id="activeTextHeading" class="param-name">Text</h2>
+                    </div>
+                    <button id="btnDeleteTextItem" class="link-underlined-light hidden">DELETE</button>
+                </div>
+
+                <!-- Text Layer Pills + Add Text Button -->
+                <div class="text-pills-row" id="textPillsRow">
+                    <button id="btnAddTextLayer" class="btn-dashed-add">+ Add text</button>
+                </div>
+
+                <!-- Text Editor Controls (Shown when a text layer is active) -->
+                <div id="textEditorControls" class="text-editor-controls hidden">
+                    <input type="text" id="textLiveInput" class="dark-text-input" placeholder="Ketik teks di sini...">
+
+                    <div class="subcat-bar" id="textSubTabBar">
+                        <button class="subcat-btn active" data-txttab="font">FONT</button>
+                        <button class="subcat-btn" data-txttab="style">SIZE & STYLE</button>
+                        <button class="subcat-btn" data-txttab="color">COLOR</button>
+                        <button class="subcat-btn" data-txttab="align">ALIGN & STAMP</button>
+                    </div>
+
+                    <!-- Sub-tab: FONT CARDS -->
+                    <div id="textSubFont" class="text-sub-panel active">
+                        <div id="fontCardsStrip" class="font-cards-strip">
+                            <!-- + ADD FONT + Curated Editorial & Script Fonts -->
+                        </div>
+                    </div>
+
+                    <!-- Sub-tab: SIZE & STYLE -->
+                    <div id="textSubStyle" class="text-sub-panel">
+                        <div class="style-sliders-row">
+                            <div class="mini-slider-col">
+                                <label>SIZE <span id="valTextSize">48</span></label>
+                                <input type="range" id="sliderTextSize" class="sleek-slider" min="14" max="180" value="48">
+                            </div>
+                            <div class="mini-slider-col">
+                                <label>OPACITY <span id="valTextOpacity">100%</span></label>
+                                <input type="range" id="sliderTextOpacity" class="sleek-slider" min="10" max="100" value="100">
+                            </div>
+                            <div class="mini-slider-col">
+                                <label>ROTATE <span id="valTextRotate">0°</span></label>
+                                <input type="range" id="sliderTextRotate" class="sleek-slider" min="-180" max="180" value="0">
+                            </div>
+                        </div>
+                        <div class="style-chip-row">
+                            <button id="btnToggleBold" class="dark-chip">BOLD</button>
+                            <button id="btnToggleItalic" class="dark-chip">ITALIC</button>
+                            <button id="btnToggleShadow" class="dark-chip active">SHADOW</button>
+                            <button id="btnToggleOutline" class="dark-chip">OUTLINE</button>
+                        </div>
+                    </div>
+
+                    <!-- Sub-tab: COLOR -->
+                    <div id="textSubColor" class="text-sub-panel">
+                        <div class="color-palette-strip" id="textColorStrip">
+                            <button class="color-dot active" data-color="#ffffff" style="background:#ffffff;"></button>
+                            <button class="color-dot" data-color="#f4f1ea" style="background:#f4f1ea;"></button>
+                            <button class="color-dot" data-color="#fde68a" style="background:#fde68a;"></button>
+                            <button class="color-dot" data-color="#fb923c" style="background:#fb923c;"></button>
+                            <button class="color-dot" data-color="#f43f5e" style="background:#f43f5e;"></button>
+                            <button class="color-dot" data-color="#a855f7" style="background:#a855f7;"></button>
+                            <button class="color-dot" data-color="#38bdf8" style="background:#38bdf8;"></button>
+                            <button class="color-dot" data-color="#4ade80" style="background:#4ade80;"></button>
+                            <button class="color-dot" data-color="#1c1917" style="background:#1c1917;"></button>
+                            <input type="color" id="customTextColorPicker" value="#ffffff" title="Pilih warna bebas">
+                        </div>
+                    </div>
+
+                    <!-- Sub-tab: ALIGN & STAMP -->
+                    <div id="textSubAlign" class="text-sub-panel">
+                        <div class="style-chip-row">
+                            <button class="dark-chip align-btn" data-align="left">ALIGN LEFT</button>
+                            <button class="dark-chip align-btn active" data-align="center">CENTER</button>
+                            <button class="dark-chip align-btn" data-align="right">ALIGN RIGHT</button>
+                            <button id="btnCenterOnCanvas" class="dark-chip">TENGAHKAN DI FOTO</button>
+                            <button id="btnAdd90sDate" class="dark-chip">'98 DATE STAMP</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Editor Bottom Primary Tabs (01 PRESETS | 02 TOOLS | 03 EFFECTS | 04 TEXT) -->
+            <nav class="editor-bottom-tabs">
+                <button class="ed-tab-btn active" data-edtab="Presets">
+                    <span class="ed-num">01</span>
+                    <span>PRESETS</span>
+                </button>
+                <button class="ed-tab-btn" data-edtab="Tools">
+                    <span class="ed-num">02</span>
+                    <span>TOOLS</span>
+                </button>
+                <button class="ed-tab-btn" data-edtab="Effects">
+                    <span class="ed-num">03</span>
+                    <span>EFFECTS</span>
+                </button>
+                <button class="ed-tab-btn" data-edtab="Text">
+                    <span class="ed-num">04</span>
+                    <span>TEXT</span>
+                </button>
+            </nav>
+        </section>
+    </div>
+
+    <!-- =========================================================
+         MODAL 1: "Good to know." (THREE GESTURES)
+         ========================================================= -->
+    <div id="gestureModal" class="cream-modal-backdrop hidden">
+        <div class="cream-modal-card">
+            <span class="meta-label">THREE GESTURES</span>
+            <h2 class="cream-modal-title">Good to <em>know.</em></h2>
+
+            <div class="gesture-list">
+                <div class="gesture-row">
+                    <span class="g-num">01</span>
+                    <div>
+                        <strong>Hold the photo</strong>
+                        <p>See the original before edits</p>
+                    </div>
+                </div>
+                <div class="gesture-row">
+                    <span class="g-num">02</span>
+                    <div>
+                        <strong>Double-click slider</strong>
+                        <p>Reset any adjustment or strength to default</p>
+                    </div>
+                </div>
+                <div class="gesture-row">
+                    <span class="g-num">03</span>
+                    <div>
+                        <strong>Hold or ★ a preset</strong>
+                        <p>Save it to ★ MY PRESETS favorites</p>
+                    </div>
+                </div>
+            </div>
+
+            <button id="btnGotItModal" class="btn-espresso-block">GOT IT</button>
+        </div>
+    </div>
+
+    <!-- =========================================================
+         MODAL 2: EXPORT PHOTO
+         ========================================================= -->
+    <div id="exportModal" class="cream-modal-backdrop hidden">
+        <div class="cream-modal-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="meta-label">SAVE TO DEVICE</span>
+                <button id="btnCloseExportModal" class="link-underlined">CLOSE</button>
+            </div>
+            <h2 class="cream-modal-title">Export <em>photo.</em></h2>
+
+            <div class="export-form">
+                <div class="form-row">
+                    <label>FILE NAME</label>
+                    <input type="text" id="exportFileName" class="cream-input" value="svnlens-edit">
+                </div>
+                <div class="form-row">
+                    <label>FORMAT</label>
+                    <select id="exportFormat" class="cream-input">
+                        <option value="image/jpeg">JPEG — Best for Instagram & Sharing</option>
+                        <option value="image/png">PNG — Lossless & Transparent BG</option>
+                        <option value="image/webp">WEBP — Modern High Efficiency</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>QUALITY (<span id="valExportQuality">95%</span>)</label>
+                    <input type="range" id="exportQuality" min="20" max="100" value="95" style="width:100%; accent-color:#26211e;">
+                </div>
+            </div>
+
+            <button id="btnDownloadNow" class="btn-espresso-block">DOWNLOAD PHOTO →</button>
+        </div>
+    </div>
+
+    <script src="js/lut-presets.js"></script>
+    <script src="js/ai-tools.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        // Register Service Worker untuk akses 100% Offline (PWA)
+        if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch(() => {});
+            });
+        }
+
+        // Handle tombol Install Offline App (PWA) di HP / Desktop
+        let deferredPwaPrompt = null;
+        const btnInstallPwa = document.getElementById('btnInstallPwa');
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPwaPrompt = e;
+            if (btnInstallPwa) btnInstallPwa.classList.remove('hidden');
+        });
+
+        if (btnInstallPwa) {
+            btnInstallPwa.addEventListener('click', async () => {
+                if (!deferredPwaPrompt) return;
+                deferredPwaPrompt.prompt();
+                await deferredPwaPrompt.userChoice;
+                deferredPwaPrompt = null;
+                btnInstallPwa.classList.add('hidden');
+            });
+        }
+    </script>
+</body>
+</html>

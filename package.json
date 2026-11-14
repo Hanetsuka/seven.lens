@@ -1,0 +1,19 @@
+{
+  "name": "svn-lens",
+  "version": "1.0.0",
+  "description": "svn.lens — Aplikasi Edit Foto Modern, Analog Film Presets, Light Leaks, & 3D LUT (.cube) berbasis Web.",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "photo-editor",
+    "3d-lut",
+    "cube-lut",
+    "analog-film",
+    "light-leaks",
+    "canvas-image-editor",
+    "svn-lens"
+  ],
+  "license": "MIT"
+}
