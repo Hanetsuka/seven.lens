@@ -304,8 +304,22 @@
         c.restore();
     }
 
+    function generateThumbnailDataUrl(canvasEl, maxSide = 480) {
+        const w = canvasEl.width;
+        const h = canvasEl.height;
+        if (!w || !h) return '';
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        const tw = Math.max(1, Math.round(w * scale));
+        const th = Math.max(1, Math.round(h * scale));
+        const tc = document.createElement('canvas');
+        tc.width = tw;
+        tc.height = th;
+        tc.getContext('2d').drawImage(canvasEl, 0, 0, tw, th);
+        return tc.toDataURL('image/jpeg', 0.82);
+    }
+
     function addPhotoToLibrary(canvasEl, title, markEdited = false) {
-        const thumbUrl = canvasEl.toDataURL('image/jpeg', 0.82);
+        const thumbUrl = generateThumbnailDataUrl(canvasEl, 480);
         const editState = createDefaultEditState();
 
         const item = {
@@ -379,13 +393,15 @@
             }
         });
 
-        document.getElementById('btnHomeImportPhoto').addEventListener('click', () => {
-            document.getElementById('photoFileInput').click();
-        });
+        const triggerPhotoPicker = () => {
+            const input = document.getElementById('photoFileInput');
+            input.value = '';
+            input.click();
+        };
 
-        document.getElementById('btnLibImport').addEventListener('click', () => {
-            document.getElementById('photoFileInput').click();
-        });
+        document.getElementById('btnHomeImportPhoto').addEventListener('click', triggerPhotoPicker);
+        document.getElementById('btnLibImport').addEventListener('click', triggerPhotoPicker);
+        document.getElementById('btnEditorImport').addEventListener('click', triggerPhotoPicker);
 
         document.getElementById('btnHomeBrowsePresets').addEventListener('click', () => {
             if (libraryPhotos.length > 0) {
@@ -425,34 +441,111 @@
             a.click();
         });
 
-        // Photo File Input
-        document.getElementById('photoFileInput').addEventListener('change', (e) => {
-            const files = Array.from(e.target.files || []);
-            if (!files.length) return;
+        function loadImageFileToCanvas(file) {
+            return new Promise((resolve, reject) => {
+                const maxEditorDim = 2400;
 
-            let loadedCount = 0;
-            let lastAdded = null;
-            files.forEach((file) => {
-                const reader = new FileReader();
-                reader.onload = (ev) => {
+                const drawScaled = (sourceEl, natW, natH) => {
+                    const scale = Math.min(1, maxEditorDim / Math.max(natW, natH));
+                    const w = Math.max(1, Math.round(natW * scale));
+                    const h = Math.max(1, Math.round(natH * scale));
+                    const c = document.createElement('canvas');
+                    c.width = w;
+                    c.height = h;
+                    c.getContext('2d').drawImage(sourceEl, 0, 0, w, h);
+                    return c;
+                };
+
+                const fallbackReader = () => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const nw = img.naturalWidth || img.width;
+                            const nh = img.naturalHeight || img.height;
+                            if (!nw || !nh) {
+                                reject(new Error('Dimensi gambar tidak valid.'));
+                                return;
+                            }
+                            resolve(drawScaled(img, nw, nh));
+                        };
+                        img.onerror = () => reject(new Error(`Format foto "${file.name}" tidak didukung browser.`));
+                        img.src = ev.target.result;
+                    };
+                    reader.onerror = () => reject(new Error(`Gagal membaca file "${file.name}".`));
+                    reader.readAsDataURL(file);
+                };
+
+                if (typeof URL !== 'undefined' && URL.createObjectURL) {
+                    const objectUrl = URL.createObjectURL(file);
                     const img = new Image();
                     img.onload = () => {
-                        const c = document.createElement('canvas');
-                        c.width = img.width;
-                        c.height = img.height;
-                        c.getContext('2d').drawImage(img, 0, 0);
-                        lastAdded = addPhotoToLibrary(c, file.name);
-                        loadedCount++;
-                        if (loadedCount === files.length && lastAdded) {
-                            renderLibraryGrid();
-                            openPhotoInEditor(lastAdded.id);
+                        const nw = img.naturalWidth || img.width;
+                        const nh = img.naturalHeight || img.height;
+                        URL.revokeObjectURL(objectUrl);
+                        if (!nw || !nh) {
+                            fallbackReader();
+                            return;
                         }
+                        resolve(drawScaled(img, nw, nh));
                     };
-                    img.src = ev.target.result;
-                };
-                reader.readAsDataURL(file);
+                    img.onerror = () => {
+                        URL.revokeObjectURL(objectUrl);
+                        fallbackReader();
+                    };
+                    img.src = objectUrl;
+                } else {
+                    fallbackReader();
+                }
             });
-            e.target.value = '';
+        }
+
+        async function handleImportedPhotoFiles(fileList) {
+            const files = Array.from(fileList || []);
+            if (!files.length) return;
+
+            let lastAdded = null;
+            let errorMessages = [];
+
+            for (const file of files) {
+                try {
+                    const canvas = await loadImageFileToCanvas(file);
+                    lastAdded = addPhotoToLibrary(canvas, file.name);
+                } catch (err) {
+                    errorMessages.push(err.message);
+                }
+            }
+
+            if (lastAdded) {
+                renderLibraryGrid();
+                openPhotoInEditor(lastAdded.id, 'Presets');
+            } else if (errorMessages.length) {
+                alert('Tidak dapat memuat foto:\n' + errorMessages.join('\n') + '\n\nPastikan format foto adalah JPG, PNG, atau WebP.');
+            }
+        }
+
+        // Photo File Input
+        const photoInput = document.getElementById('photoFileInput');
+        photoInput.addEventListener('change', async (e) => {
+            const files = e.target.files ? Array.from(e.target.files) : [];
+            if (!files.length) return;
+            await handleImportedPhotoFiles(files);
+            photoInput.value = '';
+        });
+
+        // Drag & Drop foto atau file .cube langsung ke jendela aplikasi
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            const files = Array.from(e.dataTransfer?.files || []);
+            if (!files.length) return;
+
+            const imageFiles = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/i.test(f.name));
+            if (imageFiles.length) {
+                await handleImportedPhotoFiles(imageFiles);
+            }
         });
 
         // Library Filter (ALL | EDITED) & Grid Columns (3 | 1 | 2)
@@ -591,6 +684,7 @@
 
         document.getElementById('studioShell').classList.add('hidden');
         document.getElementById('editorShell').classList.remove('hidden');
+        window.scrollTo(0, 0);
 
         // Generate thumbnail base (96x96) for live preset & effect strip previews
         thumbGenCtx.clearRect(0, 0, 96, 96);
@@ -619,7 +713,7 @@
         const prevSel = state.selectedTextId;
         state.selectedTextId = null;
         renderEditorCanvas();
-        photo.editedThumbUrl = mainCanvas.toDataURL('image/jpeg', 0.8);
+        photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
         state.selectedTextId = prevSel;
 
         // Tandai edited jika ada perubahan dari default
@@ -2170,12 +2264,12 @@
         historyStack.push({
             label,
             stateSnap: JSON.parse(JSON.stringify(state)),
-            baseUrl: basePhotoCanvas.toDataURL('image/png'),
-            brushUrl: brushCanvas.toDataURL('image/png'),
+            baseSnap: cloneCanvas(basePhotoCanvas),
+            brushSnap: cloneCanvas(brushCanvas),
             w: basePhotoCanvas.width,
             h: basePhotoCanvas.height
         });
-        if (historyStack.length > 18) historyStack.shift();
+        if (historyStack.length > 15) historyStack.shift();
         historyIndex = historyStack.length - 1;
         updateHistoryBtns();
     }
@@ -2186,28 +2280,19 @@
         const snap = historyStack[historyIndex];
         state = JSON.parse(JSON.stringify(snap.stateSnap));
 
-        const img1 = new Image();
-        const img2 = new Image();
-        let count = 0;
-        const done = () => {
-            count++;
-            if (count < 2) return;
-            basePhotoCanvas.width = snap.w;
-            basePhotoCanvas.height = snap.h;
-            basePhotoCtx.drawImage(img1, 0, 0);
+        basePhotoCanvas.width = snap.w;
+        basePhotoCanvas.height = snap.h;
+        basePhotoCtx.clearRect(0, 0, snap.w, snap.h);
+        basePhotoCtx.drawImage(snap.baseSnap, 0, 0);
 
-            brushCanvas.width = snap.w;
-            brushCanvas.height = snap.h;
-            brushCtx.drawImage(img2, 0, 0);
+        brushCanvas.width = snap.w;
+        brushCanvas.height = snap.h;
+        brushCtx.clearRect(0, 0, snap.w, snap.h);
+        brushCtx.drawImage(snap.brushSnap, 0, 0);
 
-            switchEditorMainTab(activeEditorMainTab);
-            renderEditorCanvas();
-            updateHistoryBtns();
-        };
-        img1.onload = done;
-        img2.onload = done;
-        img1.src = snap.baseUrl;
-        img2.src = snap.brushUrl;
+        switchEditorMainTab(activeEditorMainTab);
+        renderEditorCanvas();
+        updateHistoryBtns();
     }
 
     function undo() {

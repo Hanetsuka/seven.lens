@@ -38,6 +38,17 @@ body {
     display: none !important;
 }
 
+.visually-hidden-input {
+    position: fixed;
+    top: -9999px;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
 /* =========================================================
    SHELL 1: STUDIO SHELL (HOME / LIBRARY / LUTS)
    ========================================================= */

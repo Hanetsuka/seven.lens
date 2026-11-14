@@ -17,10 +17,10 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <!-- Hidden Global Inputs -->
-    <input type="file" id="photoFileInput" accept="image/*" multiple hidden>
-    <input type="file" id="lutFileInput" accept=".cube" multiple hidden>
-    <input type="file" id="customFontInput" accept=".ttf,.otf,.woff,.woff2" hidden>
+    <!-- Hidden Global Inputs (visually hidden instead of display:none for full mobile/desktop compatibility) -->
+    <input type="file" id="photoFileInput" class="visually-hidden-input" accept="image/*" multiple>
+    <input type="file" id="lutFileInput" class="visually-hidden-input" accept=".cube" multiple>
+    <input type="file" id="customFontInput" class="visually-hidden-input" accept=".ttf,.otf,.woff,.woff2">
 
     <!-- =========================================================
          SHELL 1: STUDIO SHELL (HOME / LIBRARY / LUTS — WARM CREAM)
@@ -162,7 +162,10 @@
     <div id="editorShell" class="editor-shell hidden">
         <!-- Editor Top Bar -->
         <header class="editor-topbar">
-            <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
+            <div style="display:flex; align-items:center; gap:14px;">
+                <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
+                <button id="btnEditorImport" class="editor-top-link">+ PHOTO</button>
+            </div>
 
             <div class="editor-history-btns">
                 <button id="btnUndo" class="hist-icon-btn" title="Undo (Ctrl+Z)" disabled>
