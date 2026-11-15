@@ -312,6 +312,7 @@
 
         if (viewId === 'viewLibrary') renderLibraryGrid();
         if (viewId === 'viewLuts') renderMyLutsView();
+        if (viewId === 'viewTemplates' && window.svnLensTemplates) window.svnLensTemplates.renderGallery();
     }
 
     function bindStudioNavigation() {
@@ -718,6 +719,11 @@
         state.selectedTextId = null;
         renderEditorCanvas();
         photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
+        // Salinan hasil edit (maks 2160px) agar bisa dipakai di Templates
+        const sc = Math.min(1, 2160 / Math.max(mainCanvas.width, mainCanvas.height));
+        const ec = createBlankCanvas(Math.round(mainCanvas.width * sc), Math.round(mainCanvas.height * sc));
+        ec.getContext('2d').drawImage(mainCanvas, 0, 0, ec.width, ec.height);
+        photo.editedCanvas = ec;
         state.selectedTextId = prevSel;
 
         // Tandai edited jika ada perubahan dari default
@@ -2752,5 +2758,309 @@
         });
     }
 
+    // Jembatan untuk fitur Templates
+    window.svnLens = { photos: () => libraryPhotos, showView: switchStudioView };
+
     window.addEventListener('DOMContentLoaded', init);
+})();
+
+
+/* ==========================================
+   TEMPLATES — Carousel & Collage Editor
+   ========================================== */
+/* svn.lens — Templates: carousel & collage editor. Self-contained; injects its own UI. */
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const W = 1080, RA = { '4:5': 1.25, '1:1': 1, '3:4': 4 / 3, '9:16': 16 / 9, '16:9': 9 / 16 };
+const FONTS = ['Playfair Display', 'Cormorant Garamond', 'DM Serif Display', 'Bebas Neue', 'Oswald', 'Inter', 'Space Mono', 'Caveat', 'Great Vibes', 'Dancing Script'];
+const SW = ['#ffffff', '#f4f1ea', '#eaeaea', '#cacaca', '#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#fb923c', '#f43f5e', '#26211e', '#000000'];
+const IMG = {};
+let uid = Date.now() % 1e6, st, hist = [], hi = -1, sel = null, mode = null, cur = 0, pv = false, S = 1, drag = null, pend = null, allSl = false;
+const H = (s = st) => Math.round(W * RA[s.ra]), id = () => 'l' + uid++, lay = i => st.L.find(l => l.id === i);
+const esc = s => String(s).replace(/[&<>"]/g, c => '&#' + c.charCodeAt(0) + ';');
+const bgOf = s => s.bg2 ? `linear-gradient(${s.bg} 50%,${s.bg2} 50%)` : s.bg;
+
+/* ---------- Template catalogue (x in slide-widths, y in slide-heights, w/h/fs in slide-widths) ---------- */
+const p = (x, y, w, h, o) => ({ t: 'p', x, y, w, h, ...o }), tx = (x, y, s, fs, o) => ({ t: 't', x, y, s, fs, ...o }), sq = (x, y, w, h, c, o) => ({ t: 's', x, y, w, h, c, ...o });
+const pol = (x, y, r) => { const a = r * Math.PI / 180; return [sq(x, y, .52, .62, '#ffffff', { r, sh: 1 }), p(x + .06 * Math.sin(a), (y * 1.25 - .06 * Math.cos(a)) / 1.25, .44, .44, { r })]; };
+const mono = c => ({ f: 'Space Mono', c });
+const T = [
+  { n: 'Split', sl: [['#eaeaea', '#dddddd'], ['#eaeaea', '#dddddd']], L: [0, 1].flatMap(i => [p(i + .5, .2275, .3, .3), p(i + .5, .7225, .3, .3), tx(i + .19, .5, i ? 'two' : 'one', .075, { c: '#6b6b6b', f: 'Inter' }), tx(i + .8, .5, i ? 'worlds' : 'world', .075, { c: '#6b6b6b', f: 'Inter' })]) },
+  { n: 'Panorama', sl: [['#f4f1ea'], ['#f4f1ea'], ['#f4f1ea']], L: [p(1.5, .46, 2.88, 1), tx(.5, .93, 'swipe', .032, mono('#78716c')), tx(2.5, .93, 'fin.', .032, mono('#78716c'))] },
+  { n: 'Triptych', sl: [['#1c1917'], ['#1c1917'], ['#1c1917']], L: [0, 1, 2].flatMap(i => [p(i + .5, .47, .84, 1.05), tx(i + .5, .93, '0' + (i + 1), .036, mono('#a8a29e'))]) },
+  { n: 'Polaroid', sl: [['#e7e0d3']], L: [...pol(.34, .28, -6), ...pol(.66, .66, 5), tx(.5, .955, 'moments', .07, { f: 'Caveat', c: '#57534e' })] },
+  { n: 'Photo dump', sl: [['#f4f1ea']], L: [[.27, .252], [.73, .252], [.27, .628], [.73, .628]].map(([x, y]) => p(x, y, .43, .43)).concat(tx(.5, .9, 'photo dump', .07, { f: 'Caveat', c: '#292524' })) },
+  { n: 'Quote', sl: [['#26211e'], ['#f4f1ea']], L: [p(.5, .5, 1, 1.25), tx(.5, .8, 'Craft the\nlight.', .13, { c: '#ffffff', sh: 1 }), tx(1.5, .45, 'Keep it\nsimple,\nkeep it you.', .1, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }), tx(1.5, .92, '@svn.lens', .035, mono('#78716c'))] },
+  { n: 'Blank', sl: [['#f4f1ea']], L: [] }
+];
+function fromT(t) {
+  const s = { ra: '4:5', sl: t.sl.map(([bg, bg2]) => ({ bg, bg2 })), L: [] }, h = H(s);
+  s.L = t.L.map(o => { const l = { id: id(), r: 0, rad: 0, zoom: 1, op: 1, k: 'r', c: '#ffffff', f: 'Playfair Display', ...o }; l.x *= W; l.y *= h; if (l.t === 't') l.fs *= W; else { l.w *= W; l.h *= W; } return l; });
+  return s;
+}
+
+/* ---------- Rendering (shared by gallery thumbnails and the editor) ---------- */
+function mk(l) {
+  const e = document.createElement('div'); e.className = 'tl tl-' + l.t; e.dataset.id = l.id;
+  e.innerHTML = l.t === 'p' ? '<div class="in"><img alt=""><i class="plus">+</i></div>' : '<div class="in"></div>'; return e;
+}
+function up(e, l) {
+  const s = e.style, n = e.firstChild, q = n.style;
+  s.left = l.x + 'px'; s.top = l.y + 'px'; s.opacity = l.op; s.transform = `translate(-50%,-50%) rotate(${l.r}deg)`;
+  if (l.t === 't') { n.textContent = l.s; q.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px/1.15 "${l.f}",serif`; q.color = l.c; q.textShadow = l.sh ? '0 4px 24px rgba(0,0,0,.35)' : 'none'; return; }
+  s.width = l.w + 'px'; s.height = l.h + 'px'; q.borderRadius = l.k === 'o' ? '50%' : l.rad + 'px'; q.boxShadow = l.sh ? '0 14px 44px rgba(0,0,0,.28)' : 'none';
+  if (l.t === 's') { q.background = l.c; return; }
+  const [im, pl] = n.children, ok = l.src && IMG[l.src]; q.background = ok ? 'none' : '#cacaca'; im.hidden = !ok; pl.hidden = !!ok;
+  if (ok) { if (im.dataset.k !== l.src) { im.src = IMG[l.src].url; im.dataset.k = l.src; } im.style.transform = `scale(${l.zoom})`; }
+  const z = Math.min(l.w, l.h) * .38; pl.style.cssText = `width:${z}px;height:${z}px;font-size:${z * .7}px`;
+}
+function build(root, s) {
+  const h = H(s); root.innerHTML = ''; root.style.width = s.sl.length * W + 'px'; root.style.height = h + 'px';
+  s.sl.forEach((v, i) => { const d = document.createElement('div'); d.className = 'tpl-slide'; d.style.cssText = `left:${i * W}px;width:${W}px;height:${h}px;background:${bgOf(v)}`; root.append(d); });
+  s.L.forEach(l => { const e = mk(l); up(e, l); root.append(e); });
+  for (let i = 1; i < s.sl.length; i++) { const d = document.createElement('i'); d.className = 'tpl-seam'; d.style.left = i * W + 'px'; root.append(d); }
+}
+
+/* ---------- Mount UI into the existing app ---------- */
+const I = d => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const shell = document.createElement('div'); shell.id = 'tplShell'; shell.className = 'tpl-shell hidden';
+shell.innerHTML = `<header class="tpl-top"><button class="tpl-ic" data-a="back" aria-label="Kembali">${I('<path d="M19 12H5m6-6-6 6 6 6"/>')}</button><span class="tpl-sp"></span>
+<button class="tpl-ic" id="tplUndo" data-a="undo" aria-label="Undo">${I('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>')}</button>
+<button class="tpl-ic" id="tplRedo" data-a="redo" aria-label="Redo">${I('<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>')}</button><span class="tpl-sp"></span>
+<button class="tpl-ic" data-a="prev" aria-label="Preview">${I('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>')}</button>
+<button class="tpl-ic" data-a="export" aria-label="Export">${I('<path d="M12 15V4m-4 4 4-4 4 4M5 13v6h14v-6"/>')}</button></header>
+<p class="tpl-hint" id="tplHint"></p>
+<main class="tpl-stage" id="tplStage"><div class="tpl-pan" id="tplPan"><div class="tpl-world" id="tplWorld"></div></div></main>
+<section class="tpl-sheet hidden" id="tplSheet"></section>
+<nav class="tpl-bar"><button data-m="color">${I('<path d="M12 3 6.5 10a7 7 0 1 0 11 0z"/>')}Color</button><button data-m="slides">${I('<rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M3.5 7v10M20.5 7v10"/>')}Slides</button>
+<button data-m="layers">${I('<path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/>')}Layers</button><button data-m="ratio"><i class="tpl-ratio" id="tplRatio">4:5</i>Ratio</button>
+<button class="tpl-fab" data-m="add" aria-label="Tambah layer">${I('<path d="M12 5v14M5 12h14"/>')}</button></nav>`;
+document.body.append(shell);
+const stage = $('#tplStage'), world = $('#tplWorld'), sheetEl = $('#tplSheet');
+const fi = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*,.heic,.heif', multiple: true, className: 'visually-hidden-input' }); document.body.append(fi);
+
+window.svnLensTemplates = { renderGallery: gallery };
+$('#btnHomeTemplates')?.addEventListener('click', () => window.svnLens.showView('viewTemplates'));
+
+function gallery() {
+  const g = $('#tplGrid'); g.innerHTML = '';
+  T.forEach(t => {
+    const s = fromT(t), b = document.createElement('button'); b.className = 'tpl-card'; if (s.sl.length > 2) b.style.gridColumn = '1/-1';
+    b.innerHTML = `<div class="tpl-thumb"><div class="tpl-world"></div></div><strong>${t.n}</strong><span>${s.sl.length} slide · 4:5</span>`; g.append(b);
+    const th = $('.tpl-thumb', b), w = $('.tpl-world', b); build(w, s);
+    w.style.setProperty('--s', Math.min((th.clientWidth - 24) / (s.sl.length * W), (th.clientHeight - 24) / H(s)));
+    b.onclick = () => openT(t);
+  });
+}
+function openT(t) {
+  st = fromT(t); sel = null; mode = null; cur = 0; pv = false; hist = []; hi = -1; commit();
+  $('#studioShell')?.classList.add('hidden'); shell.classList.remove('hidden', 'pv'); draw(); sheet(); stage.scrollLeft = 0;
+}
+
+/* ---------- Editor core ---------- */
+function fit() {
+  const sw = stage.clientWidth, sh = stage.clientHeight; if (!sw) return;
+  S = Math.min(sw * .86 / W, sh * .94 / H()); const pan = $('#tplPan');
+  pan.style.width = st.sl.length * W * S + 'px'; pan.style.height = H() * S + 'px';
+  stage.style.paddingInline = Math.max(12, (sw - W * S) / 2) + 'px'; world.style.setProperty('--s', S);
+}
+const el = i => world.querySelector(`.tl[data-id="${i}"]`);
+function markSel() {
+  $$('.tl', world).forEach(e => {
+    const on = e.dataset.id === sel, h = $('.tl-h', e); e.classList.toggle('sel', on);
+    if (on && !h) { const d = document.createElement('b'); d.className = 'tl-h'; e.append(d); } if (!on && h) h.remove();
+  });
+}
+function ind() { $('#tplHint').textContent = `Slide ${cur + 1} dari ${st.sl.length}. Ketuk + untuk isi foto, tarik titik kuning untuk ubah ukuran dan putar.`; }
+function draw() { build(world, st); fit(); markSel(); ind(); }
+function select(i) { if (sel === i) return; sel = i; markSel(); if (i) mode = 'edit'; else if (mode === 'edit') mode = null; sheet(); }
+function commit() {
+  const j = JSON.stringify(st); if (hist[hi] === j) return;
+  hist = hist.slice(Math.max(0, hi - 58), hi + 1); hist.push(j); hi = hist.length - 1; btns();
+}
+function btns() {
+  $('#tplUndo').disabled = hi < 1; $('#tplRedo').disabled = hi >= hist.length - 1; $('#tplRatio').textContent = st.ra;
+  $$('.tpl-bar [data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+}
+function toast(m) {
+  let d = $('.tpl-toast') || document.body.appendChild(Object.assign(document.createElement('div'), { className: 'tpl-toast' }));
+  d.textContent = m; d.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => d.hidden = true, 2200);
+}
+const goSlide = i => stage.scrollTo({ left: i * W * S, behavior: 'smooth' });
+stage.addEventListener('scroll', () => { const i = Math.max(0, Math.min(st.sl.length - 1, Math.round(stage.scrollLeft / (W * S)))); if (i !== cur) { cur = i; ind(); if (mode === 'color' || mode === 'slides') sheet(); } });
+addEventListener('resize', () => { if (!shell.classList.contains('hidden')) fit(); });
+
+/* ---------- Bottom sheet ---------- */
+const chip = (a, v, t, on) => `<button class="tpl-chip${on ? ' on' : ''}" data-a="${a}" data-v="${v}">${t}</button>`;
+const swb = (a, v, on) => `<button class="tpl-sw${on ? ' on' : ''}" data-a="${a}" data-v="${v}" style="background:${v}" aria-label="${v}"></button>`;
+const rg = (k, lab, min, max, val, step = 1) => `<div class="tpl-lab"><span>${lab}</span><b>${Math.round(val * 100) / 100}</b></div><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${val}">`;
+function sheet() {
+  btns(); const n = st.sl.length; let h = '';
+  if (mode === 'color') {
+    const v = st.sl[cur];
+    h = `<div class="tpl-lab"><span>${allSl ? 'Semua slide' : 'Slide ' + (cur + 1)} · warna utama</span></div><div class="tpl-row">${SW.map(c => swb('bg', c, v.bg === c)).join('')}<input type="color" data-k="bg" value="${v.bg}"></div>
+<div class="tpl-lab"><span>Setengah bawah (dua nada)</span></div><div class="tpl-row">${chip('bg2', '', 'Tidak ada', !v.bg2)}${SW.map(c => swb('bg2', c, v.bg2 === c)).join('')}</div>
+<div class="tpl-row">${chip('allsl', '', 'Terapkan ke semua slide', allSl)}</div>`;
+  } else if (mode === 'slides') {
+    h = `<div class="tpl-row">${st.sl.map((_, i) => chip('go', i, i + 1, i === cur)).join('')}</div><div class="tpl-row">${chip('sladd', '', '+ Tambah slide')}${chip('sldup', '', 'Duplikat')}${chip('sldel', '', 'Hapus slide')}</div>`;
+  } else if (mode === 'layers') {
+    const nm = { p: 'Foto', s: 'Bentuk' };
+    h = st.L.length ? [...st.L].reverse().map(l => `<div class="tpl-ly${l.id === sel ? ' on' : ''}" data-a="pick" data-v="${l.id}"><span>${l.t === 't' ? 'Teks · ' + esc(l.s.split('\n')[0].slice(0, 18)) : nm[l.t]}</span><span><button data-a="up" data-v="${l.id}" aria-label="Ke depan">▲</button><button data-a="dn" data-v="${l.id}" aria-label="Ke belakang">▼</button><button data-a="rm" data-v="${l.id}" aria-label="Hapus">✕</button></span></div>`).join('') : '<p class="tpl-note">Belum ada layer. Tekan + untuk menambah.</p>';
+  } else if (mode === 'ratio') {
+    h = `<div class="tpl-row">${Object.keys(RA).map(k => chip('ratio', k, k, k === st.ra)).join('')}</div>`;
+  } else if (mode === 'add') {
+    h = `<div class="tpl-row">${chip('add', 'p', 'Foto')}${chip('add', 't', 'Teks')}${chip('add', 'r', 'Kotak')}${chip('add', 'o', 'Lingkaran')}</div><div class="tpl-row">${chip('fill', '', 'Isi slot kosong dengan foto')}</div>`;
+  } else if (mode === 'export') {
+    h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
+  } else if (mode === 'src') {
+    const ps = window.svnLens.photos();
+    h = `<div class="tpl-lab"><span>Dari Library</span></div><div class="tpl-row">${ps.map(q => `<button class="tpl-lib" data-a="lib" data-v="${q.id}" aria-label="${esc(q.title || 'Foto')}"><img src="${q.editedThumbUrl || q.thumbUrl}" alt=""></button>`).join('') || '<span class="tpl-note">Library masih kosong.</span>'}</div><div class="tpl-row">${chip('dev', '', 'Dari galeri perangkat')}${chip('shut', '', 'Tutup')}</div>`;
+  } else if (mode === 'edit' && sel && lay(sel)) {
+    const l = lay(sel), cols = `<div class="tpl-row">${SW.map(c => swb('col', c, l.c === c)).join('')}<input type="color" data-k="c" value="${l.c}"></div>`;
+    if (l.t === 't') h = `<textarea class="tpl-in" data-k="s" rows="2">${esc(l.s)}</textarea><div class="tpl-row">${FONTS.map(f => `<button class="tpl-chip${l.f === f ? ' on' : ''}" data-a="font" data-v="${f}" style="font-family:'${f}'">${f}</button>`).join('')}</div>${rg('fs', 'Ukuran', 20, 400, Math.round(l.fs))}${cols}<div class="tpl-row">${chip('tg', 'b', 'Tebal', l.b)}${chip('tg', 'it', 'Miring', l.it)}${chip('tg', 'sh', 'Bayangan', l.sh)}</div>`;
+    else {
+      h = rg('w', 'Lebar', 60, 3300, Math.round(l.w)) + rg('h', 'Tinggi', 60, 2000, Math.round(l.h));
+      if (l.t === 'p') h += `<div class="tpl-row">${chip('replace', '', l.src ? 'Ganti foto' : 'Pilih foto')}</div>${rg('zoom', 'Zoom', 1, 3, l.zoom, .01)}`; else h += cols;
+      if (l.k !== 'o') h += rg('rad', 'Sudut', 0, 540, Math.round(l.rad)); h += `<div class="tpl-row">${chip('tg', 'sh', 'Bayangan', l.sh)}</div>`;
+    }
+    h += rg('op', 'Opasitas', .1, 1, l.op, .01) + `<div class="tpl-row">${chip('dup', '', 'Duplikat')}${chip('up', sel, 'Ke depan')}${chip('dn', sel, 'Ke belakang')}${chip('rm', sel, 'Hapus')}</div>`;
+  }
+  sheetEl.innerHTML = h; sheetEl.classList.toggle('hidden', !mode);
+}
+sheetEl.addEventListener('input', e => {
+  const k = e.target.dataset.k; if (!k) return;
+  if (k === 'bg') return setBg('bg', e.target.value);
+  const l = lay(sel); if (!l) return; l[k] = k === 's' || k === 'c' ? e.target.value : +e.target.value; up(el(l.id), l);
+  if (e.target.type === 'range') e.target.previousElementSibling.lastChild.textContent = Math.round(e.target.value * 100) / 100;
+});
+sheetEl.addEventListener('change', e => { if (e.target.dataset.k) commit(); });
+
+/* ---------- Actions ---------- */
+function setBg(k, v) {
+  (allSl ? st.sl : [st.sl[cur]]).forEach(s => { if (v) s[k] = v; else delete s[k]; });
+  $$('.tpl-slide', world).forEach((d, i) => d.style.background = bgOf(st.sl[i]));
+}
+function add(t) {
+  const x = cur * W + W / 2, y = H() / 2, b = { id: id(), x, y, r: 0, op: 1, rad: 0, zoom: 1, k: 'r' };
+  const l = t === 'p' ? { ...b, t: 'p', w: W * .5, h: W * .5 } : t === 't' ? { ...b, t: 't', s: 'Teks', fs: W * .1, f: 'Playfair Display', c: '#26211e' } : { ...b, t: 's', w: W * .3, h: W * .3, c: '#26211e', k: t === 'o' ? 'o' : 'r' };
+  st.L.push(l); draw(); sel = null; select(l.id); commit();
+}
+function mv(i, d) { const a = st.L.findIndex(l => l.id === i), b = a + d; if (b < 0 || b >= st.L.length) return; [st.L[a], st.L[b]] = [st.L[b], st.L[a]]; draw(); commit(); sheet(); }
+function rm(i) { st.L = st.L.filter(l => l.id !== i); if (sel === i) sel = null; if (mode === 'edit') mode = null; draw(); commit(); sheet(); }
+const sIdx = l => Math.floor(l.x / W);
+function act(a, v) {
+  const n = st.sl.length;
+  switch (a) {
+    case 'back': if (hist.length > 1 && !confirm('Keluar dari template? Perubahan belum disimpan.')) return; shell.classList.add('hidden'); window.svnLens.showView('viewTemplates'); return;
+    case 'undo': case 'redo': { const j = hi + (a === 'undo' ? -1 : 1); if (j < 0 || j >= hist.length) return; hi = j; st = JSON.parse(hist[hi]); sel = null; if (mode === 'edit') mode = null; cur = Math.min(cur, st.sl.length - 1); draw(); sheet(); return; }
+    case 'prev': pv = !pv; shell.classList.toggle('pv', pv); if (pv) { mode = null; sel = null; markSel(); sheet(); } fit(); return;
+    case 'export': mode = mode === 'export' ? null : 'export'; sel = null; markSel(); break;
+    case 'bg': case 'bg2': setBg(a, v); commit(); break;
+    case 'allsl': allSl = !allSl; break;
+    case 'go': cur = +v; goSlide(cur); ind(); break;
+    case 'sladd': if (n >= 10) return toast('Maksimal 10 slide'); st.sl.push({ ...st.sl[n - 1] }); cur = n; draw(); goSlide(cur); commit(); break;
+    case 'sldup': { if (n >= 10) return toast('Maksimal 10 slide'); const cp = st.L.filter(l => sIdx(l) === cur).map(l => ({ ...l, id: id(), x: l.x + W })); st.L.forEach(l => { if (sIdx(l) > cur) l.x += W; }); st.L.push(...cp); st.sl.splice(cur + 1, 0, { ...st.sl[cur] }); cur++; draw(); goSlide(cur); commit(); break; }
+    case 'sldel': if (n < 2) return toast('Minimal satu slide'); st.L = st.L.filter(l => sIdx(l) !== cur); st.L.forEach(l => { if (sIdx(l) > cur) l.x -= W; }); st.sl.splice(cur, 1); cur = Math.min(cur, n - 2); draw(); commit(); break;
+    case 'ratio': { const o = H(); st.ra = v; const f = H() / o; st.L.forEach(l => l.y *= f); draw(); commit(); break; }
+    case 'pick': sel = null; select(v); return;
+    case 'up': mv(v, 1); return; case 'dn': mv(v, -1); return; case 'rm': rm(v); return;
+    case 'dup': { const c = { ...lay(sel), id: id() }; c.x += 40; c.y += 40; st.L.push(c); sel = null; draw(); select(c.id); commit(); return; }
+    case 'add': add(v); return;
+    case 'fill': pick(null); return; case 'replace': pick(sel); return;
+    case 'font': case 'col': case 'tg': { const l = lay(sel); if (a === 'font') l.f = v; else if (a === 'col') l.c = v; else l[v] = !l[v]; up(el(l.id), l); commit(); break; }
+    case 'lib': useLib(v); return; case 'dev': devPick(); return; case 'shut': mode = null; break;
+    case 'x1': exportAll(false); return; case 'x2': exportAll(true); return;
+  }
+  sheet();
+}
+shell.addEventListener('click', e => {
+  const b = e.target.closest('[data-a],[data-m]'); if (!b || !shell.contains(b)) return;
+  if (b.dataset.m) { const m = b.dataset.m; mode = mode === m ? null : m; if (mode) { sel = null; markSel(); } sheet(); } else act(b.dataset.a, b.dataset.v);
+});
+
+/* ---------- Dragging, resizing & rotating layers ---------- */
+const snap = (v, t) => { for (const c of t) if (Math.abs(v - c) < 8 / S) return c; return v; };
+world.addEventListener('pointerdown', e => {
+  if (pv) return; const le = e.target.closest('.tl'); if (!le) { select(null); return; }
+  const l = lay(le.dataset.id), hd = !!e.target.closest('.tl-h'); if (sel !== l.id) select(l.id);
+  const r = le.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  drag = { l, hd, px: e.clientX, py: e.clientY, x: l.x, y: l.y, cx, cy, d0: Math.hypot(e.clientX - cx, e.clientY - cy) || 1, a0: Math.atan2(e.clientY - cy, e.clientX - cx), w: l.w, h: l.h, fs: l.fs, r: l.r, moved: false };
+  if (hd) e.preventDefault();
+});
+addEventListener('pointermove', e => {
+  if (!drag) return; const d = drag, l = d.l, dx = e.clientX - d.px, dy = e.clientY - d.py;
+  if (!d.moved && Math.hypot(dx, dy) < 5) return; d.moved = true;
+  if (d.hd) {
+    const k = Math.hypot(e.clientX - d.cx, e.clientY - d.cy) / d.d0;
+    if (l.t === 't') l.fs = Math.max(16, d.fs * k); else { l.w = Math.max(40, d.w * k); l.h = Math.max(40, d.h * k); }
+    let r = d.r + (Math.atan2(e.clientY - d.cy, e.clientX - d.cx) - d.a0) * 180 / Math.PI; r = ((r + 180) % 360 + 360) % 360 - 180;
+    l.r = Math.abs(r % 90) < 4 || Math.abs(r % 90) > 86 ? Math.round(r / 90) * 90 : Math.round(r * 10) / 10;
+  } else {
+    l.x = snap(d.x + dx / S, st.sl.flatMap((_, i) => [i * W + W / 2, i * W, (i + 1) * W])); l.y = snap(d.y + dy / S, [H() / 2]);
+  }
+  up(el(l.id), l);
+});
+addEventListener('pointerup', () => {
+  if (!drag) return; const d = drag; drag = null;
+  if (d.moved) { commit(); if (mode === 'edit') sheet(); } else if (d.l.t === 'p' && !d.l.src && !d.hd) pick(d.l.id);
+});
+addEventListener('pointercancel', () => { drag = null; });
+
+/* ---------- Photos ---------- */
+function pick(i) { pend = i; sel = null; markSel(); mode = 'src'; sheet(); }
+function devPick() { fi.value = ''; fi.click(); }
+const KEYS = new WeakMap();
+async function libKey(q) {
+  const c = q.editedCanvas || q.workingBaseCanvas; if (KEYS.has(c)) return KEYS.get(c);
+  const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .92)), url = URL.createObjectURL(b), img = new Image(); img.src = url; await img.decode();
+  const k = 'i' + uid++; IMG[k] = { img, url }; KEYS.set(c, k); return k;
+}
+async function useLib(pid) {
+  const slots = st.L.filter(l => l.t === 'p' && (!l.src || l.id === pend)).sort((a, b) => (b.id === pend) - (a.id === pend));
+  if (!slots.length) return toast('Tidak ada slot kosong. Tambah foto lewat tombol +');
+  const q = window.svnLens.photos().find(x => x.id === pid); if (!q) return;
+  try { slots[0].src = await libKey(q); pend = null; if (!st.L.some(l => l.t === 'p' && !l.src)) mode = null; draw(); commit(); sheet(); }
+  catch (e) { toast('Foto gagal dimuat'); }
+}
+async function load(f) {
+  let b = f; if (/hei[cf]/i.test(f.type + f.name) && window.heic2any) { b = await window.heic2any({ blob: f, toType: 'image/jpeg', quality: .92 }); b = Array.isArray(b) ? b[0] : b; }
+  const url = URL.createObjectURL(b), img = new Image(); img.src = url; await img.decode(); const k = 'i' + uid++; IMG[k] = { img, url }; return k;
+}
+fi.onchange = async () => {
+  const fs = [...fi.files]; if (!fs.length) return;
+  const slots = st.L.filter(l => l.t === 'p' && (!l.src || l.id === pend)).sort((a, b) => (b.id === pend) - (a.id === pend));
+  if (!slots.length) return toast('Tidak ada slot kosong. Tambah foto lewat tombol +');
+  toast('Memuat foto…');
+  try { for (let i = 0; i < Math.min(fs.length, slots.length); i++) slots[i].src = await load(fs[i]); mode = null; draw(); commit(); sheet(); toast('Foto ditambahkan'); }
+  catch (e) { toast('Foto gagal dimuat'); }
+};
+
+/* ---------- Export ---------- */
+async function paint() {
+  const n = st.sl.length, h = H(), c = document.createElement('canvas'); c.width = n * W; c.height = h; const x = c.getContext('2d');
+  await Promise.all(FONTS.map(f => document.fonts.load(`40px "${f}"`).catch(() => 0)));
+  st.sl.forEach((v, i) => { x.fillStyle = v.bg; x.fillRect(i * W, 0, W, h); if (v.bg2) { x.fillStyle = v.bg2; x.fillRect(i * W, h / 2, W, h / 2); } });
+  const shd = (b, o, a) => { x.shadowColor = `rgba(0,0,0,${a})`; x.shadowBlur = b; x.shadowOffsetY = o; };
+  for (const l of st.L) {
+    x.save(); x.translate(l.x, l.y); x.rotate(l.r * Math.PI / 180); x.globalAlpha = l.op;
+    if (l.t === 't') {
+      x.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px "${l.f}",serif`; x.fillStyle = l.c; x.textAlign = 'center'; x.textBaseline = 'middle'; if (l.sh) shd(24, 4, .35);
+      const ls = l.s.split('\n'); ls.forEach((t, i) => x.fillText(t, 0, (i - (ls.length - 1) / 2) * l.fs * 1.15));
+    } else {
+      x.beginPath(); if (l.k === 'o') x.ellipse(0, 0, l.w / 2, l.h / 2, 0, 0, 7); else x.roundRect(-l.w / 2, -l.h / 2, l.w, l.h, l.rad);
+      if (l.t === 's') { if (l.sh) shd(44, 14, .28); x.fillStyle = l.c; x.fill(); }
+      else if (IMG[l.src]) { if (l.sh) { shd(44, 14, .28); x.fillStyle = '#000'; x.fill(); x.shadowColor = 'transparent'; } x.clip(); const im = IMG[l.src].img, k = Math.max(l.w / im.width, l.h / im.height) * l.zoom; x.drawImage(im, -im.width * k / 2, -im.height * k / 2, im.width * k, im.height * k); }
+    }
+    x.restore();
+  }
+  return c;
+}
+async function exportAll(pano) {
+  toast('Menyiapkan gambar…'); const c = await paint(), n = st.sl.length, h = H(), blob = cv => new Promise(r => cv.toBlob(r, 'image/jpeg', .95)), out = [];
+  if (pano || n === 1) out.push(await blob(c)); else for (let i = 0; i < n; i++) { const d = document.createElement('canvas'); d.width = W; d.height = h; d.getContext('2d').drawImage(c, i * W, 0, W, h, 0, 0, W, h); out.push(await blob(d)); }
+  const files = out.map((b, i) => new File([b], `svnlens-tpl-${pano ? 'pano' : i + 1}.jpg`, { type: 'image/jpeg' }));
+  if (navigator.canShare?.({ files })) { try { await navigator.share({ files }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  files.forEach((f, i) => setTimeout(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click(); }, i * 350)); toast('Gambar diunduh');
+}
 })();

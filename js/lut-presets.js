@@ -405,11 +405,11 @@ const FILM_PRESETS = [
     },
 
     // ==========================================
-    // GEN Z FAVORITES (VSCO-style, Clean Girl, Latte, Dreamy)
+    // VSCO SOFT (VSCO-style, Clean Girl, Latte, Dreamy)
     // Mendukung params tambahan: highlights, shadows, vibrance, grain & curve (tone curve per channel)
     // ==========================================
     {
-        id: 'gz_a6', code: 'A6', name: 'A6 Analog Soft', category: 'genz', subLabel: 'GEN Z · VSCO STYLE',
+        id: 'gz_a6', code: 'A6', name: 'A6 Analog Soft', category: 'genz', subLabel: 'VSCO PRESET',
         params: {
             brightness: 6, contrast: -6, saturation: -14, warmth: 12, highlights: -10, shadows: 10, grain: 10,
             shadowsTint: [40, 34, 30], highlightsTint: [255, 238, 214], splitStrength: 0.14,
@@ -417,21 +417,21 @@ const FILM_PRESETS = [
         }
     },
     {
-        id: 'gz_c1', code: 'C1', name: 'C1 Chromatic Pop', category: 'genz', subLabel: 'GEN Z · VSCO STYLE',
+        id: 'gz_c1', code: 'C1', name: 'C1 Chromatic Pop', category: 'genz', subLabel: 'VSCO PRESET',
         params: {
             brightness: 8, contrast: 14, vibrance: 34, saturation: 6, warmth: -4, highlights: -8,
             curve: { rgb: [[0, 6], [64, 56], [192, 206], [255, 255]], b: [[0, 18], [255, 245]] }
         }
     },
     {
-        id: 'gz_hb2', code: 'HB2', name: 'HB2 Cool Matte', category: 'genz', subLabel: 'GEN Z · VSCO STYLE',
+        id: 'gz_hb2', code: 'HB2', name: 'HB2 Cool Matte', category: 'genz', subLabel: 'VSCO PRESET',
         params: {
             brightness: 4, contrast: -4, saturation: -18, warmth: -14, tint: -4, grain: 8,
             curve: { rgb: [[0, 34], [128, 128], [255, 236]], b: [[0, 30], [255, 250]] }
         }
     },
     {
-        id: 'gz_m5', code: 'M5', name: 'M5 Faded Moody', category: 'genz', subLabel: 'GEN Z · VSCO STYLE',
+        id: 'gz_m5', code: 'M5', name: 'M5 Faded Moody', category: 'genz', subLabel: 'VSCO PRESET',
         params: {
             brightness: -4, contrast: 6, saturation: -24, warmth: 8, highlights: -16, grain: 12,
             shadowsTint: [30, 32, 36], highlightsTint: [240, 226, 206], splitStrength: 0.18,
@@ -439,14 +439,14 @@ const FILM_PRESETS = [
         }
     },
     {
-        id: 'gz_f2', code: 'F2', name: 'F2 Clean Film', category: 'genz', subLabel: 'GEN Z · VSCO STYLE',
+        id: 'gz_f2', code: 'F2', name: 'F2 Clean Film', category: 'genz', subLabel: 'VSCO PRESET',
         params: {
             brightness: 6, contrast: 4, saturation: -8, warmth: -6, vibrance: 10,
             curve: { rgb: [[0, 14], [64, 66], [192, 198], [255, 250]], g: [[0, 6], [255, 252]] }
         }
     },
     {
-        id: 'gz_clean_girl', code: 'CLEAN', name: 'Clean Girl Glow', category: 'genz', subLabel: 'GEN Z · SOFT GLOW',
+        id: 'gz_clean_girl', code: 'CLEAN', name: 'Clean Girl Glow', category: 'genz', subLabel: 'SOFT GLOW',
         params: {
             exposure: 8, brightness: 10, contrast: -8, warmth: 10, tint: 4, saturation: -6, highlights: -18, shadows: 14,
             shadowsTint: [60, 44, 40], highlightsTint: [255, 236, 226], splitStrength: 0.12,
@@ -454,7 +454,7 @@ const FILM_PRESETS = [
         }
     },
     {
-        id: 'gz_latte', code: 'LATTE', name: 'Latte Brown', category: 'genz', subLabel: 'GEN Z · CAFE AESTHETIC',
+        id: 'gz_latte', code: 'LATTE', name: 'Latte Brown', category: 'genz', subLabel: 'CAFE AESTHETIC',
         params: {
             brightness: 2, contrast: 8, saturation: -30, warmth: 26, highlights: -12, grain: 8,
             shadowsTint: [54, 36, 24], highlightsTint: [246, 224, 196], splitStrength: 0.26,
@@ -462,7 +462,7 @@ const FILM_PRESETS = [
         }
     },
     {
-        id: 'gz_peach', code: 'PEACH', name: 'Peachy Keen', category: 'genz', subLabel: 'GEN Z · SOFT GLOW',
+        id: 'gz_peach', code: 'PEACH', name: 'Peachy Keen', category: 'genz', subLabel: 'SOFT GLOW',
         params: {
             brightness: 8, contrast: -2, warmth: 16, tint: 10, vibrance: 12, highlights: -8,
             shadowsTint: [70, 40, 44], highlightsTint: [255, 222, 204], splitStrength: 0.16,
@@ -470,7 +470,7 @@ const FILM_PRESETS = [
         }
     },
     {
-        id: 'gz_dreamy', code: 'DREAMY', name: 'Dreamy Sky Pastel', category: 'genz', subLabel: 'GEN Z · PASTEL',
+        id: 'gz_dreamy', code: 'DREAMY', name: 'Dreamy Sky Pastel', category: 'genz', subLabel: 'PASTEL',
         params: {
             exposure: 6, brightness: 8, contrast: -14, saturation: -10, warmth: -8, tint: 6, highlights: -20, shadows: 16,
             shadowsTint: [74, 70, 104], highlightsTint: [255, 240, 246], splitStrength: 0.18,
