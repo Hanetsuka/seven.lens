@@ -80,6 +80,11 @@
                         <span class="row-title">Browse film presets</span>
                         <span class="row-arrow">→</span>
                     </button>
+                    <button class="home-menu-row" id="btnHomeTemplates">
+                        <span class="row-num">04</span>
+                        <span class="row-title">Carousel templates</span>
+                        <span class="row-arrow">→</span>
+                    </button>
                 </nav>
             </section>
 
@@ -140,6 +145,21 @@
 
                 <p class="luts-footnote">3D LUTs up to 65 points. 1D LUTs aren't supported yet.</p>
             </section>
+
+            <!-- VIEW 04: TEMPLATES -->
+            <section id="viewTemplates" class="studio-view">
+                <header class="studio-topbar">
+                    <span class="meta-label">STUDIO / TEMPLATES</span>
+                    <span class="meta-label">/ 07</span>
+                </header>
+
+                <div class="editorial-header">
+                    <h1>Pick a <em>template.</em></h1>
+                    <p>Susun foto dan teks jadi carousel. Satu foto bisa menyambung antar slide, lalu ekspor per slide.</p>
+                </div>
+
+                <div id="tplGrid" class="tpl-grid"></div>
+            </section>
         </div>
 
         <!-- Bottom Navigation Bar (01 HOME | 02 LIBRARY | 03 LUTS) -->
@@ -157,6 +177,11 @@
             <button class="studio-nav-item" data-view="viewLuts">
                 <span class="nav-num">03</span>
                 <span class="nav-label">LUTS</span>
+                <span class="nav-dot"></span>
+            </button>
+            <button class="studio-nav-item" data-view="viewTemplates">
+                <span class="nav-num">04</span>
+                <span class="nav-label">TEMPLATE</span>
                 <span class="nav-dot"></span>
             </button>
         </nav>
@@ -236,7 +261,7 @@
                 <div class="subcat-bar" id="presetCatBar">
                     <button class="subcat-btn" data-pcat="favorites">★ MY PRESETS</button>
                     <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
-                    <button class="subcat-btn active" data-pcat="genz">GEN Z ✦</button>
+                    <button class="subcat-btn active" data-pcat="genz">VSCO SOFT ✦</button>
                     <button class="subcat-btn" data-pcat="digicam">Y2K DIGICAM</button>
                     <button class="subcat-btn" data-pcat="korean">K-SOFT</button>
                     <button class="subcat-btn" data-pcat="moody">MOODY</button>
