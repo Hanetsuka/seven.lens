@@ -1465,3 +1465,14 @@ body {
 .subcat-bar, .thumb-strip, .tools-icon-strip, .font-cards-strip, .text-pills-row, .tool-context-extras { touch-action: pan-x; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; cursor: grab; }
 .subcat-bar > *, .thumb-strip > * { flex-shrink: 0; }
 .subcat-btn { white-space: nowrap; }
+
+/* Tinggi foto mengikuti ruang tersedia; cegah tumpang tindih dengan panel bawah */
+.editor-stage-area { overflow: hidden; }
+.canvas-wrapper { max-height: var(--canvas-max-h, calc(100vh - 375px)); }
+#mainCanvas { max-height: var(--canvas-max-h, calc(100vh - 375px)); }
+.curves-canvas { width: min(100%, 240px, 32vh); }
+.editor-deck { max-height: 70vh; overflow-y: auto; scrollbar-width: none; }
+.editor-deck::-webkit-scrollbar { display: none; }
+.tool-context-extras, .tools-icon-strip { scrollbar-width: none; }
+.tool-context-extras::-webkit-scrollbar, .tools-icon-strip::-webkit-scrollbar { display: none; }
+#masterSlider:disabled { opacity: 0.3; cursor: not-allowed; }
