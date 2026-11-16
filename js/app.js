@@ -22,7 +22,12 @@
     const basePhotoCtx = basePhotoCanvas.getContext('2d');
 
     const gradedCanvas = document.createElement('canvas');
-    const gradedCtx = gradedCanvas.getContext('2d');
+    const gradedCtx = gradedCanvas.getContext('2d', { willReadFrequently: true });
+    const fastCanvas = document.createElement('canvas'); // buffer resolusi preview (render cepat)
+    const fastCtx = fastCanvas.getContext('2d', { willReadFrequently: true });
+    const tmpCanvas = document.createElement('canvas');
+    const tmpCtx = tmpCanvas.getContext('2d');
+    const thumbCache = new Map(); // cache thumbnail preset per foto
 
     const brushCanvas = document.createElement('canvas');
     const brushCtx = brushCanvas.getContext('2d');
@@ -74,6 +79,8 @@
             effectStrength: 75,
             dustId: 'none_dust',
             dustStrength: 50,
+            frameId: 'none_frame',
+            frameStrength: 60,
             texts: [], // { id, text, x, y, font, fontName, size, color, opacity, rotate, bold, italic, shadow, outline, align }
             selectedTextId: null
         };
@@ -671,6 +678,7 @@
         if (!photo) return;
 
         currentPhotoId = photo.id;
+        thumbCache.clear();
         state = JSON.parse(JSON.stringify(photo.editState));
         if (!state.curves) state.curves = createIdentityCurves();
 
@@ -717,7 +725,7 @@
         // Render thumbnail tanpa border seleksi teks
         const prevSel = state.selectedTextId;
         state.selectedTextId = null;
-        renderEditorCanvas();
+        renderEditorCanvasSync();
         photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
         // Salinan hasil edit (maks 2160px) agar bisa dipakai di Templates
         const sc = Math.min(1, 2160 / Math.max(mainCanvas.width, mainCanvas.height));
@@ -731,6 +739,7 @@
             state.presetId === 'original' &&
             !state.activeCubeLutId &&
             state.effectId === 'none_leak' &&
+            (!state.frameId || state.frameId === 'none_frame') &&
             state.texts.length === 0 &&
             isCurvesIdentity(state.curves) &&
             Object.values(state.adjust).every((v) => v === 0);
@@ -740,7 +749,31 @@
     // ==========================================
     // 6. CORE DARKROOM RENDERING PIPELINE
     // ==========================================
+    // Render dijadwalkan per frame (rAF) pada resolusi preview, lalu diulang penuh saat idle.
+    let rcRaf = 0, rcIdle = 0;
     function renderEditorCanvas() {
+        if (mainCanvas.width !== basePhotoCanvas.width || mainCanvas.height !== basePhotoCanvas.height) {
+            renderEditorCanvasSync();
+            return;
+        }
+        if (rcRaf) return;
+        rcRaf = requestAnimationFrame(() => {
+            rcRaf = 0;
+            renderEditorCanvasNow(true);
+            clearTimeout(rcIdle);
+            if (Math.max(basePhotoCanvas.width, basePhotoCanvas.height) > 1000) {
+                rcIdle = setTimeout(() => renderEditorCanvasNow(false), 280);
+            }
+        });
+    }
+    function renderEditorCanvasSync() {
+        cancelAnimationFrame(rcRaf);
+        rcRaf = 0;
+        clearTimeout(rcIdle);
+        renderEditorCanvasNow(false);
+    }
+
+    function renderEditorCanvasNow(fast) {
         const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
         if (!photo) return;
 
@@ -760,49 +793,57 @@
             return;
         }
 
-        // 1. Transform (Flip & Straighten)
-        gradedCtx.clearRect(0, 0, w, h);
-        gradedCtx.save();
-        gradedCtx.translate(w / 2, h / 2);
+        // 1-4. Transform, blur, color grading & vignette (mode cepat = resolusi preview ±1000px)
+        const q = fast ? Math.min(1, 1000 / Math.max(w, h)) : 1;
+        const gw = Math.max(1, Math.round(w * q));
+        const gh = Math.max(1, Math.round(h * q));
+        let gc = gradedCanvas, gx = gradedCtx;
+        if (q < 1) {
+            if (fastCanvas.width !== gw || fastCanvas.height !== gh) { fastCanvas.width = gw; fastCanvas.height = gh; }
+            gc = fastCanvas; gx = fastCtx;
+        }
+        gx.clearRect(0, 0, gw, gh);
+        gx.save();
+        gx.translate(gw / 2, gh / 2);
         if (state.adjust.straighten !== 0) {
             const rad = (state.adjust.straighten * Math.PI) / 180;
             const zoomComp = 1 + Math.abs(Math.sin(rad)) * 0.3;
-            gradedCtx.rotate(rad);
-            gradedCtx.scale(zoomComp, zoomComp);
+            gx.rotate(rad);
+            gx.scale(zoomComp, zoomComp);
         }
-        gradedCtx.scale(state.flipH ? -1 : 1, state.flipV ? -1 : 1);
-        gradedCtx.drawImage(basePhotoCanvas, -w / 2, -h / 2);
-        gradedCtx.restore();
+        gx.scale(state.flipH ? -1 : 1, state.flipV ? -1 : 1);
+        gx.drawImage(basePhotoCanvas, -gw / 2, -gh / 2, gw, gh);
+        gx.restore();
 
-        // 2. Soft Blur jika > 0
         if (state.adjust.blur > 0) {
-            const tmp = cloneCanvas(gradedCanvas);
-            gradedCtx.clearRect(0, 0, w, h);
-            gradedCtx.save();
-            gradedCtx.filter = `blur(${state.adjust.blur}px)`;
-            gradedCtx.drawImage(tmp, 0, 0);
-            gradedCtx.restore();
+            if (tmpCanvas.width !== gw || tmpCanvas.height !== gh) { tmpCanvas.width = gw; tmpCanvas.height = gh; }
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gc, 0, 0);
+            gx.clearRect(0, 0, gw, gh);
+            gx.save();
+            gx.filter = `blur(${state.adjust.blur * q}px)`;
+            gx.drawImage(tmpCanvas, 0, 0);
+            gx.restore();
         }
 
-        // 3. Pixel-level Color Grading (Film Preset / 3D .CUBE LUT / Tools Adjustments)
-        const imgData = gradedCtx.getImageData(0, 0, w, h);
-        applyColorPipelineToImageData(imgData, w, h, state);
-        gradedCtx.putImageData(imgData, 0, 0);
+        const imgData = gx.getImageData(0, 0, gw, gh);
+        applyColorPipelineToImageData(imgData, gw, gh, state);
+        gx.putImageData(imgData, 0, 0);
 
-        // 4. Vignette
         if (state.adjust.vignette > 0) {
             const vStr = state.adjust.vignette / 100;
-            const g = gradedCtx.createRadialGradient(
-                w / 2, h / 2, Math.min(w, h) * 0.25,
-                w / 2, h / 2, Math.max(w, h) * 0.72
-            );
+            const g = gx.createRadialGradient(gw / 2, gh / 2, Math.min(gw, gh) * 0.25, gw / 2, gh / 2, Math.max(gw, gh) * 0.72);
             g.addColorStop(0, 'rgba(0,0,0,0)');
             g.addColorStop(1, `rgba(0,0,0,${(vStr * 0.85).toFixed(2)})`);
-            gradedCtx.save();
-            gradedCtx.globalCompositeOperation = 'source-atop';
-            gradedCtx.fillStyle = g;
-            gradedCtx.fillRect(0, 0, w, h);
-            gradedCtx.restore();
+            gx.save();
+            gx.globalCompositeOperation = 'source-atop';
+            gx.fillStyle = g;
+            gx.fillRect(0, 0, gw, gh);
+            gx.restore();
+        }
+        if (q < 1) {
+            gradedCtx.clearRect(0, 0, w, h);
+            gradedCtx.drawImage(fastCanvas, 0, 0, w, h);
         }
 
         // 5. Komposisi ke mainCanvas
@@ -819,6 +860,7 @@
         // 6. Analog Effects (Light Leaks, Film Burns, Vintage Dust)
         renderAnalogEffectsOverlay(ctx, w, h, state.effectId, state.effectStrength / 100);
         renderDustOverlay(ctx, w, h, state.dustId, state.dustStrength / 100);
+        renderFrameOverlay(ctx, w, h, state.frameId, (state.frameStrength ?? 60) / 100);
 
         // 7. Layer Brush / Doodle
         ctx.drawImage(brushCanvas, 0, 0);
@@ -1188,6 +1230,16 @@
             grad = targetCtx.createLinearGradient(0, 0, w, 0);
         } else if (eff.angle === 'bottom-right') {
             grad = targetCtx.createRadialGradient(w, h, w * 0.05, w, h, Math.max(w, h) * 0.85);
+        } else if (eff.angle === 'bottom-left') {
+            grad = targetCtx.createRadialGradient(0, h, w * 0.05, 0, h, Math.max(w, h) * 0.85);
+        } else if (eff.angle === 'left-edge') {
+            grad = targetCtx.createLinearGradient(0, h * 0.5, w * 0.7, h * 0.45);
+        } else if (eff.angle === 'center-glow') {
+            grad = targetCtx.createRadialGradient(w * 0.5, h * 0.55, w * 0.02, w * 0.5, h * 0.55, Math.max(w, h) * 0.7);
+        } else if (eff.angle === 'stripe-diag') {
+            grad = targetCtx.createLinearGradient(w * 0.15, 0, w * 0.55, h);
+        } else if (eff.angle === 'bottom-center') {
+            grad = targetCtx.createRadialGradient(w * 0.5, h, w * 0.03, w * 0.5, h, Math.max(w, h) * 0.8);
         } else {
             grad = targetCtx.createLinearGradient(0, 0, w, h);
         }
@@ -1198,6 +1250,68 @@
         targetCtx.restore();
     }
 
+    const FRAMES = [
+        { id: 'none_frame', code: 'NONE', name: 'No Frame' },
+        { id: 'frm_polaroid', code: 'POLAROID', name: 'Polaroid Frame' },
+        { id: 'frm_instax', code: 'INSTAX', name: 'Instax Frame' },
+        { id: 'frm_film', code: 'FILM STRIP', name: 'Film Strip' },
+        { id: 'frm_black', code: 'BLACK', name: 'Black Border' },
+        { id: 'frm_white', code: 'WHITE', name: 'White Border' },
+        { id: 'frm_round', code: 'ROUNDED', name: 'Rounded Corners' },
+        { id: 'frm_cam', code: 'CAMCORDER', name: 'Camcorder UI' },
+        { id: 'frm_ccd', code: 'DIGICAM UI', name: 'Digicam UI' }
+    ];
+
+    function renderFrameOverlay(c, w, h, id, k) {
+        if (!id || id === 'none_frame') return;
+        const m = Math.min(w, h), t = m * (0.02 + k * 0.08);
+        const bars = (col, top, right, bottom, left) => {
+            c.fillStyle = col;
+            c.fillRect(0, 0, w, top); c.fillRect(0, h - bottom, w, bottom);
+            c.fillRect(0, top, left, h - top - bottom); c.fillRect(w - right, top, right, h - top - bottom);
+        };
+        const corners = (x0, y0, x1, y1, len) => {
+            c.beginPath();
+            [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]].forEach(([x, y, dx, dy]) => { c.moveTo(x + dx * len, y); c.lineTo(x, y); c.lineTo(x, y + dy * len); });
+            c.stroke();
+        };
+        c.save();
+        if (id === 'frm_polaroid') bars('#f7f4ee', t, t, t * 3.4, t);
+        else if (id === 'frm_instax') bars('#fbfaf6', t * 1.1, t * 1.1, t * 2.6, t * 1.1);
+        else if (id === 'frm_black') bars('#0b0b0b', t, t, t, t);
+        else if (id === 'frm_white') bars('#ffffff', t, t, t, t);
+        else if (id === 'frm_round') {
+            c.fillStyle = '#0b0b0b'; c.beginPath(); c.rect(0, 0, w, h);
+            c.roundRect(t * 0.6, t * 0.6, w - t * 1.2, h - t * 1.2, m * (0.04 + k * 0.14)); c.fill('evenodd');
+        } else if (id === 'frm_film') {
+            const b = t * 2.2;
+            bars('#111111', b, 0, b, 0);
+            c.fillStyle = '#f1e9d8';
+            for (let x = b * 0.5; x < w - b * 0.4; x += b * 1.05) {
+                c.beginPath(); c.roundRect(x, b * 0.3, b * 0.5, b * 0.4, b * 0.08); c.roundRect(x, h - b * 0.7, b * 0.5, b * 0.4, b * 0.08); c.fill();
+            }
+        } else {
+            const fs = m * 0.035, pad = m * 0.05;
+            c.strokeStyle = 'rgba(255,255,255,0.92)'; c.lineWidth = Math.max(1.5, m * 0.004);
+            c.font = `700 ${fs}px "Space Mono", monospace`; c.textBaseline = 'top';
+            if (id === 'frm_cam') {
+                corners(pad, pad, w - pad, h - pad, m * 0.07);
+                c.fillStyle = '#ff3b30'; c.beginPath(); c.arc(pad * 1.6, pad * 1.55 + fs * 0.5, fs * 0.42, 0, 7); c.fill();
+                c.fillStyle = '#ffffff'; c.textAlign = 'left'; c.fillText('REC', pad * 1.6 + fs, pad * 1.55);
+                c.textAlign = 'right'; c.fillText('▮▮▮ SP', w - pad * 1.5, pad * 1.55);
+                c.textAlign = 'left'; c.fillText('00:00:12', pad * 1.5, h - pad * 1.5 - fs);
+            } else {
+                const fz = m * 0.1;
+                corners(w / 2 - fz, h / 2 - fz, w / 2 + fz, h / 2 + fz, fz * 0.55);
+                c.fillStyle = '#ffffff'; c.textAlign = 'left'; c.fillText('AUTO', pad * 1.5, pad * 1.5);
+                c.textAlign = 'right'; c.fillText('1/125  F2.8', w - pad * 1.5, pad * 1.5);
+                c.fillStyle = '#ff7b00'; c.fillText("'03 11 14", w - pad * 1.5, h - pad * 1.5 - fs);
+                c.fillStyle = '#ffffff'; c.textAlign = 'left'; c.fillText('ISO 100', pad * 1.5, h - pad * 1.5 - fs);
+            }
+        }
+        c.restore();
+    }
+
     function renderDustOverlay(targetCtx, w, h, dustId, strength = 0.5) {
         if (!dustId || dustId === 'none_dust' || strength <= 0) return;
         targetCtx.save();
@@ -1205,7 +1319,7 @@
         targetCtx.fillStyle = `rgba(245, 238, 225, ${(strength * 0.55).toFixed(2)})`;
         targetCtx.strokeStyle = `rgba(245, 238, 225, ${(strength * 0.4).toFixed(2)})`;
 
-        const count = dustId === 'dust_02' ? 95 : 42;
+        const count = dustId === 'dust_02' ? 95 : dustId === 'dust_04' ? 170 : (dustId === 'dust_05' || dustId === 'dust_06') ? 0 : 42;
         for (let i = 0; i < count; i++) {
             // Posisi deterministik agar tidak berkedip saat digeser slider
             const px = ((i * 173 + 41) % 997) / 997 * w;
@@ -1216,6 +1330,25 @@
             targetCtx.fill();
         }
 
+        if (dustId === 'dust_05') { // serat / rambut
+            targetCtx.lineWidth = Math.max(1, w / 900);
+            for (let s = 0; s < 8; s++) {
+                const sx = ((s * 211 + 37) % 100) / 100 * w, sy = ((s * 137 + 11) % 100) / 100 * h, len = w * (0.04 + (s % 3) * 0.03);
+                targetCtx.beginPath();
+                targetCtx.moveTo(sx, sy);
+                targetCtx.quadraticCurveTo(sx + len * 0.6, sy - len * 0.5, sx + len, sy + len * (s % 2 ? 0.3 : -0.2));
+                targetCtx.stroke();
+            }
+        }
+        if (dustId === 'dust_06') { // bokeh debu
+            targetCtx.fillStyle = `rgba(255, 240, 210, ${(strength * 0.16).toFixed(2)})`;
+            for (let s = 0; s < 16; s++) {
+                const px = ((s * 193 + 57) % 97) / 97 * w, py = ((s * 271 + 19) % 89) / 89 * h;
+                targetCtx.beginPath();
+                targetCtx.arc(px, py, Math.min(w, h) * (0.02 + (s % 4) * 0.018), 0, Math.PI * 2);
+                targetCtx.fill();
+            }
+        }
         if (dustId === 'dust_03') {
             targetCtx.lineWidth = 1.2;
             for (let s = 0; s < 5; s++) {
@@ -1278,7 +1411,38 @@
     /**
      * Render Strip 01 PRESETS dengan Live Photo Preview di setiap kotak thumbnail!
      */
+    function presetThumb(preset) {
+        const key = currentPhotoId + '|' + preset.id;
+        let c = thumbCache.get(key);
+        if (!c) {
+            c = document.createElement('canvas');
+            c.width = 76;
+            c.height = 76;
+            const cCtx = c.getContext('2d', { willReadFrequently: true });
+            cCtx.drawImage(thumbGenCanvas, 0, 0, 76, 76);
+            if (preset.id !== 'original') {
+                const idata = cCtx.getImageData(0, 0, 76, 76);
+                const dummyState = createDefaultEditState();
+                dummyState.presetId = preset.id;
+                dummyState.presetStrength = 100;
+                applyColorPipelineToImageData(idata, 76, 76, dummyState);
+                cCtx.putImageData(idata, 0, 0);
+            }
+            thumbCache.set(key, c);
+        }
+        return c;
+    }
+
+    let lastPresetCat = null;
     function renderPresetsStrip() {
+        const s = document.getElementById('presetStrip');
+        const keep = lastPresetCat === activePresetCat ? s.scrollLeft : 0;
+        renderPresetsStripInner();
+        lastPresetCat = activePresetCat;
+        s.scrollLeft = keep;
+    }
+
+    function renderPresetsStripInner() {
         const strip = document.getElementById('presetStrip');
         strip.innerHTML = '';
 
@@ -1332,20 +1496,7 @@
             const card = document.createElement('div');
             card.className = `thumb-card ${isSelected ? 'active' : ''}`;
 
-            const c = document.createElement('canvas');
-            c.width = 76;
-            c.height = 76;
-            const cCtx = c.getContext('2d');
-            cCtx.drawImage(thumbGenCanvas, 0, 0, 76, 76);
-
-            if (preset.id !== 'original') {
-                const idata = cCtx.getImageData(0, 0, 76, 76);
-                const dummyState = createDefaultEditState();
-                dummyState.presetId = preset.id;
-                dummyState.presetStrength = 100;
-                applyColorPipelineToImageData(idata, 76, 76, dummyState);
-                cCtx.putImageData(idata, 0, 0);
-            }
+            const c = presetThumb(preset);
 
             const box = document.createElement('div');
             box.className = 'thumb-box';
@@ -1376,7 +1527,7 @@
                 syncMasterSliderForPreset();
                 renderPresetsStrip();
                 renderEditorCanvas();
-                pushHistory(`Preset ${preset.code}`);
+                pushHistory(`Preset ${preset.code}`, true);
             });
 
             strip.appendChild(card);
@@ -1389,7 +1540,7 @@
         renderPresetsStrip();
         renderEditorCanvas();
         const lut = myCubeLuts.find((l) => l.id === lutId);
-        if (lut) pushHistory(`3D LUT: ${lut.title}`);
+        if (lut) pushHistory(`3D LUT: ${lut.title}`, true);
     }
 
     function toggleFavoritePreset(presetId) {
@@ -1739,7 +1890,7 @@
         drawCurvesEditor();
         renderEditorCanvas();
         renderToolsStrip();
-        pushHistory(label);
+        pushHistory(label, true);
     }
 
     function curveValueToCanvas(v, size) {
@@ -1924,17 +2075,72 @@
      * Render Strip 03 EFFECTS (Light Leaks, Film Burns, Vintage Dust, Date Stamps)
      * Persis seperti Screenshot 5 (Light Leak 01..05 dengan preview langsung di atas awan/foto!)
      */
+    let lastEffectCat = null;
     function renderEffectsStrip() {
+        const s = document.getElementById('effectsStrip');
+        const keep = lastEffectCat === activeEffectCat ? s.scrollLeft : 0;
+        renderEffectsStripInner();
+        lastEffectCat = activeEffectCat;
+        s.scrollLeft = keep;
+    }
+
+    function renderEffectsStripInner() {
         const strip = document.getElementById('effectsStrip');
         strip.innerHTML = '';
 
+        if (activeEffectCat === 'frames') {
+            FRAMES.forEach((f) => {
+                const card = document.createElement('div');
+                card.className = `thumb-card ${(state.frameId || 'none_frame') === f.id ? 'active' : ''}`;
+                const c = document.createElement('canvas');
+                c.width = 76;
+                c.height = 76;
+                const cCtx = c.getContext('2d');
+                cCtx.drawImage(thumbGenCanvas, 0, 0, 76, 76);
+                renderFrameOverlay(cCtx, 76, 76, f.id, 0.6);
+                card.innerHTML = `<div class="thumb-box"></div><span class="thumb-label">${f.code}</span>`;
+                card.querySelector('.thumb-box').appendChild(c);
+                card.addEventListener('click', () => {
+                    state.frameId = f.id;
+                    syncMasterSliderForEffect();
+                    renderEffectsStrip();
+                    renderEditorCanvas();
+                    pushHistory(f.name, true);
+                });
+                strip.appendChild(card);
+            });
+            return;
+        }
+
         if (activeEffectCat === 'stamps') {
+            const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+            const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
+            const mono = "'Space Mono', monospace";
             const stamps = [
-                { label: "'98 DATE", text: "'98 11 14", font: "'Space Mono', monospace", color: '#ff7b00' },
-                { label: 'KODAK 400', text: '→ 24A  KODAK PORTRA 400', font: "'Space Mono', monospace", color: '#f59e0b' },
-                { label: 'SPARKLE ✨', text: '✨', font: 'sans-serif', color: '#ffffff' },
-                { label: 'FILM 🎞️', text: '🎞️', font: 'sans-serif', color: '#ffffff' },
-                { label: 'HEART 🤍', text: '🤍', font: 'sans-serif', color: '#ffffff' }
+                { label: "'98 DATE", text: "'98 11 14", font: mono, color: '#ff7b00' },
+                { label: 'TODAY', text: today, font: mono, color: '#ff7b00' },
+                { label: 'KODAK 400', text: '→ 24A  KODAK PORTRA 400', font: mono, color: '#f59e0b' },
+                { label: 'REC ●', text: 'REC ●', font: mono, color: '#ff3b30' },
+                { label: 'PLAY ▶', text: '▶ PLAY', font: mono, color: '#ffffff' },
+                { label: 'DV TIMER', text: '00:12:04', font: mono, color: '#ffffff' },
+                { label: 'LOW BATT', text: '▯ LOW BATT', font: mono, color: '#ff3b30' },
+                { label: 'FLASH ⚡', text: '⚡ AUTO', font: mono, color: '#fde047' },
+                { label: 'ISO 400', text: 'ISO 400  F1.8', font: mono, color: '#ffffff' },
+                { label: 'POLAROID', text: 'POLAROID 600', font: mono, color: '#f4f1ea' },
+                { label: 'SVN.LENS', text: 'svn.lens', font: "'Playfair Display', serif", color: '#ffffff' },
+                { label: 'GOOD VIBES', text: 'good vibes only', font: "'Caveat', cursive", color: '#ffffff' },
+                { label: 'MEMORIES', text: 'memories', font: "'Dancing Script', cursive", color: '#ffffff' },
+                { label: 'SPARKLE ✨', text: '✨', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'STAR ⭐', text: '⭐', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'HEART 🤍', text: '🤍', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'PINK 💖', text: '💖', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'BUTTERFLY', text: '🦋', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'FLOWER 🌸', text: '🌸', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'RIBBON 🎀', text: '🎀', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'CLOUD ☁️', text: '☁️', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'CD 💿', text: '💿', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'CAMERA 📷', text: '📷', font: 'sans-serif', color: '#ffffff', sticker: true },
+                { label: 'FILM 🎞️', text: '🎞️', font: 'sans-serif', color: '#ffffff', sticker: true }
             ];
             stamps.forEach((s) => {
                 const card = document.createElement('div');
@@ -1946,7 +2152,9 @@
                     <span class="thumb-label">${s.label}</span>
                 `;
                 card.addEventListener('click', () => {
-                    addTextLayerToPhoto(s.text, s.font, s.label, s.color, basePhotoCanvas.width * 0.72, basePhotoCanvas.height * 0.88);
+                    const px = s.sticker ? basePhotoCanvas.width * (0.25 + Math.random() * 0.5) : basePhotoCanvas.width * 0.72;
+                    const py = s.sticker ? basePhotoCanvas.height * (0.2 + Math.random() * 0.5) : basePhotoCanvas.height * 0.88;
+                    addTextLayerToPhoto(s.text, s.font, s.label, s.color, px, py);
                 });
                 strip.appendChild(card);
             });
@@ -1986,7 +2194,7 @@
                 syncMasterSliderForEffect();
                 renderEffectsStrip();
                 renderEditorCanvas();
-                pushHistory(eff.name);
+                pushHistory(eff.name, true);
             });
 
             strip.appendChild(card);
@@ -1999,6 +2207,14 @@
         slider.min = 0;
         slider.max = 100;
 
+        if (activeEffectCat === 'frames') {
+            const f = FRAMES.find((x) => x.id === (state.frameId || 'none_frame')) || FRAMES[0];
+            slider.value = state.frameStrength ?? 60;
+            document.getElementById('activeParamCategory').textContent = 'THICKNESS';
+            document.getElementById('activeParamTitle').textContent = f.name;
+            document.getElementById('activeParamValue').textContent = slider.value;
+            return;
+        }
         if (activeEffectCat === 'dust') {
             const eff = window.ANALOG_EFFECTS.find((e) => e.id === state.dustId) || window.ANALOG_EFFECTS[0];
             slider.value = state.dustStrength;
@@ -2133,7 +2349,7 @@
         state.selectedTextId = newLayer.id;
         if (activeEditorMainTab === 'Text') renderTextTabUI();
         renderEditorCanvas();
-        pushHistory(`Text: ${textStr.slice(0, 12)}`);
+        pushHistory(`Text: ${textStr.slice(0, 12)}`, true);
     }
 
     // ==========================================
@@ -2197,13 +2413,14 @@
                 renderToolsStrip();
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'dust') state.dustStrength = val;
+                else if (activeEffectCat === 'frames') state.frameStrength = val;
                 else state.effectStrength = val;
             }
             renderEditorCanvas();
         });
 
         masterSlider.addEventListener('change', () => {
-            pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`);
+            pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`, true);
         });
 
         masterSlider.addEventListener('dblclick', () => {
@@ -2215,8 +2432,8 @@
                 masterSlider.value = 0;
                 renderToolsStrip();
             } else if (masterSliderMode === 'effect') {
-                state.effectStrength = 75;
-                masterSlider.value = 75;
+                if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
+                masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
             }
             document.getElementById('activeParamValue').textContent = masterSlider.value;
             renderEditorCanvas();
@@ -2238,7 +2455,7 @@
             state.selectedTextId = state.texts[0]?.id || null;
             renderTextTabUI();
             renderEditorCanvas();
-            pushHistory('Delete Text');
+            pushHistory('Delete Text', true);
         });
 
         document.querySelectorAll('#textSubTabBar .subcat-btn').forEach((btn) => {
@@ -2479,7 +2696,7 @@
             }
             if (isDraggingText) {
                 isDraggingText = false;
-                pushHistory('Move Text');
+                pushHistory('Move Text', true);
             }
         };
 
@@ -2665,15 +2882,17 @@
     // ==========================================
     // 11. HISTORY (UNDO / REDO) & EXPORT
     // ==========================================
-    function pushHistory(label) {
+    function pushHistory(label, light) {
         if (historyIndex < historyStack.length - 1) {
             historyStack = historyStack.slice(0, historyIndex + 1);
         }
+        const prev = historyStack[historyIndex];
+        const reuse = light && prev && prev.w === basePhotoCanvas.width && prev.h === basePhotoCanvas.height;
         historyStack.push({
             label,
             stateSnap: JSON.parse(JSON.stringify(state)),
-            baseSnap: cloneCanvas(basePhotoCanvas),
-            brushSnap: cloneCanvas(brushCanvas),
+            baseSnap: reuse ? prev.baseSnap : cloneCanvas(basePhotoCanvas),
+            brushSnap: reuse ? prev.brushSnap : cloneCanvas(brushCanvas),
             w: basePhotoCanvas.width,
             h: basePhotoCanvas.height
         });
@@ -2740,6 +2959,7 @@
             const qual = parseInt(qSlider.value, 10) / 100;
             const ext = fmt === 'image/png' ? 'png' : fmt === 'image/webp' ? 'webp' : 'jpg';
 
+            renderEditorCanvasSync();
             const out = createBlankCanvas(mainCanvas.width, mainCanvas.height);
             const oCtx = out.getContext('2d');
             if (fmt === 'image/jpeg') {
@@ -3013,8 +3233,7 @@ function devPick() { fi.value = ''; fi.click(); }
 const KEYS = new WeakMap();
 async function libKey(q) {
   const c = q.editedCanvas || q.workingBaseCanvas; if (KEYS.has(c)) return KEYS.get(c);
-  const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .92)), url = URL.createObjectURL(b), img = new Image(); img.src = url; await img.decode();
-  const k = 'i' + uid++; IMG[k] = { img, url }; KEYS.set(c, k); return k;
+  const k = await toKey(c); KEYS.set(c, k); return k;
 }
 async function useLib(pid) {
   const slots = st.L.filter(l => l.t === 'p' && (!l.src || l.id === pend)).sort((a, b) => (b.id === pend) - (a.id === pend));
@@ -3025,7 +3244,13 @@ async function useLib(pid) {
 }
 async function load(f) {
   let b = f; if (/hei[cf]/i.test(f.type + f.name) && window.heic2any) { b = await window.heic2any({ blob: f, toType: 'image/jpeg', quality: .92 }); b = Array.isArray(b) ? b[0] : b; }
-  const url = URL.createObjectURL(b), img = new Image(); img.src = url; await img.decode(); const k = 'i' + uid++; IMG[k] = { img, url }; return k;
+  return toKey(b);
+}
+async function toKey(src) {
+  const bm = src instanceof Blob ? await createImageBitmap(src) : src, k = Math.min(1, 2400 / Math.max(bm.width, bm.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k); cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+  const b = await new Promise(r => cv.toBlob(r, 'image/jpeg', .92)), url = URL.createObjectURL(b), img = new Image(); img.src = url; await img.decode();
+  const key = 'i' + uid++; IMG[key] = { img, url }; return key;
 }
 fi.onchange = async () => {
   const fs = [...fi.files]; if (!fs.length) return;
@@ -3063,4 +3288,27 @@ async function exportAll(pano) {
   if (navigator.canShare?.({ files })) { try { await navigator.share({ files }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   files.forEach((f, i) => setTimeout(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click(); }, i * 350)); toast('Gambar diunduh');
 }
+})();
+
+/* ==========================================
+   Geser strip horizontal dengan mouse (drag) & scroll wheel
+   ========================================== */
+(() => {
+  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip';
+  let el = null, sx = 0, sl = 0, moved = false;
+  document.addEventListener('pointerdown', e => {
+    moved = false; if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    const t = e.target.closest(SEL); if (!t || t.scrollWidth <= t.clientWidth) return;
+    el = t; sx = e.clientX; sl = t.scrollLeft;
+  });
+  addEventListener('pointermove', e => {
+    if (!el) return; const dx = e.clientX - sx; if (!moved && Math.abs(dx) < 5) return;
+    moved = true; el.scrollLeft = sl - dx;
+  });
+  addEventListener('pointerup', () => { el = null; });
+  document.addEventListener('click', e => { if (moved && e.target.closest(SEL)) { e.stopPropagation(); e.preventDefault(); } moved = false; }, true);
+  document.addEventListener('wheel', e => {
+    const t = e.target.closest(SEL); if (!t || t.scrollWidth <= t.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    t.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
 })();

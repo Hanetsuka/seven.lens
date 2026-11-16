@@ -920,6 +920,105 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     }
 }
 
+
+// ==========================================
+// KOLEKSI TAMBAHAN — B&W, Vintage, Tropical, Food, Night + varian kategori lain
+// [id, code, nama, kategori, subLabel, params]
+// ==========================================
+[
+    ['x_bw1', 'MONO', 'Classic Mono', 'bw', 'BLACK & WHITE', { saturation: -100, contrast: 14, brightness: 2, grain: 10 }],
+    ['x_bw2', 'HI-CON', 'High Contrast B&W', 'bw', 'BLACK & WHITE', { saturation: -100, contrast: 38, highlights: 10, shadows: -14, grain: 16 }],
+    ['x_bw3', 'SOFT', 'Soft Mono', 'bw', 'BLACK & WHITE', { saturation: -100, contrast: -8, fade: 14, brightness: 4, grain: 8 }],
+    ['x_bw4', 'NOIR', 'Film Noir', 'bw', 'BLACK & WHITE', { saturation: -100, contrast: 30, exposure: -10, shadows: -22, curve: { rgb: [[0, 0], [64, 40], [192, 205], [255, 255]] } }],
+    ['x_bw5', 'TRI-X', 'Tri-X Grain', 'bw', 'BLACK & WHITE', { saturation: -100, contrast: 24, grain: 30, curve: { rgb: [[0, 6], [255, 250]] } }],
+    ['x_bw6', 'SEPIA', 'Sepia Tone', 'bw', 'TONED MONO', { saturation: -75, warmth: 22, tint: 6, contrast: 8, fade: 10, grain: 8 }],
+    ['x_bw7', 'CYANO', 'Cyanotype', 'bw', 'TONED MONO', { saturation: -70, warmth: -24, tint: -4, contrast: 10 }],
+    ['x_bw8', 'SILVER', 'Silver Print', 'bw', 'BLACK & WHITE', { saturation: -100, brightness: 6, contrast: 12, highlights: 14, fade: 6 }],
+
+    ['x_v1', '70s', 'Seventies', 'vintage', 'VINTAGE', { warmth: 22, saturation: 8, fade: 16, contrast: 6, grain: 20, shadowsTint: [60, 30, 10], highlightsTint: [255, 225, 170], splitStrength: 0.2 }],
+    ['x_v2', 'KCHROME', 'Kodachrome 80s', 'vintage', 'VINTAGE', { contrast: 22, saturation: 22, warmth: 12, highlights: 8, grain: 14, curve: { rgb: [[0, 8], [255, 250]] } }],
+    ['x_v3', 'POSTCARD', 'Faded Postcard', 'vintage', 'VINTAGE', { fade: 26, saturation: -10, warmth: 10, tint: -4, contrast: -6, brightness: 6 }],
+    ['x_v4', 'OLD', 'Old Photo', 'vintage', 'VINTAGE', { saturation: -35, warmth: 24, fade: 22, contrast: 4, grain: 26 }],
+    ['x_v5', 'BLEACH', 'Sun Bleached', 'vintage', 'VINTAGE', { exposure: 14, fade: 20, saturation: -14, warmth: 8, contrast: -8 }],
+    ['x_v6', 'LOMO', 'Lomo', 'vintage', 'VINTAGE', { contrast: 30, saturation: 30, warmth: -4, tint: 6, shadows: -16, grain: 14, curve: { rgb: [[0, 0], [64, 44], [192, 216], [255, 255]] } }],
+    ['x_v7', 'XPRO', 'Cross Process', 'vintage', 'VINTAGE', { contrast: 24, saturation: 16, curve: { r: [[0, 0], [128, 150], [255, 255]], g: [[0, 0], [128, 134], [255, 255]], b: [[0, 30], [128, 110], [255, 225]] } }],
+    ['x_v8', 'RETRO G', 'Retro Green', 'vintage', 'VINTAGE', { tint: -14, warmth: 6, fade: 14, saturation: -6 }],
+
+    ['x_t1', 'TROPIC', 'Tropical Bright', 'travel', 'TROPICAL', { saturation: 22, vibrance: 18, warmth: 6, contrast: 10, brightness: 4, highlights: 6 }],
+    ['x_t2', 'BALI', 'Bali Sunset', 'travel', 'TROPICAL', { warmth: 24, saturation: 14, contrast: 12, tint: 4, shadows: -8 }],
+    ['x_t3', 'ISLAND', 'Island Blue', 'travel', 'TROPICAL', { warmth: -10, saturation: 20, vibrance: 14, contrast: 8, brightness: 3 }],
+    ['x_t4', 'JUNGLE', 'Jungle Green', 'travel', 'TROPICAL', { tint: -10, saturation: 14, contrast: 14, shadows: -10, warmth: 2 }],
+    ['x_t5', 'CITY', 'City Travel', 'travel', 'TROPICAL', { contrast: 16, saturation: -4, warmth: -4, highlights: -8, grain: 6 }],
+    ['x_t6', 'DESERT', 'Desert Sand', 'travel', 'TROPICAL', { warmth: 20, saturation: -4, fade: 10, contrast: 10, brightness: 4 }],
+
+    ['x_f1', 'FRESH', 'Fresh Cafe', 'food', 'FOOD', { brightness: 8, warmth: 8, saturation: 16, contrast: 8, vibrance: 10 }],
+    ['x_f2', 'KITCHEN', 'Warm Kitchen', 'food', 'FOOD', { warmth: 18, saturation: 10, contrast: 10, shadows: 6 }],
+    ['x_f3', 'BAKERY', 'Bakery', 'food', 'FOOD', { warmth: 14, saturation: 6, fade: 8, brightness: 6, contrast: 6 }],
+    ['x_f4', 'SWEET', 'Sweet Pop', 'food', 'FOOD', { saturation: 28, vibrance: 16, brightness: 6, contrast: 12, tint: 4 }],
+    ['x_f5', 'DARK', 'Dark Table', 'food', 'FOOD', { contrast: 22, shadows: -14, saturation: 10, warmth: 10, exposure: -6 }],
+
+    ['x_n1', 'NEON', 'Neon City', 'night', 'NIGHT', { contrast: 24, saturation: 28, warmth: -12, tint: 10, shadows: 8, highlights: 10, curve: { b: [[0, 16], [255, 255]] } }],
+    ['x_n2', 'MIDNIGHT', 'Midnight Blue', 'night', 'NIGHT', { warmth: -24, contrast: 18, exposure: -6, saturation: 8, shadows: 10 }],
+    ['x_n3', 'LAMP', 'Street Lamp', 'night', 'NIGHT', { warmth: 22, contrast: 20, shadows: -8, saturation: 12, highlights: 10 }],
+    ['x_n4', 'NFLASH', 'Night Flash', 'night', 'NIGHT', { exposure: 10, contrast: 28, saturation: 4, grain: 18, shadows: -20 }],
+    ['x_n5', 'RAIN', 'Rain Night', 'night', 'NIGHT', { warmth: -14, saturation: -8, contrast: 16, fade: 8, tint: -4 }],
+    ['x_n6', 'HAZE', 'Purple Haze', 'night', 'NIGHT', { tint: 14, warmth: -10, saturation: 12, contrast: 14, fade: 10 }],
+
+    ['x_d1', 'COMPACT', 'Compact Cam 2005', 'digicam', 'Y2K DIGICAM', { contrast: 20, saturation: 18, brightness: 6, warmth: -4, grain: 8 }],
+    ['x_d2', 'SUNNY', 'Sunny CCD', 'digicam', 'Y2K DIGICAM', { exposure: 8, warmth: 12, saturation: 14, contrast: 16, highlights: 14 }],
+    ['x_d3', 'WEBCAM', 'Old Webcam', 'digicam', 'Y2K LO-FI', { saturation: -12, contrast: -6, warmth: -8, fade: 12, grain: 24, brightness: 6 }],
+    ['x_d4', 'DATEFLASH', 'Date Flash', 'digicam', 'Y2K DIGICAM', { exposure: 8, brightness: 6, contrast: 24, warmth: 6, highlights: 14, shadows: -16, grain: 10 }],
+
+    ['x_g1', 'MILK', 'Soft Milk', 'genz', 'VSCO PRESET', { brightness: 10, fade: 16, saturation: -8, warmth: 4, contrast: -6 }],
+    ['x_g2', 'BUBBLE', 'Bubblegum', 'genz', 'SOFT GLOW', { tint: 10, saturation: 16, brightness: 6, warmth: -2, fade: 10 }],
+    ['x_g3', 'SAGE', 'Sage Matte', 'genz', 'PASTEL', { tint: -8, saturation: -14, fade: 18, warmth: 4 }],
+    ['x_g4', 'CLOUD9', 'Cloud 9', 'genz', 'PASTEL', { exposure: 12, fade: 14, warmth: -6, saturation: -4, highlights: 10 }],
+
+    ['x_k1', 'SEOUL', 'Seoul Morning', 'korean', 'K-SOFT', { brightness: 8, warmth: 4, saturation: -6, fade: 12, contrast: -2, highlights: 10 }],
+    ['x_k2', 'CREAM', 'Cream Cheese', 'korean', 'K-SOFT', { warmth: 12, brightness: 8, fade: 14, saturation: -4 }],
+    ['x_k3', 'GLASS', 'Glass Skin', 'korean', 'K-SOFT', { exposure: 10, contrast: -8, saturation: -10, tint: 4, highlights: 12 }],
+
+    ['x_m1', 'ACADEMIA', 'Dark Academia', 'moody', 'MOODY', { warmth: 12, saturation: -18, contrast: 20, shadows: -14, fade: 12, tint: -4 }],
+    ['x_m2', 'FOREST', 'Forest Moody', 'moody', 'MOODY', { tint: -12, saturation: -10, contrast: 18, shadows: -12, warmth: -2 }],
+    ['x_m3', 'RAINY', 'Rainy Mood', 'moody', 'MOODY', { warmth: -12, saturation: -14, contrast: 14, fade: 14 }],
+
+    ['x_c1', 'BLOCK', 'Blockbuster', 'cinema', 'CINEMA', { contrast: 26, saturation: 12, warmth: -8, shadowsTint: [14, 40, 52], highlightsTint: [255, 205, 150], splitStrength: 0.24 }],
+    ['x_c2', 'WES', 'Pastel Symmetry', 'cinema', 'CINEMA', { saturation: 6, fade: 18, warmth: 12, tint: 6, brightness: 8, contrast: -4 }],
+    ['x_c3', 'SCI-FI', 'Sci-Fi Cyan', 'cinema', 'CINEMA', { warmth: -22, saturation: 4, contrast: 22, shadows: -10, tint: -4 }],
+
+    ['x_a1', 'DREAM', 'Dreamcore', 'aesthetic', 'AESTHETIC', { exposure: 12, fade: 20, saturation: 8, tint: 8, warmth: -4, contrast: -10 }],
+    ['x_a2', 'CHROME', 'Y2K Chrome', 'aesthetic', 'AESTHETIC', { saturation: -16, contrast: 24, warmth: -14, highlights: 14 }],
+
+    ['x_s1', 'PRECISA', 'Agfa Precisa', 'slide', 'SLIDE FILM', { saturation: 20, contrast: 20, warmth: -6, tint: 4 }],
+    ['x_i1', 'SX70', 'Polaroid SX-70', 'instant', 'INSTANT FILM', { warmth: 14, fade: 18, saturation: -8, contrast: 8, brightness: 4, curve: { rgb: [[0, 14], [255, 244]] } }],
+    ['x_i2', 'INSTAXW', 'Instax Wide', 'instant', 'INSTANT FILM', { brightness: 8, saturation: 10, warmth: -2, fade: 10, contrast: 8 }],
+
+    ['x_n7', 'ULTRAMAX', 'Kodak Ultramax 400', 'negative', 'NEGATIVE FILM', { saturation: 16, warmth: 10, contrast: 14, grain: 14 }],
+    ['x_n8', 'C200', 'Fuji C200', 'negative', 'NEGATIVE FILM', { tint: -4, saturation: 8, warmth: -4, contrast: 10, grain: 10, fade: 6 }],
+    ['x_n9', 'VISTA', 'Agfa Vista 200', 'negative', 'NEGATIVE FILM', { saturation: 14, warmth: 8, tint: 4, contrast: 12, grain: 12 }]
+].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
+
+[
+    ['leak_06', 'LEAK 06', 'Light Leak Sunset', 'leaks', 'bottom-left', [[0, 'rgba(255,140,70,0.9)'], [0.3, 'rgba(255,80,130,0.5)'], [0.62, 'rgba(255,80,130,0)']]],
+    ['leak_07', 'LEAK 07', 'Light Leak Violet Teal', 'leaks', 'left-edge', [[0, 'rgba(167,139,250,0.85)'], [0.35, 'rgba(45,212,191,0.45)'], [0.7, 'rgba(45,212,191,0)']]],
+    ['leak_08', 'LEAK 08', 'Light Leak Golden Bloom', 'leaks', 'center-glow', [[0, 'rgba(255,214,120,0.8)'], [0.4, 'rgba(255,150,80,0.35)'], [0.8, 'rgba(255,150,80,0)']]],
+    ['leak_09', 'LEAK 09', 'Light Leak Streak', 'leaks', 'stripe-diag', [[0, 'rgba(255,180,90,0)'], [0.45, 'rgba(255,170,80,0.75)'], [0.6, 'rgba(255,110,140,0.5)'], [1, 'rgba(255,110,140,0)']]],
+    ['leak_10', 'LEAK 10', 'Light Leak Rose Orb', 'leaks', 'bottom-center', [[0, 'rgba(255,120,160,0.9)'], [0.3, 'rgba(255,170,110,0.45)'], [0.62, 'rgba(255,170,110,0)']]],
+    ['leak_11', 'LEAK 11', 'Light Leak Blue Hour', 'leaks', 'corner-glow', [[0, 'rgba(120,190,255,0.85)'], [0.35, 'rgba(140,120,255,0.45)'], [0.7, 'rgba(140,120,255,0)']]],
+    ['leak_12', 'LEAK 12', 'Light Leak Warm Edges', 'leaks', 'double-side', [[0, 'rgba(255,150,80,0.85)'], [0.22, 'rgba(255,150,80,0)'], [0.78, 'rgba(255,110,150,0)'], [1, 'rgba(255,110,150,0.8)']]],
+    ['burn_05', 'BURN 05', 'Film Burn Red Hot', 'burns', 'top-edge', [[0, 'rgba(255,60,40,0.9)'], [0.3, 'rgba(200,30,20,0.55)'], [0.6, 'rgba(200,30,20,0)']]],
+    ['burn_06', 'BURN 06', 'Film Burn Gold Rush', 'burns', 'bottom-left', [[0, 'rgba(255,225,140,0.95)'], [0.3, 'rgba(255,160,50,0.6)'], [0.65, 'rgba(255,160,50,0)']]],
+    ['burn_07', 'BURN 07', 'Film Burn Magenta', 'burns', 'right-edge', [[0, 'rgba(255,70,190,0.9)'], [0.35, 'rgba(255,120,80,0.5)'], [0.7, 'rgba(255,120,80,0)']]],
+    ['burn_08', 'BURN 08', 'Film Burn White Hot', 'burns', 'center-glow', [[0, 'rgba(255,255,235,0.9)'], [0.25, 'rgba(255,200,120,0.55)'], [0.6, 'rgba(255,120,40,0)']]],
+    ['burn_09', 'BURN 09', 'Film Burn Twin', 'burns', 'double-side', [[0, 'rgba(255,170,40,0.9)'], [0.25, 'rgba(230,80,20,0.4)'], [0.5, 'rgba(230,80,20,0)'], [0.75, 'rgba(230,80,20,0)'], [1, 'rgba(255,200,60,0.85)']]]
+].forEach(([id, code, name, category, angle, stops]) => ANALOG_EFFECTS.push({ id, code, name, category, angle, stops: stops.map(([pos, color]) => ({ pos, color })) }));
+
+[
+    ['dust_04', 'DUST 04', 'Heavy Dust'],
+    ['dust_05', 'FIBER', 'Fibers & Hair'],
+    ['dust_06', 'BOKEH', 'Dust Bokeh']
+].forEach(([id, code, name]) => ANALOG_EFFECTS.push({ id, code, name, category: 'dust', stops: [] }));
+
 window.FILM_PRESETS = FILM_PRESETS;
 window.ANALOG_EFFECTS = ANALOG_EFFECTS;
 window.EDITORIAL_FONTS = EDITORIAL_FONTS;
