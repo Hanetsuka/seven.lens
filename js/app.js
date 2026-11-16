@@ -69,7 +69,9 @@
                 grain: 0,
                 blur: 0,
                 vignette: 0,
-                straighten: 0
+                straighten: 0,
+                motionBlur: 0,
+                motionAngle: 0
             },
             curves: createIdentityCurves(),
             flipH: false,
@@ -155,6 +157,9 @@
         { key: 'action_halation', name: 'Halation', cat: 'optics', isAction: true, icon: `<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/>` },
         { key: 'action_bokeh', name: 'Bokeh Blur', cat: 'optics', isAction: true, icon: `<circle cx="12" cy="10" r="3"/><path d="M7 20c0-2.8 2.2-5 5-5s5 2.2 5 5"/><rect x="3" y="3" width="18" height="18" rx="2"/>` },
         { key: 'action_glitch', name: 'RGB Glitch', cat: 'optics', isAction: true, icon: `<path d="M4 8h16M4 16h16"/><rect x="5" y="5" width="14" height="14"/>` },
+
+        { key: 'motionBlur', name: 'Motion Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 8h9M3 12h18M3 16h11"/><circle cx="18" cy="8" r="2"/>` },
+        { key: 'motionAngle', name: 'Motion Angle', cat: 'optics', min: -90, max: 90, def: 0, icon: `<path d="M4 18 20 6"/><path d="M13 6h7v7"/>` },
 
         // GEO & CROP
         { key: 'straighten', name: 'Straighten', cat: 'geo', min: -45, max: 45, def: 0, icon: `<line x1="2" y1="12" x2="22" y2="12"/><path d="M6 8l12 8"/>` },
@@ -680,6 +685,7 @@
         currentPhotoId = photo.id;
         thumbCache.clear();
         state = JSON.parse(JSON.stringify(photo.editState));
+        state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.curves) state.curves = createIdentityCurves();
 
         const w = photo.workingBaseCanvas.width;
@@ -823,6 +829,23 @@
             gx.save();
             gx.filter = `blur(${state.adjust.blur * q}px)`;
             gx.drawImage(tmpCanvas, 0, 0);
+            gx.restore();
+        }
+
+        const mBlur = state.adjust.motionBlur || 0;
+        if (mBlur > 0) { // Motion blur arah linear (rata-rata beberapa salinan yang digeser)
+            if (tmpCanvas.width !== gw || tmpCanvas.height !== gh) { tmpCanvas.width = gw; tmpCanvas.height = gh; }
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gx === gradedCtx ? gradedCanvas : fastCanvas, 0, 0);
+            const len = (mBlur / 100) * 0.07 * Math.max(gw, gh);
+            const ang = ((state.adjust.motionAngle || 0) * Math.PI) / 180;
+            const steps = fast ? 8 : 12;
+            gx.save();
+            for (let i = 0; i < steps; i++) {
+                const t = (i / (steps - 1) - 0.5) * len;
+                gx.globalAlpha = 1 / (i + 2);
+                gx.drawImage(tmpCanvas, Math.cos(ang) * t, Math.sin(ang) * t);
+            }
             gx.restore();
         }
 
@@ -1554,6 +1577,7 @@
 
     function syncMasterSliderForPreset() {
         masterSliderMode = 'preset';
+        document.getElementById('masterSlider').disabled = false;
         const slider = document.getElementById('masterSlider');
         slider.min = 0;
         slider.max = 100;
@@ -1585,7 +1609,7 @@
             const isSelected = activeToolKey === tool.key;
             const isModified = tool.isContext === 'curves'
                 ? !isCurvesIdentity(state.curves)
-                : !tool.isAction && !tool.isContext && state.adjust[tool.key] !== 0;
+                : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
 
             const btn = document.createElement('button');
             btn.className = `tool-icon-card ${isSelected ? 'active' : ''}`;
@@ -1614,6 +1638,13 @@
 
         // Jika tool merupakan aksi instan (Rotate, Flip, AI Enhance, Bokeh, Glitch, Halation, Auto Hapus BG)
         if (tool.isAction) {
+            activeToolKey = tool.key;
+            masterSliderMode = 'context';
+            document.getElementById('masterSlider').disabled = true;
+            document.getElementById('toolContextExtras').classList.add('hidden');
+            document.getElementById('activeParamCategory').textContent = 'ACTION';
+            document.getElementById('activeParamTitle').textContent = tool.name;
+            document.getElementById('activeParamValue').textContent = '✓ APPLIED';
             executeInstantToolAction(tool.key);
             return;
         }
@@ -1646,6 +1677,7 @@
 
         activeToolKey = tool.key;
         masterSliderMode = 'tool';
+        document.getElementById('masterSlider').disabled = false;
         document.getElementById('curvesEditor').classList.add('hidden');
 
         const val = state.adjust[tool.key] ?? 0;
@@ -1698,6 +1730,7 @@
         bar.classList.remove('hidden');
         bar.innerHTML = '';
         masterSliderMode = 'context'; // Slider utama tidak mengubah apapun saat tool kontekstual aktif
+        document.getElementById('masterSlider').disabled = true;
 
         document.getElementById('activeParamCategory').textContent = 'STUDIO TOOL';
         document.getElementById('activeParamTitle').textContent = title;
@@ -2203,6 +2236,7 @@
 
     function syncMasterSliderForEffect() {
         masterSliderMode = 'effect';
+        document.getElementById('masterSlider').disabled = false;
         const slider = document.getElementById('masterSlider');
         slider.min = 0;
         slider.max = 100;
@@ -2906,6 +2940,7 @@
         historyIndex = idx;
         const snap = historyStack[historyIndex];
         state = JSON.parse(JSON.stringify(snap.stateSnap));
+        state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
 
         basePhotoCanvas.width = snap.w;
         basePhotoCanvas.height = snap.h;
@@ -3311,4 +3346,15 @@ async function exportAll(pano) {
     const t = e.target.closest(SEL); if (!t || t.scrollWidth <= t.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
     t.scrollLeft += e.deltaY; e.preventDefault();
   }, { passive: false });
+})();
+
+/* Tinggi foto mengikuti ruang kosong di area kanvas (mencegah tumpang tindih saat panel Curve terbuka) */
+(() => {
+  const area = document.querySelector('.editor-stage-area'); if (!area) return;
+  const set = () => {
+    const cs = getComputedStyle(area), hint = area.querySelector('.gesture-hint');
+    const avail = area.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - (hint ? hint.offsetHeight + 12 : 0);
+    area.style.setProperty('--canvas-max-h', Math.max(90, Math.floor(avail)) + 'px');
+  };
+  new ResizeObserver(set).observe(area); addEventListener('resize', set); set();
 })();

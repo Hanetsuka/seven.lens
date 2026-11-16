@@ -1019,6 +1019,28 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['dust_06', 'BOKEH', 'Dust Bokeh']
 ].forEach(([id, code, name]) => ANALOG_EFFECTS.push({ id, code, name, category: 'dust', stops: [] }));
 
+
+// ANALOG CAM — karakter kamera film klasik & disposable
+[
+    ['x_ac1', 'FUNSAVER', 'Disposable Funsaver', 'analogcam', 'ANALOG CAM', { exposure: 6, contrast: 24, saturation: 20, warmth: 12, highlights: 14, shadows: -10, grain: 22, fade: 4 }],
+    ['x_ac2', 'QUICKSNAP', 'Disposable Quicksnap', 'analogcam', 'ANALOG CAM', { contrast: 20, saturation: 16, warmth: -6, tint: -6, grain: 20, brightness: 4 }],
+    ['x_ac3', 'AE-1', 'SLR AE-1', 'analogcam', 'ANALOG CAM', { contrast: 14, saturation: 12, warmth: 8, fade: 8, grain: 14, shadowsTint: [30, 20, 14], highlightsTint: [255, 240, 220], splitStrength: 0.14 }],
+    ['x_ac4', 'TRIP 35', 'Trip 35', 'analogcam', 'ANALOG CAM', { contrast: 16, saturation: 10, warmth: 6, tint: -2, grain: 12, highlights: -6 }],
+    ['x_ac5', 'T4', 'Point & Shoot T4', 'analogcam', 'ANALOG CAM', { exposure: 4, contrast: 22, saturation: 18, warmth: 4, highlights: 10, shadows: -12, grain: 10 }],
+    ['x_ac6', 'T2', 'Compact T2', 'analogcam', 'ANALOG CAM', { contrast: 24, saturation: 14, warmth: 2, shadows: -16, highlights: 8, grain: 8, curve: { rgb: [[0, 0], [64, 48], [192, 210], [255, 255]] } }],
+    ['x_ac7', 'M6', 'Rangefinder M6', 'analogcam', 'ANALOG CAM', { contrast: 18, saturation: -6, warmth: 4, fade: 6, grain: 16, shadows: -8 }],
+    ['x_ac8', 'K1000', 'Student SLR K1000', 'analogcam', 'ANALOG CAM', { contrast: 12, saturation: 6, warmth: 10, fade: 12, grain: 18 }],
+    ['x_ac9', 'FM2', 'Manual SLR FM2', 'analogcam', 'ANALOG CAM', { contrast: 20, saturation: 8, warmth: -2, grain: 14, highlights: -4, shadows: -6 }],
+    ['x_ac10', 'X-700', 'SLR X-700', 'analogcam', 'ANALOG CAM', { saturation: 14, warmth: 8, tint: 4, contrast: 12, fade: 10, grain: 14 }],
+    ['x_ac11', 'HOLGA', 'Plastic Holga 120', 'analogcam', 'ANALOG CAM', { contrast: 28, saturation: 16, warmth: 6, shadows: -16, grain: 20, fade: 8 }],
+    ['x_ac12', 'DIANA', 'Diana Toy Cam', 'analogcam', 'ANALOG CAM', { saturation: 24, contrast: 26, tint: 8, warmth: -4, fade: 10, grain: 16, curve: { r: [[0, 0], [128, 140], [255, 255]], b: [[0, 20], [128, 118], [255, 235]] } }],
+    ['x_ac13', 'HASSEL', 'Medium Format 500C', 'analogcam', 'ANALOG CAM', { contrast: 14, saturation: 8, fade: 4, grain: 6, highlights: 6 }],
+    ['x_ac14', 'MAMIYA', 'Medium Format 7', 'analogcam', 'ANALOG CAM', { contrast: 10, saturation: 6, warmth: 4, grain: 8, fade: 6 }],
+    ['x_ac15', 'BIG MINI', 'Compact Big Mini', 'analogcam', 'ANALOG CAM', { exposure: 6, contrast: 22, saturation: 12, warmth: 8, highlights: 12, grain: 10 }],
+    ['x_ac16', 'GR1', 'Street Compact GR1', 'analogcam', 'ANALOG CAM', { contrast: 24, saturation: -8, warmth: -2, grain: 14, shadows: -14 }],
+    ['x_ac17', 'ROLLEI', 'Pocket Rollei 35', 'analogcam', 'ANALOG CAM', { contrast: 18, saturation: 4, warmth: 2, fade: 6, grain: 12 }]
+].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
+
 window.FILM_PRESETS = FILM_PRESETS;
 window.ANALOG_EFFECTS = ANALOG_EFFECTS;
 window.EDITORIAL_FONTS = EDITORIAL_FONTS;
