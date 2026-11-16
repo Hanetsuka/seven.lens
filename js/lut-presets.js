@@ -1016,7 +1016,17 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
 [
     ['dust_04', 'DUST 04', 'Heavy Dust'],
     ['dust_05', 'FIBER', 'Fibers & Hair'],
-    ['dust_06', 'BOKEH', 'Dust Bokeh']
+    ['dust_06', 'BOKEH', 'Dust Bokeh'],
+    ['dust_07', 'SPECKLE', 'Dark Speckle'],
+    ['dust_08', 'HAIR', 'Long Hair'],
+    ['dust_09', 'SCRATCH+', 'Heavy Scratches'],
+    ['dust_10', 'BLOTCH', 'Stains & Blotches'],
+    ['dust_11', 'WATER', 'Water Spots'],
+    ['dust_12', 'SMUDGE', 'Lens Smudge'],
+    ['dust_13', 'GLITTER', 'Glitter Sparkle'],
+    ['dust_14', 'CRACKLE', 'Cracked Emulsion'],
+    ['dust_15', 'FOLD', 'Paper Folds'],
+    ['dust_16', 'VHS', 'VHS Scanlines']
 ].forEach(([id, code, name]) => ANALOG_EFFECTS.push({ id, code, name, category: 'dust', stops: [] }));
 
 

@@ -71,7 +71,12 @@
                 vignette: 0,
                 straighten: 0,
                 motionBlur: 0,
-                motionAngle: 0
+                motionAngle: 0,
+                zoomBlur: 0,
+                spinBlur: 0,
+                tiltShift: 0,
+                edgeBlur: 0,
+                dreamGlow: 0
             },
             curves: createIdentityCurves(),
             flipH: false,
@@ -160,6 +165,12 @@
 
         { key: 'motionBlur', name: 'Motion Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 8h9M3 12h18M3 16h11"/><circle cx="18" cy="8" r="2"/>` },
         { key: 'motionAngle', name: 'Motion Angle', cat: 'optics', min: -90, max: 90, def: 0, icon: `<path d="M4 18 20 6"/><path d="M13 6h7v7"/>` },
+
+        { key: 'zoomBlur', name: 'Zoom Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="2"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>` },
+        { key: 'spinBlur', name: 'Spin Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>` },
+        { key: 'tiltShift', name: 'Tilt Shift', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 6h18M3 18h18"/><rect x="3" y="10" width="18" height="4" rx="1"/>` },
+        { key: 'edgeBlur', name: 'Edge Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4" stroke-dasharray="2 2"/>` },
+        { key: 'dreamGlow', name: 'Dream Glow', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5"/>` },
 
         // GEO & CROP
         { key: 'straighten', name: 'Straighten', cat: 'geo', min: -45, max: 45, def: 0, icon: `<line x1="2" y1="12" x2="22" y2="12"/><path d="M6 8l12 8"/>` },
@@ -849,9 +860,65 @@
             gx.restore();
         }
 
+        // Blur tambahan: zoom, spin, tilt-shift, edge/focus blur
+        const bj = state.adjust, mxb = Math.max(gw, gh);
+        const sizeTmp = () => { if (tmpCanvas.width !== gw || tmpCanvas.height !== gh) { tmpCanvas.width = gw; tmpCanvas.height = gh; } };
+        const sampled = (n, draw) => { // rata-rata n salinan yang ditransformasi (alpha 1/(i+2))
+            sizeTmp();
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gx.canvas, 0, 0);
+            gx.save();
+            for (let i = 0; i < n; i++) { gx.globalAlpha = 1 / (i + 2); draw(i / (n - 1) - 0.5); }
+            gx.restore();
+        };
+        if (bj.zoomBlur > 0) {
+            sampled(fast ? 8 : 12, (t) => { const s = 1 + t * (bj.zoomBlur / 100) * 0.16; gx.save(); gx.translate(gw / 2, gh / 2); gx.scale(s, s); gx.drawImage(tmpCanvas, -gw / 2, -gh / 2); gx.restore(); });
+        }
+        if (bj.spinBlur > 0) {
+            sampled(fast ? 8 : 12, (t) => { gx.save(); gx.translate(gw / 2, gh / 2); gx.rotate(t * (bj.spinBlur / 100) * 0.14); gx.drawImage(tmpCanvas, -gw / 2, -gh / 2); gx.restore(); });
+        }
+        const maskBlur = (radius, makeGrad) => {
+            sizeTmp();
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.filter = `blur(${radius}px)`;
+            tmpCtx.drawImage(gx.canvas, 0, 0);
+            tmpCtx.filter = 'none';
+            tmpCtx.globalCompositeOperation = 'destination-in';
+            tmpCtx.fillStyle = makeGrad(tmpCtx);
+            tmpCtx.fillRect(0, 0, gw, gh);
+            tmpCtx.globalCompositeOperation = 'source-over';
+            gx.drawImage(tmpCanvas, 0, 0);
+        };
+        if (bj.tiltShift > 0) {
+            maskBlur((bj.tiltShift / 100) * 0.012 * mxb + 1, (t) => {
+                const g = t.createLinearGradient(0, 0, 0, gh);
+                g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.3, 'rgba(0,0,0,0)');
+                g.addColorStop(0.7, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+                return g;
+            });
+        }
+        if (bj.edgeBlur > 0) {
+            maskBlur((bj.edgeBlur / 100) * 0.014 * mxb + 1, (t) => {
+                const g = t.createRadialGradient(gw / 2, gh / 2, Math.min(gw, gh) * 0.22, gw / 2, gh / 2, mxb * 0.62);
+                g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+                return g;
+            });
+        }
+
         const imgData = gx.getImageData(0, 0, gw, gh);
         applyColorPipelineToImageData(imgData, gw, gh, state);
         gx.putImageData(imgData, 0, 0);
+        if (bj.dreamGlow > 0) { // glow lembut (pro-mist)
+            sizeTmp();
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gx.canvas, 0, 0);
+            gx.save();
+            gx.globalCompositeOperation = 'screen';
+            gx.globalAlpha = (bj.dreamGlow / 100) * 0.55;
+            gx.filter = `blur(${(bj.dreamGlow / 100) * 0.02 * mxb + 2}px) brightness(1.08)`;
+            gx.drawImage(tmpCanvas, 0, 0);
+            gx.restore();
+        }
 
         if (state.adjust.vignette > 0) {
             const vStr = state.adjust.vignette / 100;
@@ -1335,54 +1402,135 @@
         c.restore();
     }
 
-    function renderDustOverlay(targetCtx, w, h, dustId, strength = 0.5) {
-        if (!dustId || dustId === 'none_dust' || strength <= 0) return;
-        targetCtx.save();
-        targetCtx.globalCompositeOperation = 'screen';
-        targetCtx.fillStyle = `rgba(245, 238, 225, ${(strength * 0.55).toFixed(2)})`;
-        targetCtx.strokeStyle = `rgba(245, 238, 225, ${(strength * 0.4).toFixed(2)})`;
+    function mulberry32(a) {
+        return function () {
+            a |= 0; a = (a + 0x6D2B79F5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
 
-        const count = dustId === 'dust_02' ? 95 : dustId === 'dust_04' ? 170 : (dustId === 'dust_05' || dustId === 'dust_06') ? 0 : 42;
-        for (let i = 0; i < count; i++) {
-            // Posisi deterministik agar tidak berkedip saat digeser slider
-            const px = ((i * 173 + 41) % 997) / 997 * w;
-            const py = ((i * 317 + 83) % 991) / 991 * h;
-            const pr = 1 + (i % 3) * 0.8;
-            targetCtx.beginPath();
-            targetCtx.arc(px, py, pr, 0, Math.PI * 2);
-            targetCtx.fill();
-        }
+    /**
+     * Vintage Dust: 16 jenis (debu, goresan, rambut, noda, retakan, lipatan, VHS, glitter).
+     * Posisi deterministik (seed dari id) sehingga tidak berkedip saat slider digeser.
+     */
+    function renderDustOverlay(c, w, h, id, k) {
+        if (!id || id === 'none_dust' || k <= 0) return;
+        let seed = 7;
+        for (let n = 0; n < id.length; n++) seed = (seed * 31 + id.charCodeAt(n)) >>> 0;
+        const R = mulberry32(seed), m = Math.min(w, h);
+        const U = (lo, hi) => lo + (hi - lo) * R();
+        const cl = (v) => Math.max(0, Math.min(1, v)).toFixed(3);
+        const light = (v) => `rgba(247,241,229,${cl(v)})`;
+        const dark = (v) => `rgba(20,15,10,${cl(v)})`;
+        const lw0 = Math.max(0.8, m * 0.0016);
 
-        if (dustId === 'dust_05') { // serat / rambut
-            targetCtx.lineWidth = Math.max(1, w / 900);
-            for (let s = 0; s < 8; s++) {
-                const sx = ((s * 211 + 37) % 100) / 100 * w, sy = ((s * 137 + 11) % 100) / 100 * h, len = w * (0.04 + (s % 3) * 0.03);
-                targetCtx.beginPath();
-                targetCtx.moveTo(sx, sy);
-                targetCtx.quadraticCurveTo(sx + len * 0.6, sy - len * 0.5, sx + len, sy + len * (s % 2 ? 0.3 : -0.2));
-                targetCtx.stroke();
+        const dots = (n, rmin, rmax, col, op, mode) => {
+            c.globalCompositeOperation = mode;
+            for (let q = 0; q < n; q++) {
+                c.fillStyle = col(U(0.35, 1) * op * k);
+                c.beginPath();
+                c.ellipse(U(0, w), U(0, h), Math.max(0.6, U(rmin, rmax) * m), Math.max(0.5, U(rmin, rmax) * m * U(0.5, 1)), U(0, 6.28), 0, 6.28);
+                c.fill();
             }
-        }
-        if (dustId === 'dust_06') { // bokeh debu
-            targetCtx.fillStyle = `rgba(255, 240, 210, ${(strength * 0.16).toFixed(2)})`;
-            for (let s = 0; s < 16; s++) {
-                const px = ((s * 193 + 57) % 97) / 97 * w, py = ((s * 271 + 19) % 89) / 89 * h;
-                targetCtx.beginPath();
-                targetCtx.arc(px, py, Math.min(w, h) * (0.02 + (s % 4) * 0.018), 0, Math.PI * 2);
-                targetCtx.fill();
+        };
+        const hair = (len, col, op, mode, lw) => {
+            c.globalCompositeOperation = mode; c.strokeStyle = col(op * k); c.lineWidth = lw; c.lineCap = 'round';
+            const x = U(0, w), y = U(0, h), a0 = U(0, 6.28), bend = U(-0.8, 0.8);
+            const x2 = x + Math.cos(a0) * len, y2 = y + Math.sin(a0) * len;
+            c.beginPath(); c.moveTo(x, y);
+            c.quadraticCurveTo((x + x2) / 2 + Math.cos(a0 + 1.57) * len * bend, (y + y2) / 2 + Math.sin(a0 + 1.57) * len * bend, x2, y2);
+            c.stroke();
+        };
+        const scratch = (n, op, diag) => {
+            c.globalCompositeOperation = 'screen'; c.lineCap = 'round';
+            for (let q = 0; q < n; q++) {
+                const x = U(0, w), y0 = U(-0.1, 0.6) * h, y1 = y0 + U(0.2, 0.7) * h, dr = U(-0.02, 0.02) * w + (diag ? U(0.05, 0.15) * w : 0);
+                c.strokeStyle = light(U(0.3, 1) * op * k); c.lineWidth = lw0 * U(0.6, 1.4);
+                c.beginPath(); c.moveTo(x, y0);
+                c.bezierCurveTo(x + dr * 0.3, y0 + (y1 - y0) * 0.3, x + dr * 0.8, y0 + (y1 - y0) * 0.7, x + dr, y1);
+                c.stroke();
             }
-        }
-        if (dustId === 'dust_03') {
-            targetCtx.lineWidth = 1.2;
-            for (let s = 0; s < 5; s++) {
-                const sx = ((s * 223 + 90) % 100) / 100 * w;
-                targetCtx.beginPath();
-                targetCtx.moveTo(sx, 0);
-                targetCtx.lineTo(sx + (s % 2 === 0 ? 8 : -8), h);
-                targetCtx.stroke();
+        };
+        const soft = (x, y, r, col, op, mode) => {
+            c.globalCompositeOperation = mode;
+            const g = c.createRadialGradient(x, y, 0, x, y, r);
+            g.addColorStop(0, col(op * k)); g.addColorStop(1, col(0));
+            c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 6.28); c.fill();
+        };
+        const crack = (x, y, a0, steps, len, depth) => {
+            const branches = [];
+            c.beginPath(); c.moveTo(x, y);
+            for (let s = 0; s < steps; s++) {
+                a0 += U(-0.6, 0.6); x += Math.cos(a0) * len; y += Math.sin(a0) * len; c.lineTo(x, y);
+                if (depth > 0 && R() < 0.18) branches.push([x, y, a0 + U(-1, 1), Math.floor(steps * 0.6), len * 0.8, depth - 1]);
             }
+            c.stroke();
+            branches.forEach((b) => crack(...b));
+        };
+        const star = (x, y, r) => {
+            c.beginPath(); c.moveTo(x, y - r);
+            c.quadraticCurveTo(x, y, x + r, y); c.quadraticCurveTo(x, y, x, y + r);
+            c.quadraticCurveTo(x, y, x - r, y); c.quadraticCurveTo(x, y, x, y - r); c.fill();
+        };
+
+        c.save();
+        switch (id) {
+            case 'dust_01': dots(46, 0.0015, 0.004, light, 0.6, 'screen'); dots(16, 0.001, 0.0025, dark, 0.35, 'multiply'); break;
+            case 'dust_02': dots(100, 0.0012, 0.0042, light, 0.6, 'screen'); dots(40, 0.001, 0.003, dark, 0.4, 'multiply'); break;
+            case 'dust_03': scratch(7, 0.5, false); break;
+            case 'dust_04': dots(190, 0.001, 0.006, light, 0.6, 'screen'); dots(90, 0.001, 0.004, dark, 0.45, 'multiply'); for (let q = 0; q < 5; q++) hair(m * U(0.08, 0.2), light, 0.5, 'screen', lw0); break;
+            case 'dust_05': for (let q = 0; q < 10; q++) hair(m * U(0.05, 0.14), light, 0.6, 'screen', lw0); break;
+            case 'dust_06': for (let q = 0; q < 14; q++) soft(U(0, w), U(0, h), m * U(0.03, 0.09), light, 0.28, 'screen'); break;
+            case 'dust_07': dots(160, 0.0008, 0.0028, dark, 0.75, 'multiply'); dots(20, 0.0008, 0.002, light, 0.5, 'screen'); break;
+            case 'dust_08': for (let q = 0; q < 6; q++) hair(m * U(0.15, 0.38), dark, 0.7, 'multiply', lw0 * 1.3); for (let q = 0; q < 2; q++) hair(m * U(0.1, 0.25), light, 0.5, 'screen', lw0); break;
+            case 'dust_09': scratch(18, 0.55, false); scratch(7, 0.45, true); break;
+            case 'dust_10':
+                for (let q = 0; q < 9; q++) soft(U(0, w), U(0, h), m * U(0.12, 0.32), (v) => `rgba(60,38,18,${cl(v)})`, 0.16, 'multiply');
+                for (let q = 0; q < 6; q++) soft(U(0, w), U(0, h), m * U(0.1, 0.26), light, 0.1, 'screen'); break;
+            case 'dust_11':
+                c.globalCompositeOperation = 'screen';
+                for (let q = 0; q < 14; q++) {
+                    const x = U(0, w), y = U(0, h), r = m * U(0.008, 0.03);
+                    c.strokeStyle = light(U(0.3, 0.6) * k); c.lineWidth = Math.max(0.8, r * 0.14);
+                    c.beginPath(); c.arc(x, y, r, 0, 6.28); c.stroke();
+                    c.beginPath(); c.arc(x, y, r * 0.6, 3.6, 5.2); c.stroke();
+                } break;
+            case 'dust_12':
+                for (let q = 0; q < 5; q++) soft(U(0.1, 0.9) * w, U(0.1, 0.9) * h, m * U(0.15, 0.3), light, 0.26, 'screen'); break;
+            case 'dust_13':
+                for (let q = 0; q < 26; q++) {
+                    const x = U(0, w), y = U(0, h), r = m * U(0.006, 0.022);
+                    soft(x, y, r * 2.4, light, 0.22, 'screen');
+                    c.globalCompositeOperation = 'screen'; c.fillStyle = light(U(0.6, 1) * k); star(x, y, r);
+                } break;
+            case 'dust_14':
+                c.globalCompositeOperation = 'multiply'; c.strokeStyle = dark(0.4 * k); c.lineWidth = Math.max(0.7, m * 0.0013); c.lineJoin = 'round';
+                for (let q = 0; q < 5; q++) crack(U(0, w), U(0, h), U(0, 6.28), 14, m * 0.022, 2);
+                break;
+            case 'dust_15':
+                for (let q = 0; q < 2; q++) {
+                    const horiz = q === 0, p0 = U(0.3, 0.7), tilt = U(-0.06, 0.06);
+                    const x0 = horiz ? 0 : p0 * w, y0 = horiz ? p0 * h : 0, x1 = horiz ? w : (p0 + tilt) * w, y1 = horiz ? (p0 + tilt) * h : h;
+                    const nx = horiz ? 0 : lw0 * 1.8, ny = horiz ? lw0 * 1.8 : 0;
+                    c.lineWidth = lw0 * 1.6;
+                    c.globalCompositeOperation = 'screen'; c.strokeStyle = light(0.4 * k); c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+                    c.globalCompositeOperation = 'multiply'; c.strokeStyle = dark(0.35 * k); c.beginPath(); c.moveTo(x0 + nx, y0 + ny); c.lineTo(x1 + nx, y1 + ny); c.stroke();
+                } break;
+            case 'dust_16': {
+                c.globalCompositeOperation = 'multiply'; c.fillStyle = dark(0.14 * k);
+                const step = Math.max(2, m * 0.007);
+                for (let y = 0; y < h; y += step) c.fillRect(0, y, w, Math.max(1, step * 0.4));
+                c.globalCompositeOperation = 'screen';
+                for (let q = 0; q < 5; q++) {
+                    const y = U(0, h), bh = m * U(0.008, 0.03);
+                    for (let x = 0; x < w; x += m * 0.05) { c.fillStyle = light(U(0.04, 0.2) * k); c.fillRect(x, y, m * 0.05 * U(0.5, 1.2), bh); }
+                } break;
+            }
+            default: break;
         }
-        targetCtx.restore();
+        c.restore();
     }
 
     // ==========================================
