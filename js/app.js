@@ -76,7 +76,10 @@
                 spinBlur: 0,
                 tiltShift: 0,
                 edgeBlur: 0,
-                dreamGlow: 0
+                dreamGlow: 0,
+                strobe: 0,
+                strobeAngle: 0,
+                strobeColor: 0
             },
             curves: createIdentityCurves(),
             flipH: false,
@@ -88,6 +91,7 @@
             dustStrength: 50,
             frameId: 'none_frame',
             frameStrength: 60,
+            masks: [],
             texts: [], // { id, text, x, y, font, fontName, size, color, opacity, rotate, bold, italic, shadow, outline, align }
             selectedTextId: null
         };
@@ -114,6 +118,7 @@
     // Crop State
     let isCropping = false;
     let cropRatio = 'free';
+    let cropFlip = false;
     let cropRect = { x: 40, y: 40, w: 220, h: 220 };
     let cropDragMode = null;
     let cropDragStart = null;
@@ -166,6 +171,10 @@
         { key: 'motionBlur', name: 'Motion Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 8h9M3 12h18M3 16h11"/><circle cx="18" cy="8" r="2"/>` },
         { key: 'motionAngle', name: 'Motion Angle', cat: 'optics', min: -90, max: 90, def: 0, icon: `<path d="M4 18 20 6"/><path d="M13 6h7v7"/>` },
 
+        { key: 'context_mask', name: 'Masking', cat: 'light', isContext: 'mask', icon: `<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="5" stroke-dasharray="2.5 2"/><path d="M12 7v10M7 12h10" opacity=".5"/>` },
+        { key: 'strobe', name: 'Strobe', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>` },
+        { key: 'strobeAngle', name: 'Strobe Angle', cat: 'optics', min: -180, max: 180, def: 0, icon: `<path d="M5 19 19 5"/><path d="M12 5h7v7"/><circle cx="6" cy="18" r="1.5"/>` },
+        { key: 'strobeColor', name: 'Strobe Color', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="9" cy="10" r="5"/><circle cx="15" cy="10" r="5"/><circle cx="12" cy="15" r="5"/>` },
         { key: 'zoomBlur', name: 'Zoom Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="2"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>` },
         { key: 'spinBlur', name: 'Spin Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>` },
         { key: 'tiltShift', name: 'Tilt Shift', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 6h18M3 18h18"/><rect x="3" y="10" width="18" height="4" rx="1"/>` },
@@ -695,8 +704,13 @@
 
         currentPhotoId = photo.id;
         thumbCache.clear();
+        closeMaskUI();
+        selectedMaskId = null;
+        maskCanvases.clear();
+        if (photo.maskCanvases) photo.maskCanvases.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
         state = JSON.parse(JSON.stringify(photo.editState));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
+        if (!state.masks) state.masks = [];
         if (!state.curves) state.curves = createIdentityCurves();
 
         const w = photo.workingBaseCanvas.width;
@@ -749,6 +763,7 @@
         const ec = createBlankCanvas(Math.round(mainCanvas.width * sc), Math.round(mainCanvas.height * sc));
         ec.getContext('2d').drawImage(mainCanvas, 0, 0, ec.width, ec.height);
         photo.editedCanvas = ec;
+        photo.maskCanvases = snapshotMasks();
         state.selectedTextId = prevSel;
 
         // Tandai edited jika ada perubahan dari default
@@ -757,6 +772,7 @@
             !state.activeCubeLutId &&
             state.effectId === 'none_leak' &&
             (!state.frameId || state.frameId === 'none_frame') &&
+            (!state.masks || !state.masks.length) &&
             state.texts.length === 0 &&
             isCurvesIdentity(state.curves) &&
             Object.values(state.adjust).every((v) => v === 0);
@@ -905,8 +921,25 @@
             });
         }
 
+        if (bj.strobe > 0) { // Stroboscopic: salinan bayangan berjejer dengan alpha menurun
+            sizeTmp();
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gx.canvas, 0, 0);
+            const sAmt = bj.strobe / 100, n = 3 + Math.round(sAmt * 5), gap = (0.02 + sAmt * 0.07) * mxb;
+            const ang = ((bj.strobeAngle || 0) * Math.PI) / 180, hue = bj.strobeColor || 0;
+            gx.save();
+            gx.globalCompositeOperation = 'lighten';
+            for (let i = 1; i <= n; i++) {
+                gx.globalAlpha = (1 - i / (n + 1)) * 0.7;
+                if (hue > 0) gx.filter = `hue-rotate(${i * hue * 1.2}deg) saturate(1.3)`;
+                gx.drawImage(tmpCanvas, Math.cos(ang) * gap * i, Math.sin(ang) * gap * i);
+            }
+            gx.restore();
+        }
+
         const imgData = gx.getImageData(0, 0, gw, gh);
         applyColorPipelineToImageData(imgData, gw, gh, state);
+        if (state.masks && state.masks.length) applyMasks(imgData, gw, gh);
         gx.putImageData(imgData, 0, 0);
         if (bj.dreamGlow > 0) { // glow lembut (pro-mist)
             sizeTmp();
@@ -1552,6 +1585,7 @@
         // Matikan crop / brush jika pindah tab utama
         if (tabName !== 'Tools') {
             closeCropOverlay();
+            closeMaskUI();
             magicWandActive = false;
             brushModeActive = false;
             mainCanvas.style.cursor = 'default';
@@ -1779,6 +1813,7 @@
     function handleToolClick(tool) {
         // Matikan mode khusus jika memilih tool lain
         if (tool.isContext !== 'crop') closeCropOverlay();
+        if (tool.isContext !== 'mask') closeMaskUI();
         if (tool.isContext !== 'wand') magicWandActive = false;
         if (tool.isContext !== 'brush') brushModeActive = false;
         if (tool.isContext !== 'curves') document.getElementById('curvesEditor').classList.add('hidden');
@@ -1848,8 +1883,10 @@
             rotateBaseCanvas(1);
         } else if (actionKey === 'action_flip_h') {
             state.flipH = !state.flipH;
+            clearMasks();
         } else if (actionKey === 'action_flip_v') {
             state.flipV = !state.flipV;
+            clearMasks();
         } else if (actionKey === 'action_ai_enhance') {
             state.adjust.exposure = 6;
             state.adjust.contrast = 15;
@@ -1893,11 +1930,11 @@
 
         if (contextType === 'crop') {
             openCropOverlay();
-            const ratios = ['free', '1:1', '4:5', '9:16', '16:9'];
+            const ratios = ['free', 'orig', '1:1', '4:5', '3:4', '2:3', '3:2', '4:3', '9:16', '16:9'];
             ratios.forEach((r) => {
                 const chip = document.createElement('button');
                 chip.className = `dark-chip ${cropRatio === r ? 'active' : ''}`;
-                chip.textContent = r.toUpperCase();
+                chip.textContent = r === 'orig' ? 'ORIGINAL' : r.toUpperCase();
                 chip.addEventListener('click', () => {
                     cropRatio = r;
                     initCropBoxRect();
@@ -1905,6 +1942,16 @@
                 });
                 bar.appendChild(chip);
             });
+
+            const flipBtn = document.createElement('button');
+            flipBtn.className = `dark-chip ${cropFlip ? 'active' : ''}`;
+            flipBtn.textContent = '⇄ PUTAR RASIO';
+            flipBtn.addEventListener('click', () => {
+                cropFlip = !cropFlip;
+                initCropBoxRect();
+                openToolContextBar('crop', 'Crop');
+            });
+            bar.appendChild(flipBtn);
 
             const applyBtn = document.createElement('button');
             applyBtn.className = 'dark-chip active';
@@ -1953,6 +2000,31 @@
                 });
                 bar.appendChild(chip);
             });
+        } else if (contextType === 'mask') {
+            openMaskUI();
+            const mk = (label, fn, active) => {
+                const b = document.createElement('button');
+                b.className = `dark-chip ${active ? 'active' : ''}`;
+                b.textContent = label;
+                b.addEventListener('click', fn);
+                bar.appendChild(b);
+            };
+            mk('+ LINEAR', () => addMask('linear'));
+            mk('+ RADIAL', () => addMask('radial'));
+            mk('+ BRUSH', () => addMask('brush'));
+            state.masks.forEach((m, i) => mk(`${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
+            const sm = selectedMask();
+            if (sm) {
+                MASK_ATTRS.forEach(([k, label]) => {
+                    if (k === 'size' && sm.type !== 'brush') return;
+                    mk(label, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
+                });
+                mk(sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
+                mk(maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
+                if (sm.type === 'brush') mk(maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
+                mk('✕ HAPUS MASK', () => deleteMask(sm.id));
+            }
+            syncMasterSliderForMask();
         } else if (contextType === 'brush') {
             brushModeActive = true;
             mainCanvas.style.cursor = 'crosshair';
@@ -2478,6 +2550,32 @@
         const strip = document.getElementById('fontCardsStrip');
         strip.innerHTML = '';
 
+        let catRow = document.getElementById('fontCatRow');
+        if (!catRow) {
+            catRow = document.createElement('div');
+            catRow.id = 'fontCatRow';
+            catRow.className = 'subcat-bar';
+            strip.parentNode.insertBefore(catRow, strip);
+        }
+        catRow.innerHTML = '';
+        ['all', 'serif', 'sans', 'display', 'script', 'hand', 'mono', 'custom'].forEach((c) => {
+            const b = document.createElement('button');
+            b.className = `subcat-btn ${activeFontCat === c ? 'active' : ''}`;
+            b.textContent = c.toUpperCase();
+            b.addEventListener('click', () => { activeFontCat = c; renderFontCardsStrip(activeText); });
+            catRow.appendChild(b);
+        });
+        const fontCatOf = (f) => {
+            if (f.cat) return f.cat;
+            if (f.id && f.id.startsWith('custom')) return 'custom';
+            const fam = (f.family || '').toLowerCase();
+            if (fam.includes('cursive')) return 'script';
+            if (fam.includes('monospace') || fam.includes('mono')) return 'mono';
+            if (fam.includes('sans-serif')) return 'sans';
+            if (fam.includes('serif')) return 'serif';
+            return 'custom';
+        };
+
         // Kartu "+ ADD FONT" persis seperti Screenshot 4
         const addFontCard = document.createElement('button');
         addFontCard.className = 'font-card dashed';
@@ -2491,6 +2589,7 @@
         strip.appendChild(addFontCard);
 
         customFontsList.forEach((f) => {
+            if (activeFontCat !== 'all' && fontCatOf(f) !== activeFontCat) return;
             const isSelected = activeText && activeText.font === f.family;
             const card = document.createElement('button');
             card.className = `font-card ${isSelected ? 'active' : ''}`;
@@ -2502,6 +2601,7 @@
                 if (!activeText) return;
                 activeText.font = f.family;
                 activeText.fontName = f.name;
+                if (document.fonts && document.fonts.load) document.fonts.load(`40px ${f.family}`).then(() => renderEditorCanvas()).catch(() => {});
                 renderTextTabUI();
                 renderEditorCanvas();
             });
@@ -2593,6 +2693,9 @@
             } else if (masterSliderMode === 'tool') {
                 state.adjust[activeToolKey] = val;
                 renderToolsStrip();
+            } else if (masterSliderMode === 'mask') {
+                const mk = selectedMask();
+                if (mk) mk[maskAttr] = val;
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'dust') state.dustStrength = val;
                 else if (activeEffectCat === 'frames') state.frameStrength = val;
@@ -2613,6 +2716,9 @@
                 state.adjust[activeToolKey] = 0;
                 masterSlider.value = 0;
                 renderToolsStrip();
+            } else if (masterSliderMode === 'mask') {
+                const mk = selectedMask();
+                if (mk) { mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0; masterSlider.value = mk[maskAttr]; }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
                 masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
@@ -2780,6 +2886,9 @@
             basePhotoCanvas.height = photo.originalCanvas.height;
             basePhotoCtx.drawImage(photo.originalCanvas, 0, 0);
             brushCtx.clearRect(0, 0, brushCanvas.width, brushCanvas.height);
+            maskCanvases.clear();
+            selectedMaskId = null;
+            closeMaskUI();
             state = createDefaultEditState();
             switchEditorMainTab(activeEditorMainTab);
             renderEditorCanvas();
@@ -2930,19 +3039,24 @@
         document.getElementById('cropOverlay').classList.add('hidden');
     }
 
+    function cropAspect() {
+        if (cropRatio === 'free') return null;
+        let r;
+        if (cropRatio === 'orig') r = basePhotoCanvas.width / basePhotoCanvas.height;
+        else { const [rw, rh] = cropRatio.split(':').map(Number); r = rw / rh; }
+        return cropFlip ? 1 / r : r;
+    }
+
     function initCropBoxRect() {
         const dw = mainCanvas.clientWidth;
         const dh = mainCanvas.clientHeight;
         let w = dw * 0.82;
         let h = dh * 0.82;
-
-        if (cropRatio !== 'free') {
-            const [rw, rh] = cropRatio.split(':').map(Number);
-            const target = rw / rh;
-            if (w / h > target) w = h * target;
-            else h = w / target;
+        const ar = cropAspect();
+        if (ar) {
+            if (w / h > ar) w = h * ar;
+            else h = w / ar;
         }
-
         cropRect = { x: (dw - w) / 2, y: (dh - h) / 2, w, h };
         updateCropBoxDOM();
     }
@@ -2955,53 +3069,55 @@
         box.style.height = `${cropRect.h}px`;
     }
 
+    // Crop bebas: 8 handle (4 sudut + 4 sisi), mendukung sentuhan & mouse, rasio bisa dikunci
     function bindCropDragEvents() {
         const cropBox = document.getElementById('cropBox');
         const overlay = document.getElementById('cropOverlay');
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        cropBox.style.touchAction = 'none';
 
-        cropBox.addEventListener('mousedown', (e) => {
+        cropBox.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
+            e.preventDefault();
             cropDragMode = e.target.getAttribute('data-handle') || 'move';
             cropDragStart = { mx: e.clientX, my: e.clientY, rect: { ...cropRect } };
+            try { cropBox.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ }
         });
 
-        window.addEventListener('mousemove', (e) => {
+        window.addEventListener('pointermove', (e) => {
             if (!isCropping || !cropDragMode) return;
-            const bounds = overlay.getBoundingClientRect();
-            const dx = e.clientX - cropDragStart.mx;
-            const dy = e.clientY - cropDragStart.my;
-            const maxW = bounds.width;
-            const maxH = bounds.height;
-            const r = { ...cropDragStart.rect };
+            const b = overlay.getBoundingClientRect();
+            const maxW = b.width, maxH = b.height, MIN = 40;
+            const dx = e.clientX - cropDragStart.mx, dy = e.clientY - cropDragStart.my, s = cropDragStart.rect;
+            const m = cropDragMode;
 
-            if (cropDragMode === 'move') {
-                r.x = Math.max(0, Math.min(maxW - r.w, r.x + dx));
-                r.y = Math.max(0, Math.min(maxH - r.h, r.y + dy));
-            } else {
-                if (cropDragMode.includes('e')) r.w = Math.max(40, Math.min(maxW - r.x, r.w + dx));
-                if (cropDragMode.includes('s')) r.h = Math.max(40, Math.min(maxH - r.y, r.h + dy));
-                if (cropDragMode.includes('w')) {
-                    const nw = Math.max(40, r.w - dx);
-                    r.x += r.w - nw;
-                    r.w = nw;
-                }
-                if (cropDragMode.includes('n')) {
-                    const nh = Math.max(40, r.h - dy);
-                    r.y += r.h - nh;
-                    r.h = nh;
-                }
-                if (cropRatio !== 'free') {
-                    const [rw, rh] = cropRatio.split(':').map(Number);
-                    r.h = r.w / (rw / rh);
-                }
+            if (m === 'move') {
+                cropRect = { ...s, x: clamp(s.x + dx, 0, maxW - s.w), y: clamp(s.y + dy, 0, maxH - s.h) };
+                updateCropBoxDOM();
+                return;
             }
-            cropRect = r;
+            let x1 = s.x, y1 = s.y, x2 = s.x + s.w, y2 = s.y + s.h;
+            if (m.includes('w')) x1 = clamp(x1 + dx, 0, x2 - MIN);
+            if (m.includes('e')) x2 = clamp(x2 + dx, x1 + MIN, maxW);
+            if (m.includes('n')) y1 = clamp(y1 + dy, 0, y2 - MIN);
+            if (m.includes('s')) y2 = clamp(y2 + dy, y1 + MIN, maxH);
+
+            const ar = cropAspect();
+            if (ar) {
+                let w = x2 - x1, h = y2 - y1;
+                if (m === 'n' || m === 's') w = h * ar; else h = w / ar;
+                const cx = s.x + s.w / 2, cy = s.y + s.h / 2;
+                if (m.includes('w')) x1 = x2 - w; else if (m.includes('e')) x2 = x1 + w; else { x1 = cx - w / 2; x2 = x1 + w; }
+                if (m.includes('n')) y1 = y2 - h; else if (m.includes('s')) y2 = y1 + h; else { y1 = cy - h / 2; y2 = y1 + h; }
+                if (x1 < 0 || y1 < 0 || x2 > maxW + 0.5 || y2 > maxH + 0.5 || w < MIN || h < MIN) return;
+            }
+            cropRect = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
             updateCropBoxDOM();
         });
 
-        window.addEventListener('mouseup', () => {
-            cropDragMode = null;
-        });
+        const end = () => { cropDragMode = null; };
+        window.addEventListener('pointerup', end);
+        window.addEventListener('pointercancel', end);
     }
 
     function applyCropSelection() {
@@ -3028,6 +3144,7 @@
                 t.y -= sy;
             });
         }
+        clearMasks();
         closeCropOverlay();
         document.getElementById('toolContextExtras').classList.add('hidden');
         renderEditorCanvas();
@@ -3035,6 +3152,7 @@
     }
 
     function rotateBaseCanvas(dir) {
+        clearMasks();
         const ow = basePhotoCanvas.width;
         const oh = basePhotoCanvas.height;
         const nw = oh;
@@ -3064,6 +3182,299 @@
     // ==========================================
     // 11. HISTORY (UNDO / REDO) & EXPORT
     // ==========================================
+    // ==========================================
+    // LOCAL ADJUSTMENT MASKS (Linear / Radial / Brush) — pengaturan cahaya per area
+    // ==========================================
+    const MASK_ATTRS = [
+        ['exposure', 'EXPOSURE'], ['contrast', 'CONTRAST'], ['highlights', 'HIGHLIGHTS'], ['shadows', 'SHADOWS'],
+        ['saturation', 'SATURATION'], ['warmth', 'WARMTH'], ['feather', 'FEATHER'], ['size', 'BRUSH SIZE']
+    ];
+    const MASK_DEFAULTS = { feather: 50, size: 8 };
+    const maskCanvases = new Map(); // id mask brush -> canvas alpha (≤1024px)
+    const maskTmp = document.createElement('canvas');
+    const maskTmpCtx = maskTmp.getContext('2d', { willReadFrequently: true });
+    let maskUiActive = false, maskBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
+    let activeFontCat = 'all';
+
+    const selectedMask = () => (state.masks || []).find((m) => m.id === selectedMaskId) || null;
+
+    function snapshotMasks() {
+        const mm = new Map();
+        maskCanvases.forEach((c, k) => mm.set(k, cloneCanvas(c)));
+        return mm;
+    }
+
+    function clearMasks() {
+        if (state.masks && state.masks.length) {
+            document.getElementById('gestureHintText').textContent = 'MASKING DIRESET KARENA FOTO DI-CROP / DIPUTAR / DI-FLIP';
+        }
+        state.masks = [];
+        maskCanvases.clear();
+        selectedMaskId = null;
+        if (maskUiActive) refreshMaskBar();
+    }
+
+    function computeMaskAlpha(m, gw, gh) {
+        const A = new Uint8ClampedArray(gw * gh);
+        const f = (m.feather ?? 50) / 100;
+        const ss = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+        if (m.type === 'linear') {
+            const X1 = m.x1 * gw, Y1 = m.y1 * gh, dx = m.x2 * gw - X1, dy = m.y2 * gh - Y1, L2 = dx * dx + dy * dy || 1, hw = 0.12 + 0.38 * f;
+            for (let y = 0, p = 0; y < gh; y++) {
+                for (let x = 0; x < gw; x++, p++) {
+                    const t = ((x - X1) * dx + (y - Y1) * dy) / L2;
+                    A[p] = (1 - ss(0.5 - hw, 0.5 + hw, t)) * 255;
+                }
+            }
+        } else if (m.type === 'radial') {
+            const cx = m.cx * gw, cy = m.cy * gh, R = Math.max(2, m.r * Math.max(gw, gh)), ff = 0.08 + 0.92 * f;
+            for (let y = 0, p = 0; y < gh; y++) {
+                for (let x = 0; x < gw; x++, p++) {
+                    A[p] = (1 - ss(1 - ff, 1, Math.hypot(x - cx, y - cy) / R)) * 255;
+                }
+            }
+        } else {
+            const mc = maskCanvases.get(m.id);
+            if (mc) {
+                maskTmp.width = gw;
+                maskTmp.height = gh;
+                maskTmpCtx.clearRect(0, 0, gw, gh);
+                maskTmpCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(gw, gh)}px)` : 'none';
+                maskTmpCtx.drawImage(mc, 0, 0, gw, gh);
+                maskTmpCtx.filter = 'none';
+                const d = maskTmpCtx.getImageData(0, 0, gw, gh).data;
+                for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
+            }
+        }
+        if (m.invert) for (let p = 0; p < A.length; p++) A[p] = 255 - A[p];
+        return A;
+    }
+
+    function applyMasks(imgData, gw, gh) {
+        const d = imgData.data;
+        state.masks.forEach((m) => {
+            const ex = (m.exposure || 0) / 100, ct = (m.contrast || 0) / 100, hl = (m.highlights || 0) / 100;
+            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100;
+            if (!ex && !ct && !hl && !sh && !sa && !wm) return;
+            const A = computeMaskAlpha(m, gw, gh);
+            for (let p = 0, i = 0; p < A.length; p++, i += 4) {
+                if (A[p] < 2) continue;
+                const k = A[p] / 255;
+                let r = d[i], g = d[i + 1], b = d[i + 2];
+                if (ex) { const f = 1 + ex * k * (ex > 0 ? 1.1 : 0.9); r *= f; g *= f; b *= f; }
+                if (ct) { const c = 1 + ct * k * 0.8; r = (r - 128) * c + 128; g = (g - 128) * c + 128; b = (b - 128) * c + 128; }
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                if (hl) { const v = hl * k * Math.max(0, (lum - 110) / 145) * 70; r += v; g += v; b += v; }
+                if (sh) { const v = sh * k * Math.max(0, (150 - lum) / 150) * 80; r += v; g += v; b += v; }
+                if (sa) { const s = 1 + sa * k; r = lum + (r - lum) * s; g = lum + (g - lum) * s; b = lum + (b - lum) * s; }
+                if (wm) { const v = wm * k * 30; r += v; b -= v; }
+                d[i] = r; d[i + 1] = g; d[i + 2] = b; // Uint8ClampedArray membatasi 0-255
+            }
+        });
+    }
+
+    function addMask(type) {
+        if (state.masks.length >= 6) {
+            document.getElementById('gestureHintText').textContent = 'MAKSIMAL 6 MASK';
+            return;
+        }
+        const m = { id: 'mk_' + Date.now().toString(36), type, feather: 50, invert: false, exposure: 25, contrast: 0, highlights: 0, shadows: 0, saturation: 0, warmth: 0, size: 8 };
+        if (type === 'linear') Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
+        else if (type === 'radial') Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
+        else {
+            const sc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
+            maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * sc)), Math.max(8, Math.round(basePhotoCanvas.height * sc))));
+        }
+        state.masks.push(m);
+        selectedMaskId = m.id;
+        maskAttr = 'exposure';
+        maskShow = true;
+        refreshMaskBar();
+        renderEditorCanvas();
+        pushHistory(`Add ${type} mask`, true);
+    }
+
+    function selectMask(id) {
+        selectedMaskId = id;
+        maskAttr = 'exposure';
+        refreshMaskBar();
+    }
+
+    function deleteMask(id) {
+        state.masks = state.masks.filter((m) => m.id !== id);
+        maskCanvases.delete(id);
+        selectedMaskId = state.masks[0]?.id || null;
+        refreshMaskBar();
+        renderEditorCanvas();
+        pushHistory('Delete mask', true);
+    }
+
+    function refreshMaskBar() {
+        const b = document.getElementById('toolContextExtras');
+        const sl = b.scrollLeft;
+        openToolContextBar('mask', 'Masking');
+        b.scrollLeft = sl;
+    }
+
+    function syncMasterSliderForMask() {
+        const slider = document.getElementById('masterSlider'), m = selectedMask();
+        if (!m) {
+            masterSliderMode = 'context';
+            slider.disabled = true;
+            document.getElementById('activeParamCategory').textContent = 'MASKING';
+            document.getElementById('activeParamTitle').textContent = 'Tambah mask';
+            document.getElementById('activeParamValue').textContent = '';
+            return;
+        }
+        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && m.type !== 'brush'));
+        if (ai < 0) ai = 0;
+        maskAttr = MASK_ATTRS[ai][0];
+        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size';
+        masterSliderMode = 'mask';
+        slider.disabled = false;
+        slider.min = isSize ? 1 : isFeather ? 0 : -100;
+        slider.max = isSize ? 40 : 100;
+        slider.value = m[maskAttr] ?? (MASK_DEFAULTS[maskAttr] ?? 0);
+        document.getElementById('activeParamCategory').textContent = `MASK ${state.masks.indexOf(m) + 1} · ${m.type.toUpperCase()}`;
+        document.getElementById('activeParamTitle').textContent = MASK_ATTRS[ai][1];
+        document.getElementById('activeParamValue').textContent = slider.value;
+    }
+
+    function sizeMaskOverlay() {
+        const ov = document.getElementById('maskOverlay');
+        ov.width = Math.max(1, mainCanvas.clientWidth);
+        ov.height = Math.max(1, mainCanvas.clientHeight);
+    }
+
+    function maskHintText() {
+        const m = selectedMask();
+        if (!m) return 'TAMBAH MASK: LINEAR, RADIAL, ATAU BRUSH';
+        if (m.type === 'linear') return 'TARIK GARIS DI FOTO · EFEK PENUH DI TITIK AWAL, MEMUDAR KE UJUNG';
+        if (m.type === 'radial') return 'TARIK DARI PUSAT UNTUK MENENTUKAN AREA LINGKARAN';
+        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS' : 'KUAS AREA YANG INGIN DIATUR CAHAYANYA';
+    }
+
+    function drawMaskOverlay() {
+        if (!maskUiActive) return;
+        const ov = document.getElementById('maskOverlay');
+        if (ov.width !== mainCanvas.clientWidth || ov.height !== mainCanvas.clientHeight) sizeMaskOverlay();
+        const c = ov.getContext('2d'), W = ov.width, Hh = ov.height;
+        c.clearRect(0, 0, W, Hh);
+        document.getElementById('gestureHintText').textContent = maskHintText();
+        const m = selectedMask();
+        if (!m) return;
+        if (maskShow) {
+            const sw = Math.max(8, Math.round(W / 4)), sh = Math.max(8, Math.round(Hh / 4)), A = computeMaskAlpha(m, sw, sh);
+            maskTmp.width = sw;
+            maskTmp.height = sh;
+            const id = maskTmpCtx.createImageData(sw, sh);
+            for (let p = 0; p < A.length; p++) { id.data[p * 4] = 255; id.data[p * 4 + 1] = 60; id.data[p * 4 + 2] = 70; id.data[p * 4 + 3] = A[p] * 0.5; }
+            maskTmpCtx.putImageData(id, 0, 0);
+            c.drawImage(maskTmp, 0, 0, W, Hh);
+        }
+        c.lineWidth = 2;
+        c.strokeStyle = '#ffb547';
+        c.fillStyle = '#ffb547';
+        c.setLineDash([8, 6]);
+        if (m.type === 'linear') {
+            const x1 = m.x1 * W, y1 = m.y1 * Hh, x2 = m.x2 * W, y2 = m.y2 * Hh, len = Math.hypot(x2 - x1, y2 - y1) || 1;
+            const nx = (-(y2 - y1) / len) * W * 2, ny = ((x2 - x1) / len) * W * 2;
+            c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+            [[x1, y1], [x2, y2]].forEach(([px, py]) => { c.beginPath(); c.moveTo(px - nx, py - ny); c.lineTo(px + nx, py + ny); c.stroke(); });
+            c.setLineDash([]);
+            [[x1, y1], [x2, y2]].forEach(([px, py]) => { c.beginPath(); c.arc(px, py, 6, 0, 6.28); c.fill(); });
+        } else if (m.type === 'radial') {
+            c.beginPath(); c.arc(m.cx * W, m.cy * Hh, m.r * Math.max(W, Hh), 0, 6.28); c.stroke();
+            c.setLineDash([]);
+            c.beginPath(); c.arc(m.cx * W, m.cy * Hh, 6, 0, 6.28); c.fill();
+        }
+        c.setLineDash([]);
+    }
+
+    function openMaskUI() {
+        maskUiActive = true;
+        bindMaskEvents();
+        if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[0].id;
+        document.getElementById('maskOverlay').classList.remove('hidden');
+        sizeMaskOverlay();
+        drawMaskOverlay();
+        if (!maskRO && window.ResizeObserver) {
+            maskRO = new ResizeObserver(() => { if (maskUiActive) drawMaskOverlay(); });
+            maskRO.observe(mainCanvas);
+        }
+    }
+
+    function closeMaskUI() {
+        maskUiActive = false;
+        const ov = document.getElementById('maskOverlay');
+        if (ov) ov.classList.add('hidden');
+    }
+
+    function maskPaint(m, from, to) {
+        const mc = maskCanvases.get(m.id);
+        if (!mc) return;
+        const c = mc.getContext('2d');
+        c.save();
+        c.lineCap = 'round';
+        c.lineJoin = 'round';
+        c.lineWidth = Math.max(2, ((m.size ?? 8) / 100) * Math.min(mc.width, mc.height));
+        c.globalCompositeOperation = maskErase ? 'destination-out' : 'source-over';
+        c.strokeStyle = '#ffffff';
+        c.beginPath();
+        c.moveTo(from.x * mc.width, from.y * mc.height);
+        c.lineTo(to.x * mc.width + 0.01, to.y * mc.height);
+        c.stroke();
+        c.restore();
+    }
+
+    function bindMaskEvents() {
+        if (maskBound) return;
+        maskBound = true;
+        const ov = document.getElementById('maskOverlay');
+        const pt = (e) => {
+            const r = ov.getBoundingClientRect();
+            return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+        };
+        ov.addEventListener('pointerdown', (e) => {
+            const m = selectedMask();
+            if (!m) return;
+            e.preventDefault();
+            try { ov.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ }
+            const p = pt(e);
+            maskDrag = { last: p, m };
+            if (m.type === 'linear') { m.x1 = p.x; m.y1 = p.y; m.x2 = p.x; m.y2 = p.y + 0.001; }
+            else if (m.type === 'radial') { m.cx = p.x; m.cy = p.y; m.r = 0.02; }
+            else maskPaint(m, p, p);
+            renderEditorCanvas();
+            drawMaskOverlay();
+        });
+        ov.addEventListener('pointermove', (e) => {
+            if (!maskDrag) return;
+            const m = maskDrag.m, p = pt(e);
+            if (m.type === 'linear') { m.x2 = p.x; m.y2 = p.y; }
+            else if (m.type === 'radial') m.r = Math.hypot((p.x - m.cx) * ov.width, (p.y - m.cy) * ov.height) / Math.max(ov.width, ov.height);
+            else { maskPaint(m, maskDrag.last, p); maskDrag.last = p; }
+            renderEditorCanvas();
+            drawMaskOverlay();
+        });
+        const end = () => {
+            if (!maskDrag) return;
+            const m = maskDrag.m;
+            maskDrag = null;
+            if (m.type === 'linear' && Math.hypot((m.x2 - m.x1) * ov.width, (m.y2 - m.y1) * ov.height) < 24) {
+                m.x2 = m.x1;
+                m.y2 = Math.min(1, m.y1 + 0.3);
+                if (m.y2 - m.y1 < 0.05) { m.y2 = m.y1; m.y1 = Math.max(0, m.y1 - 0.3); }
+            }
+            if (m.type === 'radial' && m.r < 0.03) m.r = 0.25;
+            renderEditorCanvas();
+            drawMaskOverlay();
+            pushHistory(`Mask ${m.type}`, true);
+        };
+        ov.addEventListener('pointerup', end);
+        ov.addEventListener('pointercancel', end);
+    }
+
     function pushHistory(label, light) {
         if (historyIndex < historyStack.length - 1) {
             historyStack = historyStack.slice(0, historyIndex + 1);
@@ -3075,6 +3486,7 @@
             stateSnap: JSON.parse(JSON.stringify(state)),
             baseSnap: reuse ? prev.baseSnap : cloneCanvas(basePhotoCanvas),
             brushSnap: reuse ? prev.brushSnap : cloneCanvas(brushCanvas),
+            maskSnap: snapshotMasks(),
             w: basePhotoCanvas.width,
             h: basePhotoCanvas.height
         });
@@ -3089,6 +3501,7 @@
         const snap = historyStack[historyIndex];
         state = JSON.parse(JSON.stringify(snap.stateSnap));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
+        if (!state.masks) state.masks = [];
 
         basePhotoCanvas.width = snap.w;
         basePhotoCanvas.height = snap.h;
@@ -3099,6 +3512,10 @@
         brushCanvas.height = snap.h;
         brushCtx.clearRect(0, 0, snap.w, snap.h);
         brushCtx.drawImage(snap.brushSnap, 0, 0);
+
+        maskCanvases.clear();
+        if (snap.maskSnap) snap.maskSnap.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
+        if (maskUiActive) refreshMaskBar();
 
         switchEditorMainTab(activeEditorMainTab);
         renderEditorCanvas();
