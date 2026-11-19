@@ -1126,6 +1126,21 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['x_st6', 'LIGHTBURST', 'Night Burst', 'strobe', 'STROBE FLASH', { exposure: 8, contrast: 22, warmth: 8, tint: 6, saturation: 22, highlights: 16, shadows: -22 }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
+// EDITORIAL SUN — hangat, kontras kuat, hitam terangkat tipis (potret golden hour)
+[
+    ['x_ed1', 'SUNLIT', 'Sunlit Editorial', 'editorial', 'EDITORIAL SUN', { warmth: 15, contrast: 24, saturation: 10, vibrance: 8, highlights: -10, shadows: -4, fade: 5, shadowsTint: [44, 30, 20], highlightsTint: [255, 214, 168], splitStrength: 0.16, curve: { rgb: [[0, 12], [64, 52], [192, 206], [255, 250]] } }],
+    ['x_ed2', 'GOLDTEAL', 'Golden Teal', 'editorial', 'EDITORIAL SUN', { warmth: 12, contrast: 22, saturation: 8, fade: 5, shadowsTint: [20, 52, 56], highlightsTint: [255, 208, 150], splitStrength: 0.22 }],
+    ['x_ed3', 'HERITAGE', 'Heritage Warm', 'editorial', 'EDITORIAL SUN', { warmth: 18, contrast: 26, saturation: 14, vibrance: 10, shadows: -8, highlights: -6, fade: 4, grain: 6 }],
+    ['x_ed4', 'BRICKSUN', 'Brick & Sun', 'editorial', 'EDITORIAL SUN', { warmth: 14, contrast: 30, saturation: 12, shadows: -14, highlights: -12, tint: 3, fade: 3, curve: { rgb: [[0, 8], [64, 46], [192, 210], [255, 252]] } }],
+    ['x_ed5', 'MATTEGOLD', 'Matte Gold', 'editorial', 'EDITORIAL SUN', { warmth: 16, contrast: 14, saturation: 4, fade: 12, highlights: -8, shadowsTint: [50, 36, 24], highlightsTint: [255, 222, 170], splitStrength: 0.14 }],
+    ['x_ed6', 'ZFCHROME', 'Zf Chrome', 'editorial', 'EDITORIAL SUN', { warmth: 10, contrast: 28, saturation: -4, vibrance: 12, highlights: -14, shadows: -6, fade: 4 }],
+    ['x_ed7', 'WISUDA', 'Graduation Gold', 'editorial', 'EDITORIAL SUN', { warmth: 17, contrast: 22, saturation: 12, vibrance: 14, brightness: 2, highlights: -10, fade: 6, shadowsTint: [40, 28, 18], highlightsTint: [255, 218, 170], splitStrength: 0.12 }],
+    ['x_ed8', 'LOWKEY', 'Low-Key Warm', 'editorial', 'EDITORIAL SUN', { exposure: -6, warmth: 14, contrast: 30, saturation: 12, shadows: -16, highlights: -6, fade: 3 }],
+    ['x_ed9', 'HIGHSUN', 'High Sun Pop', 'editorial', 'EDITORIAL SUN', { exposure: 4, warmth: 12, contrast: 20, saturation: 16, vibrance: 10, highlights: -14, fade: 4 }],
+    ['x_ed10', 'SOFTSUN', 'Soft Sunlit', 'editorial', 'EDITORIAL SUN', { warmth: 12, contrast: 14, saturation: 6, fade: 8, brightness: 4, highlights: -8 }],
+    ['x_ed11', 'EDTEAL', 'Editorial Teal Shadow', 'editorial', 'EDITORIAL SUN', { warmth: 10, contrast: 26, saturation: 10, shadowsTint: [14, 44, 52], highlightsTint: [255, 204, 150], splitStrength: 0.26 }]
+].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
+
 window.FILM_PRESETS = FILM_PRESETS;
 window.ANALOG_EFFECTS = ANALOG_EFFECTS;
 window.EDITORIAL_FONTS = EDITORIAL_FONTS;

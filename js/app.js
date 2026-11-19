@@ -12,6 +12,7 @@
 
     let myCubeLuts = window.createDefaultSampleLUTs();
     let favoritePresetIds = new Set(['p400', 'fuji_chrome', 'cinestill800t']);
+    const WHEEL_KEYS = ['sh', 'mid', 'hi'];
     let customFontsList = [...window.EDITORIAL_FONTS];
 
     // Canvases
@@ -77,6 +78,8 @@
                 tiltShift: 0,
                 edgeBlur: 0,
                 dreamGlow: 0,
+                whites: 0,
+                blacks: 0,
                 strobe: 0,
                 strobeAngle: 0,
                 strobeColor: 0
@@ -92,6 +95,8 @@
             frameId: 'none_frame',
             frameStrength: 60,
             masks: [],
+            wheels: defaultWheels(),
+            wheelsAmt: 100,
             texts: [], // { id, text, x, y, font, fontName, size, color, opacity, rotate, bold, italic, shadow, outline, align }
             selectedTextId: null
         };
@@ -171,6 +176,10 @@
         { key: 'motionBlur', name: 'Motion Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 8h9M3 12h18M3 16h11"/><circle cx="18" cy="8" r="2"/>` },
         { key: 'motionAngle', name: 'Motion Angle', cat: 'optics', min: -90, max: 90, def: 0, icon: `<path d="M4 18 20 6"/><path d="M13 6h7v7"/>` },
 
+        { key: 'whites', name: 'Whites', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>` },
+        { key: 'blacks', name: 'Blacks', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="8" fill="currentColor" fill-opacity=".85"/>` },
+        { key: 'context_wheels', name: 'Color Wheels', cat: 'color', isContext: 'wheels', icon: `<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M20 16l-5-3M4 16l5-3"/>` },
+        { key: 'context_wb', name: 'White Balance', cat: 'color', isContext: 'wb', icon: `<path d="M12 3v18"/><path d="M5 8h14"/><path d="M7 8 4 15a3 3 0 0 0 6 0zM17 8l-3 7a3 3 0 0 0 6 0z"/>` },
         { key: 'context_mask', name: 'Masking', cat: 'light', isContext: 'mask', icon: `<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="5" stroke-dasharray="2.5 2"/><path d="M12 7v10M7 12h10" opacity=".5"/>` },
         { key: 'strobe', name: 'Strobe', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>` },
         { key: 'strobeAngle', name: 'Strobe Angle', cat: 'optics', min: -180, max: 180, def: 0, icon: `<path d="M5 19 19 5"/><path d="M12 5h7v7"/><circle cx="6" cy="18" r="1.5"/>` },
@@ -707,10 +716,12 @@
         closeMaskUI();
         selectedMaskId = null;
         maskCanvases.clear();
+        maskVer++;
         if (photo.maskCanvases) photo.maskCanvases.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
         state = JSON.parse(JSON.stringify(photo.editState));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
+        if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
         if (!state.curves) state.curves = createIdentityCurves();
 
         const w = photo.workingBaseCanvas.width;
@@ -756,7 +767,7 @@
         // Render thumbnail tanpa border seleksi teks
         const prevSel = state.selectedTextId;
         state.selectedTextId = null;
-        renderEditorCanvasSync();
+        renderEditorCanvasSync('good');
         photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
         // Salinan hasil edit (maks 2160px) agar bisa dipakai di Templates
         const sc = Math.min(1, 2160 / Math.max(mainCanvas.width, mainCanvas.height));
@@ -773,6 +784,7 @@
             state.effectId === 'none_leak' &&
             (!state.frameId || state.frameId === 'none_frame') &&
             (!state.masks || !state.masks.length) &&
+            !wheelsActive(state) &&
             state.texts.length === 0 &&
             isCurvesIdentity(state.curves) &&
             Object.values(state.adjust).every((v) => v === 0);
@@ -795,15 +807,15 @@
             renderEditorCanvasNow(true);
             clearTimeout(rcIdle);
             if (Math.max(basePhotoCanvas.width, basePhotoCanvas.height) > 1000) {
-                rcIdle = setTimeout(() => renderEditorCanvasNow(false), 280);
+                rcIdle = setTimeout(() => renderEditorCanvasNow('good'), 260);
             }
         });
     }
-    function renderEditorCanvasSync() {
+    function renderEditorCanvasSync(mode = false) {
         cancelAnimationFrame(rcRaf);
         rcRaf = 0;
         clearTimeout(rcIdle);
-        renderEditorCanvasNow(false);
+        renderEditorCanvasNow(mode);
     }
 
     function renderEditorCanvasNow(fast) {
@@ -827,7 +839,7 @@
         }
 
         // 1-4. Transform, blur, color grading & vignette (mode cepat = resolusi preview ±1000px)
-        const q = fast ? Math.min(1, 1000 / Math.max(w, h)) : 1;
+        const q = fast === 'good' ? Math.min(1, 2048 / Math.max(w, h)) : fast ? Math.min(1, 1000 / Math.max(w, h)) : 1;
         const gw = Math.max(1, Math.round(w * q));
         const gh = Math.max(1, Math.round(h * q));
         let gc = gradedCanvas, gx = gradedCtx;
@@ -1037,6 +1049,35 @@
         });
     }
 
+    function defaultWheels() {
+        return { sh: { h: 0, s: 0, l: 0 }, mid: { h: 0, s: 0, l: 0 }, hi: { h: 0, s: 0, l: 0 } };
+    }
+    function wheelsActive(st) {
+        return !!(st.wheels && WHEEL_KEYS.some((k) => st.wheels[k] && (st.wheels[k].s || st.wheels[k].l)));
+    }
+
+    function hueRGB(h) {
+        const hh = (((h % 360) + 360) % 360) / 60, f = hh - Math.floor(hh);
+        switch (Math.floor(hh) % 6) {
+            case 0: return [1, f, 0];
+            case 1: return [1 - f, 1, 0];
+            case 2: return [0, 1, f];
+            case 3: return [0, 1 - f, 1];
+            case 4: return [f, 0, 1];
+            default: return [1, 0, 1 - f];
+        }
+    }
+
+    function wheelConsts(st) {
+        if (!wheelsActive(st)) return null;
+        const amt = (st.wheelsAmt ?? 100) / 100;
+        return WHEEL_KEYS.map((k) => {
+            const v = st.wheels[k] || { h: 0, s: 0, l: 0 }, rgb = hueRGB(v.h), mean = (rgb[0] + rgb[1] + rgb[2]) / 3;
+            const K = (v.s / 100) * 90 * amt, L = (v.l / 100) * 60 * amt;
+            return { r: (rgb[0] - mean) * K + L, g: (rgb[1] - mean) * K + L, b: (rgb[2] - mean) * K + L };
+        });
+    }
+
     function applyColorPipelineToImageData(imgData, w, h, currentState) {
         const adj = currentState.adjust;
         const preset = window.FILM_PRESETS.find((p) => p.id === currentState.presetId) || window.FILM_PRESETS[0];
@@ -1055,6 +1096,9 @@
         const tint = adj.tint + (p.tint || 0) * pStr;
         const saturation = adj.saturation + (p.saturation || 0) * pStr;
         const vibrance = adj.vibrance + (p.vibrance || 0) * pStr;
+        const whites = (adj.whites || 0) + (p.whites || 0) * pStr;
+        const blacks = (adj.blacks || 0) + (p.blacks || 0) * pStr;
+        const wc = wheelConsts(currentState);
         const hueDeg = adj.hue;
         const sepiaAmt = adj.sepia / 100;
         const grainAmt = adj.grain + (p.grain || 0) * pStr;
@@ -1063,6 +1107,7 @@
         const isNeutral =
             exposure === 0 && brightness === 0 && contrast === 0 &&
             highlights === 0 && shadows === 0 && fade === 0 &&
+            whites === 0 && blacks === 0 && !wc &&
             warmth === 0 && tint === 0 && saturation === 0 &&
             vibrance === 0 && hueDeg === 0 && sepiaAmt === 0 &&
             grainAmt === 0 && adj.sharpness === 0 &&
@@ -1103,13 +1148,23 @@
             if (shadows !== 0 || highlights !== 0) {
                 const lum = Math.min(1, Math.max(0, (0.299 * r + 0.587 * g + 0.114 * b) / 255));
                 if (shadows !== 0) {
-                    const sw = Math.pow(1 - lum, 1.8) * shadows * 1.15;
+                    const sx = 1 - lum;
+                    const sw = sx * (0.2 + 0.8 * sx) * shadows * 1.15;
                     r += sw; g += sw; b += sw;
                 }
                 if (highlights !== 0) {
-                    const hw = Math.pow(lum, 1.8) * highlights * 1.15;
+                    const hw = lum * (0.2 + 0.8 * lum) * highlights * 1.15;
                     r += hw; g += hw; b += hw;
                 }
+            }
+
+            // Whites & Blacks (rona putih / hitam)
+            if (whites !== 0 || blacks !== 0) {
+                const lw = Math.min(1, Math.max(0, (0.299 * r + 0.587 * g + 0.114 * b) / 255));
+                let v = 0;
+                if (whites !== 0) { const t = lw * lw; v += t * t * whites * 0.9; }
+                if (blacks !== 0) { const t = 1 - lw, t2 = t * t; v += t2 * t2 * blacks * 0.9; }
+                r += v; g += v; b += v;
             }
 
             // Contrast & Curves
@@ -1149,6 +1204,17 @@
                 r = r * (1 - splitStr) + tr * splitStr;
                 g = g * (1 - splitStr) + tg * splitStr;
                 b = b * (1 - splitStr) + tb * splitStr;
+            }
+
+            // Color Wheels (shadows / midtones / highlights)
+            if (wc) {
+                const lw = Math.min(1, Math.max(0, (0.299 * r + 0.587 * g + 0.114 * b) / 255));
+                let ws = 0, wh = 0;
+                if (lw < 0.5) { const t = lw * 2; ws = 1 - t * t * (3 - 2 * t); } else { const t = (lw - 0.5) * 2; wh = t * t * (3 - 2 * t); }
+                const wm = 1 - ws - wh;
+                r += ws * wc[0].r + wm * wc[1].r + wh * wc[2].r;
+                g += ws * wc[0].g + wm * wc[1].g + wh * wc[2].g;
+                b += ws * wc[0].b + wm * wc[1].b + wh * wc[2].b;
             }
 
             // Saturation & Vibrance
@@ -1586,6 +1652,8 @@
         if (tabName !== 'Tools') {
             closeCropOverlay();
             closeMaskUI();
+            wbPickActive = false;
+            document.getElementById('wheelsEditor').classList.add('hidden');
             magicWandActive = false;
             brushModeActive = false;
             mainCanvas.style.cursor = 'default';
@@ -1781,8 +1849,18 @@
     /**
      * Render Strip 02 TOOLS dengan ikon geometris minimalis
      */
+    function refreshToolDot() {
+        const btn = document.querySelector('#toolsStrip .tool-icon-card.active');
+        if (!btn) return;
+        const mod = (state.adjust[activeToolKey] ?? 0) !== 0;
+        let dot = btn.querySelector('.tool-modified-dot');
+        if (mod && !dot) { dot = document.createElement('span'); dot.className = 'tool-modified-dot'; btn.prepend(dot); }
+        else if (!mod && dot) dot.remove();
+    }
+
     function renderToolsStrip() {
         const strip = document.getElementById('toolsStrip');
+        const keepScroll = strip.scrollLeft;
         strip.innerHTML = '';
 
         const list = TOOLS_CONFIG.filter((t) => activeToolCat === 'all' || t.cat === activeToolCat);
@@ -1808,12 +1886,15 @@
             btn.addEventListener('click', () => handleToolClick(tool));
             strip.appendChild(btn);
         });
+        strip.scrollLeft = keepScroll;
     }
 
     function handleToolClick(tool) {
         // Matikan mode khusus jika memilih tool lain
         if (tool.isContext !== 'crop') closeCropOverlay();
         if (tool.isContext !== 'mask') closeMaskUI();
+        if (tool.isContext !== 'wb') wbPickActive = false;
+        if (tool.isContext !== 'wheels') document.getElementById('wheelsEditor').classList.add('hidden');
         if (tool.isContext !== 'wand') magicWandActive = false;
         if (tool.isContext !== 'brush') brushModeActive = false;
         if (tool.isContext !== 'curves') document.getElementById('curvesEditor').classList.add('hidden');
@@ -1862,6 +1943,7 @@
         masterSliderMode = 'tool';
         document.getElementById('masterSlider').disabled = false;
         document.getElementById('curvesEditor').classList.add('hidden');
+        document.getElementById('wheelsEditor').classList.add('hidden');
 
         const val = state.adjust[tool.key] ?? 0;
         const slider = document.getElementById('masterSlider');
@@ -1920,6 +2002,25 @@
         document.getElementById('activeParamCategory').textContent = 'STUDIO TOOL';
         document.getElementById('activeParamTitle').textContent = title;
         document.getElementById('activeParamValue').textContent = '';
+
+        if (contextType === 'wheels') {
+            const rb = document.createElement('button');
+            rb.className = 'dark-chip';
+            rb.textContent = 'RESET SEMUA RODA';
+            rb.addEventListener('click', () => { state.wheels = defaultWheels(); state.wheelsAmt = 100; syncWheelsUI(); renderEditorCanvas(); pushHistory('Reset wheels', true); });
+            bar.appendChild(rb);
+            document.getElementById('wheelsEditor').classList.remove('hidden');
+            bindWheelsEvents();
+            syncWheelsUI();
+            const sl = document.getElementById('masterSlider');
+            masterSliderMode = 'wheels';
+            sl.disabled = false; sl.min = 0; sl.max = 100; sl.value = state.wheelsAmt ?? 100;
+            document.getElementById('activeParamCategory').textContent = 'COLOR WHEELS';
+            document.getElementById('activeParamTitle').textContent = 'Intensitas';
+            document.getElementById('activeParamValue').textContent = sl.value;
+            document.getElementById('gestureHintText').textContent = 'GESER TITIK DI RODA UNTUK WARNA · SLIDER DI BAWAH RODA = TERANG/GELAP';
+            return;
+        }
 
         if (contextType === 'curves') {
             renderCurvesContextBar(bar);
@@ -2002,6 +2103,47 @@
             });
         } else if (contextType === 'mask') {
             openMaskUI();
+            const panel = document.createElement('div');
+            panel.className = 'mask-panel';
+            const row = () => { const r = document.createElement('div'); r.className = 'mask-row'; panel.appendChild(r); return r; };
+            const mk = (r, label, fn, active) => {
+                const b = document.createElement('button');
+                b.className = `dark-chip ${active ? 'active' : ''}`;
+                b.textContent = label;
+                b.addEventListener('click', fn);
+                r.appendChild(b);
+            };
+            const r1 = row();
+            mk(r1, '+ LINEAR', () => addMask('linear'));
+            mk(r1, '+ RADIAL', () => addMask('radial'));
+            mk(r1, '+ BRUSH', () => addMask('brush'));
+            MASK_QUICK.forEach((q) => mk(r1, q.label, () => addMask(q.type, q.over)));
+            if (state.masks.length) {
+                const r2 = row();
+                state.masks.forEach((m, i) => mk(r2, `${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
+                const sm = selectedMask();
+                if (sm) {
+                    mk(r2, sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; maskVer++; renderEditorCanvas(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
+                    mk(r2, maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
+                    if (sm.type === 'brush') {
+                        mk(r2, maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
+                        mk(r2, 'ISI SEMUA', () => { const mc = maskCanvases.get(sm.id); if (mc) { const c = mc.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Fill mask', true); } });
+                        mk(r2, 'KOSONGKAN', () => { const mc = maskCanvases.get(sm.id); if (mc) { mc.getContext('2d').clearRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Clear mask', true); } });
+                    }
+                    mk(r2, '✕ HAPUS MASK', () => deleteMask(sm.id));
+                    const r3 = row();
+                    MASK_ATTRS.forEach(([k, label]) => {
+                        if (k === 'size' && sm.type !== 'brush') return;
+                        const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
+                        const txt = k === 'feather' || k === 'size' ? `${v}` : `${v > 0 ? '+' : ''}${v}`;
+                        mk(r3, `${label} ${txt}`, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
+                    });
+                }
+            }
+            bar.appendChild(panel);
+            syncMasterSliderForMask();
+        } else if (contextType === 'wb') {
+            wbPickActive = false;
             const mk = (label, fn, active) => {
                 const b = document.createElement('button');
                 b.className = `dark-chip ${active ? 'active' : ''}`;
@@ -2009,22 +2151,10 @@
                 b.addEventListener('click', fn);
                 bar.appendChild(b);
             };
-            mk('+ LINEAR', () => addMask('linear'));
-            mk('+ RADIAL', () => addMask('radial'));
-            mk('+ BRUSH', () => addMask('brush'));
-            state.masks.forEach((m, i) => mk(`${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
-            const sm = selectedMask();
-            if (sm) {
-                MASK_ATTRS.forEach(([k, label]) => {
-                    if (k === 'size' && sm.type !== 'brush') return;
-                    mk(label, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
-                });
-                mk(sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
-                mk(maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
-                if (sm.type === 'brush') mk(maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
-                mk('✕ HAPUS MASK', () => deleteMask(sm.id));
-            }
-            syncMasterSliderForMask();
+            mk('✨ AUTO WB', () => { wbAuto(); openToolContextBar('wb', 'White Balance'); });
+            mk('PIPET: TAP AREA PUTIH/ABU', () => { wbPickActive = true; mainCanvas.style.cursor = 'crosshair'; document.getElementById('gestureHintText').textContent = 'KETUK AREA YANG SEHARUSNYA PUTIH / ABU-ABU NETRAL'; });
+            mk('RESET WB', () => { state.adjust.temperature = 0; state.adjust.tint = 0; renderToolsStrip(); renderEditorCanvas(); pushHistory('Reset WB', true); });
+            document.getElementById('gestureHintText').textContent = 'AUTO WB MENYEIMBANGKAN WARNA OTOMATIS · PIPET UNTUK MEMILIH TITIK NETRAL';
         } else if (contextType === 'brush') {
             brushModeActive = true;
             mainCanvas.style.cursor = 'crosshair';
@@ -2692,7 +2822,9 @@
                 state.presetStrength = val;
             } else if (masterSliderMode === 'tool') {
                 state.adjust[activeToolKey] = val;
-                renderToolsStrip();
+                refreshToolDot();
+            } else if (masterSliderMode === 'wheels') {
+                state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
                 if (mk) mk[maskAttr] = val;
@@ -2705,6 +2837,7 @@
         });
 
         masterSlider.addEventListener('change', () => {
+            if (masterSliderMode === 'tool') renderToolsStrip();
             pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`, true);
         });
 
@@ -2716,6 +2849,9 @@
                 state.adjust[activeToolKey] = 0;
                 masterSlider.value = 0;
                 renderToolsStrip();
+            } else if (masterSliderMode === 'wheels') {
+                state.wheelsAmt = 100;
+                masterSlider.value = 100;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
                 if (mk) { mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0; masterSlider.value = mk[maskAttr]; }
@@ -2887,6 +3023,7 @@
             basePhotoCtx.drawImage(photo.originalCanvas, 0, 0);
             brushCtx.clearRect(0, 0, brushCanvas.width, brushCanvas.height);
             maskCanvases.clear();
+            maskVer++;
             selectedMaskId = null;
             closeMaskUI();
             state = createDefaultEditState();
@@ -2913,6 +3050,13 @@
         const startPointer = (e) => {
             if (isCropping) return;
             const pt = getCanvasPt(e);
+
+            if (wbPickActive) {
+                wbPick(pt);
+                wbPickActive = false;
+                openToolContextBar('wb', 'White Balance');
+                return;
+            }
 
             // 1. Magic Wand BG Removal
             if (magicWandActive) {
@@ -3195,12 +3339,22 @@
     const maskTmpCtx = maskTmp.getContext('2d', { willReadFrequently: true });
     let maskUiActive = false, maskBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
     let activeFontCat = 'all';
+    let maskVer = 0, maskSnapCache = { ver: -1, map: null }, maskHover = null, maskOvRaf = 0, wbPickActive = false;
+    const MASK_QUICK = [
+        { label: '☁ LANGIT', type: 'linear', over: { x1: 0.5, y1: 0.02, x2: 0.5, y2: 0.5, exposure: -45, highlights: -35, saturation: 10, feather: 60 } },
+        { label: '◉ SUBJEK', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.28, exposure: 30, shadows: 20, contrast: 10, feather: 70 } },
+        { label: '☀ WAJAH', type: 'radial', over: { cx: 0.5, cy: 0.38, r: 0.18, exposure: 35, shadows: 25, warmth: 8, feather: 85 } },
+        { label: '◌ VIGNET', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.45, exposure: -45, invert: true, feather: 85 } },
+        { label: '▁ BAWAH GELAP', type: 'linear', over: { x1: 0.5, y1: 0.98, x2: 0.5, y2: 0.55, exposure: -35, feather: 60 } }
+    ];
 
     const selectedMask = () => (state.masks || []).find((m) => m.id === selectedMaskId) || null;
 
     function snapshotMasks() {
+        if (maskSnapCache.ver === maskVer && maskSnapCache.map) return maskSnapCache.map;
         const mm = new Map();
         maskCanvases.forEach((c, k) => mm.set(k, cloneCanvas(c)));
+        maskSnapCache = { ver: maskVer, map: mm };
         return mm;
     }
 
@@ -3210,43 +3364,71 @@
         }
         state.masks = [];
         maskCanvases.clear();
+        maskVer++;
         selectedMaskId = null;
         if (maskUiActive) refreshMaskBar();
     }
 
-    function computeMaskAlpha(m, gw, gh) {
-        const A = new Uint8ClampedArray(gw * gh);
+    const maskAlphaCache = new Map();
+    const maskSmallCanvas = document.createElement('canvas');
+    const maskSmallCtx = maskSmallCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Hitung alpha mask pada grid kecil (≤384px) — jauh lebih cepat, lalu diskalakan ke ukuran render
+    function maskAlphaSmall(m, sw, sh) {
+        const A = new Uint8ClampedArray(sw * sh);
         const f = (m.feather ?? 50) / 100;
         const ss = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
         if (m.type === 'linear') {
-            const X1 = m.x1 * gw, Y1 = m.y1 * gh, dx = m.x2 * gw - X1, dy = m.y2 * gh - Y1, L2 = dx * dx + dy * dy || 1, hw = 0.12 + 0.38 * f;
-            for (let y = 0, p = 0; y < gh; y++) {
-                for (let x = 0; x < gw; x++, p++) {
-                    const t = ((x - X1) * dx + (y - Y1) * dy) / L2;
-                    A[p] = (1 - ss(0.5 - hw, 0.5 + hw, t)) * 255;
-                }
+            const X1 = m.x1 * sw, Y1 = m.y1 * sh, dx = m.x2 * sw - X1, dy = m.y2 * sh - Y1, L2 = dx * dx + dy * dy || 1, hw = 0.12 + 0.38 * f;
+            for (let y = 0, p = 0; y < sh; y++) {
+                for (let x = 0; x < sw; x++, p++) A[p] = (1 - ss(0.5 - hw, 0.5 + hw, ((x - X1) * dx + (y - Y1) * dy) / L2)) * 255;
             }
         } else if (m.type === 'radial') {
-            const cx = m.cx * gw, cy = m.cy * gh, R = Math.max(2, m.r * Math.max(gw, gh)), ff = 0.08 + 0.92 * f;
-            for (let y = 0, p = 0; y < gh; y++) {
-                for (let x = 0; x < gw; x++, p++) {
-                    A[p] = (1 - ss(1 - ff, 1, Math.hypot(x - cx, y - cy) / R)) * 255;
-                }
+            const cx = m.cx * sw, cy = m.cy * sh, R = Math.max(2, m.r * Math.max(sw, sh)), ff = 0.08 + 0.92 * f;
+            for (let y = 0, p = 0; y < sh; y++) {
+                for (let x = 0; x < sw; x++, p++) A[p] = (1 - ss(1 - ff, 1, Math.hypot(x - cx, y - cy) / R)) * 255;
             }
         } else {
             const mc = maskCanvases.get(m.id);
             if (mc) {
-                maskTmp.width = gw;
-                maskTmp.height = gh;
-                maskTmpCtx.clearRect(0, 0, gw, gh);
-                maskTmpCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(gw, gh)}px)` : 'none';
-                maskTmpCtx.drawImage(mc, 0, 0, gw, gh);
-                maskTmpCtx.filter = 'none';
-                const d = maskTmpCtx.getImageData(0, 0, gw, gh).data;
+                maskSmallCanvas.width = sw;
+                maskSmallCanvas.height = sh;
+                maskSmallCtx.clearRect(0, 0, sw, sh);
+                maskSmallCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(sw, sh)}px)` : 'none';
+                maskSmallCtx.drawImage(mc, 0, 0, sw, sh);
+                maskSmallCtx.filter = 'none';
+                const d = maskSmallCtx.getImageData(0, 0, sw, sh).data;
                 for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
             }
         }
         if (m.invert) for (let p = 0; p < A.length; p++) A[p] = 255 - A[p];
+        return A;
+    }
+
+    function computeMaskAlpha(m, gw, gh) {
+        const key = [m.id, m.type, m.x1, m.y1, m.x2, m.y2, m.cx, m.cy, m.r, m.feather, m.invert ? 1 : 0, maskVer, gw, gh].join('|');
+        const hit = maskAlphaCache.get(key);
+        if (hit) return hit;
+        const sc = Math.min(1, 384 / Math.max(gw, gh));
+        const sw = Math.max(2, Math.round(gw * sc)), sh = Math.max(2, Math.round(gh * sc));
+        const small = maskAlphaSmall(m, sw, sh);
+        let A = small;
+        if (sw !== gw || sh !== gh) {
+            maskSmallCanvas.width = sw;
+            maskSmallCanvas.height = sh;
+            const id = maskSmallCtx.createImageData(sw, sh);
+            for (let p = 0; p < small.length; p++) id.data[p * 4 + 3] = small[p];
+            maskSmallCtx.putImageData(id, 0, 0);
+            maskTmp.width = gw;
+            maskTmp.height = gh;
+            maskTmpCtx.clearRect(0, 0, gw, gh);
+            maskTmpCtx.drawImage(maskSmallCanvas, 0, 0, gw, gh);
+            const d = maskTmpCtx.getImageData(0, 0, gw, gh).data;
+            A = new Uint8ClampedArray(gw * gh);
+            for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
+        }
+        if (maskAlphaCache.size > 10) maskAlphaCache.clear();
+        maskAlphaCache.set(key, A);
         return A;
     }
 
@@ -3273,7 +3455,7 @@
         });
     }
 
-    function addMask(type) {
+    function addMask(type, over) {
         if (state.masks.length >= 6) {
             document.getElementById('gestureHintText').textContent = 'MAKSIMAL 6 MASK';
             return;
@@ -3284,11 +3466,13 @@
         else {
             const sc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
             maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * sc)), Math.max(8, Math.round(basePhotoCanvas.height * sc))));
+            maskVer++;
         }
+        if (over) Object.assign(m, over);
         state.masks.push(m);
         selectedMaskId = m.id;
         maskAttr = 'exposure';
-        maskShow = true;
+        maskShow = type === 'brush';
         refreshMaskBar();
         renderEditorCanvas();
         pushHistory(`Add ${type} mask`, true);
@@ -3303,6 +3487,7 @@
     function deleteMask(id) {
         state.masks = state.masks.filter((m) => m.id !== id);
         maskCanvases.delete(id);
+        maskVer++;
         selectedMaskId = state.masks[0]?.id || null;
         refreshMaskBar();
         renderEditorCanvas();
@@ -3348,10 +3533,15 @@
 
     function maskHintText() {
         const m = selectedMask();
-        if (!m) return 'TAMBAH MASK: LINEAR, RADIAL, ATAU BRUSH';
-        if (m.type === 'linear') return 'TARIK GARIS DI FOTO · EFEK PENUH DI TITIK AWAL, MEMUDAR KE UJUNG';
-        if (m.type === 'radial') return 'TARIK DARI PUSAT UNTUK MENENTUKAN AREA LINGKARAN';
-        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS' : 'KUAS AREA YANG INGIN DIATUR CAHAYANYA';
+        if (!m) return 'PILIH BENTUK MASK DI BAWAH, ATAU COBA TEMPLATE CEPAT (LANGIT, SUBJEK, WAJAH, VIGNET)';
+        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK DI AREA LAIN = BUAT ULANG';
+        if (m.type === 'radial') return 'GESER LINGKARAN = PINDAH · TITIK KANAN = UBAH UKURAN · FEATHER = KELEMBUTAN TEPI';
+        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · SHOW MASK UNTUK MELIHAT AREA';
+    }
+
+    function scheduleMaskOverlay() {
+        if (maskOvRaf) return;
+        maskOvRaf = requestAnimationFrame(() => { maskOvRaf = 0; drawMaskOverlay(); });
     }
 
     function drawMaskOverlay() {
@@ -3363,7 +3553,7 @@
         document.getElementById('gestureHintText').textContent = maskHintText();
         const m = selectedMask();
         if (!m) return;
-        if (maskShow) {
+        if (maskShow || (maskDrag && maskDrag.mode === 'paint')) {
             const sw = Math.max(8, Math.round(W / 4)), sh = Math.max(8, Math.round(Hh / 4)), A = computeMaskAlpha(m, sw, sh);
             maskTmp.width = sw;
             maskTmp.height = sh;
@@ -3372,21 +3562,30 @@
             maskTmpCtx.putImageData(id, 0, 0);
             c.drawImage(maskTmp, 0, 0, W, Hh);
         }
+        const handle = (px, py, r) => {
+            c.setLineDash([]);
+            c.fillStyle = '#ffb547';
+            c.strokeStyle = '#211d1a';
+            c.lineWidth = 3;
+            c.beginPath(); c.arc(px, py, r, 0, 6.28); c.fill(); c.stroke();
+        };
         c.lineWidth = 2;
         c.strokeStyle = '#ffb547';
-        c.fillStyle = '#ffb547';
         c.setLineDash([8, 6]);
         if (m.type === 'linear') {
             const x1 = m.x1 * W, y1 = m.y1 * Hh, x2 = m.x2 * W, y2 = m.y2 * Hh, len = Math.hypot(x2 - x1, y2 - y1) || 1;
             const nx = (-(y2 - y1) / len) * W * 2, ny = ((x2 - x1) / len) * W * 2;
             c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
             [[x1, y1], [x2, y2]].forEach(([px, py]) => { c.beginPath(); c.moveTo(px - nx, py - ny); c.lineTo(px + nx, py + ny); c.stroke(); });
-            c.setLineDash([]);
-            [[x1, y1], [x2, y2]].forEach(([px, py]) => { c.beginPath(); c.arc(px, py, 6, 0, 6.28); c.fill(); });
+            handle(x1, y1, 11); handle(x2, y2, 11);
         } else if (m.type === 'radial') {
-            c.beginPath(); c.arc(m.cx * W, m.cy * Hh, m.r * Math.max(W, Hh), 0, 6.28); c.stroke();
+            const cx = m.cx * W, cy = m.cy * Hh, R = m.r * Math.max(W, Hh);
+            c.beginPath(); c.arc(cx, cy, R, 0, 6.28); c.stroke();
+            handle(cx, cy, 8); handle(cx + R, cy, 11);
+        } else if (maskHover) {
             c.setLineDash([]);
-            c.beginPath(); c.arc(m.cx * W, m.cy * Hh, 6, 0, 6.28); c.fill();
+            c.strokeStyle = '#ffffff';
+            c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, (((m.size ?? 8) / 100) * Math.min(W, Hh)) / 2, 0, 6.28); c.stroke();
         }
         c.setLineDash([]);
     }
@@ -3413,6 +3612,7 @@
     function maskPaint(m, from, to) {
         const mc = maskCanvases.get(m.id);
         if (!mc) return;
+        maskVer++;
         const c = mc.getContext('2d');
         c.save();
         c.lineCap = 'round';
@@ -3431,48 +3631,192 @@
         if (maskBound) return;
         maskBound = true;
         const ov = document.getElementById('maskOverlay');
-        const pt = (e) => {
+        const norm = (e) => {
             const r = ov.getBoundingClientRect();
             return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
         };
+        const dist = (a, b) => Math.hypot((a.x - b.x) * ov.width, (a.y - b.y) * ov.height);
+        const segDist = (p, a, b) => {
+            const px = p.x * ov.width, py = p.y * ov.height, ax = a.x * ov.width, ay = a.y * ov.height;
+            const dx = b.x * ov.width - ax, dy = b.y * ov.height - ay, L2 = dx * dx + dy * dy || 1;
+            const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
+            return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+        };
+        const HIT = 30;
+
         ov.addEventListener('pointerdown', (e) => {
             const m = selectedMask();
             if (!m) return;
             e.preventDefault();
             try { ov.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ }
-            const p = pt(e);
-            maskDrag = { last: p, m };
-            if (m.type === 'linear') { m.x1 = p.x; m.y1 = p.y; m.x2 = p.x; m.y2 = p.y + 0.001; }
-            else if (m.type === 'radial') { m.cx = p.x; m.cy = p.y; m.r = 0.02; }
-            else maskPaint(m, p, p);
+            const p = norm(e);
+            let mode = 'new';
+            if (m.type === 'linear') {
+                const a = { x: m.x1, y: m.y1 }, b = { x: m.x2, y: m.y2 };
+                if (dist(p, a) < HIT) mode = 'p1';
+                else if (dist(p, b) < HIT) mode = 'p2';
+                else if (segDist(p, a, b) < HIT * 0.8) mode = 'move';
+            } else if (m.type === 'radial') {
+                const mxs = Math.max(ov.width, ov.height), R = m.r * mxs;
+                if (dist(p, { x: m.cx + R / ov.width, y: m.cy }) < HIT) mode = 'radius';
+                else if (dist(p, { x: m.cx, y: m.cy }) < Math.max(R, HIT)) mode = 'move';
+            } else mode = 'paint';
+            maskDrag = { m, mode, last: p, start: p, orig: { ...m }, moved: mode === 'paint', fresh: false };
+            if (mode === 'new') {
+                maskDrag.fresh = true;
+                if (m.type === 'linear') { m.x1 = p.x; m.y1 = p.y; m.x2 = p.x; m.y2 = p.y + 0.001; maskDrag.mode = 'p2'; }
+                else { m.cx = p.x; m.cy = p.y; m.r = 0.02; maskDrag.mode = 'radius'; }
+            } else if (mode === 'paint') {
+                maskHover = p;
+                maskPaint(m, p, p);
+            }
             renderEditorCanvas();
-            drawMaskOverlay();
+            scheduleMaskOverlay();
         });
+
         ov.addEventListener('pointermove', (e) => {
-            if (!maskDrag) return;
-            const m = maskDrag.m, p = pt(e);
-            if (m.type === 'linear') { m.x2 = p.x; m.y2 = p.y; }
-            else if (m.type === 'radial') m.r = Math.hypot((p.x - m.cx) * ov.width, (p.y - m.cy) * ov.height) / Math.max(ov.width, ov.height);
-            else { maskPaint(m, maskDrag.last, p); maskDrag.last = p; }
+            const p = norm(e);
+            if (!maskDrag) {
+                if (e.pointerType === 'mouse') { maskHover = p; scheduleMaskOverlay(); }
+                return;
+            }
+            const d = maskDrag, m = d.m, mxs = Math.max(ov.width, ov.height);
+            if (d.mode === 'paint') { maskPaint(m, d.last, p); d.last = p; maskHover = p; }
+            else if (d.mode === 'p1') { m.x1 = p.x; m.y1 = p.y; }
+            else if (d.mode === 'p2') { m.x2 = p.x; m.y2 = p.y; }
+            else if (d.mode === 'radius') m.r = Math.max(0.02, Math.hypot((p.x - m.cx) * ov.width, (p.y - m.cy) * ov.height) / mxs);
+            else if (d.mode === 'move') {
+                const dx = p.x - d.start.x, dy = p.y - d.start.y;
+                if (m.type === 'linear') { m.x1 = d.orig.x1 + dx; m.y1 = d.orig.y1 + dy; m.x2 = d.orig.x2 + dx; m.y2 = d.orig.y2 + dy; }
+                else { m.cx = Math.min(1, Math.max(0, d.orig.cx + dx)); m.cy = Math.min(1, Math.max(0, d.orig.cy + dy)); }
+            }
+            d.moved = true;
             renderEditorCanvas();
-            drawMaskOverlay();
+            scheduleMaskOverlay();
         });
+
         const end = () => {
             if (!maskDrag) return;
-            const m = maskDrag.m;
+            const d = maskDrag, m = d.m;
             maskDrag = null;
-            if (m.type === 'linear' && Math.hypot((m.x2 - m.x1) * ov.width, (m.y2 - m.y1) * ov.height) < 24) {
+            if (d.fresh && m.type === 'linear' && Math.hypot((m.x2 - m.x1) * ov.width, (m.y2 - m.y1) * ov.height) < 24) {
                 m.x2 = m.x1;
                 m.y2 = Math.min(1, m.y1 + 0.3);
                 if (m.y2 - m.y1 < 0.05) { m.y2 = m.y1; m.y1 = Math.max(0, m.y1 - 0.3); }
             }
-            if (m.type === 'radial' && m.r < 0.03) m.r = 0.25;
+            if (d.fresh && m.type === 'radial' && m.r < 0.03) m.r = 0.25;
             renderEditorCanvas();
-            drawMaskOverlay();
-            pushHistory(`Mask ${m.type}`, true);
+            scheduleMaskOverlay();
+            if (d.moved || d.fresh) pushHistory(`Mask ${m.type}`, true);
         };
         ov.addEventListener('pointerup', end);
         ov.addEventListener('pointercancel', end);
+        ov.addEventListener('pointerleave', () => { if (!maskDrag) { maskHover = null; scheduleMaskOverlay(); } });
+    }
+
+    // ==========================================
+    // COLOR WHEELS (Shadows / Midtones / Highlights)
+    // ==========================================
+    let wheelBaseCv = null, wheelsBound = false;
+
+    function wheelBase() {
+        if (wheelBaseCv) return wheelBaseCv;
+        const S = 240, c = createBlankCanvas(S, S), id = c.getContext('2d').createImageData(S, S);
+        for (let y = 0; y < S; y++) {
+            for (let x = 0; x < S; x++) {
+                const dx = (x - 119.5) / 120, dy = (y - 119.5) / 120, r = Math.hypot(dx, dy);
+                if (r > 1) continue;
+                const rgb = hueRGB((Math.atan2(dy, dx) * 180) / Math.PI), sat = Math.min(1, r), i = (y * S + x) * 4;
+                id.data[i] = (rgb[0] * sat + (1 - sat)) * 225;
+                id.data[i + 1] = (rgb[1] * sat + (1 - sat)) * 225;
+                id.data[i + 2] = (rgb[2] * sat + (1 - sat)) * 225;
+                id.data[i + 3] = r > 0.985 ? Math.max(0, ((1 - r) / 0.015) * 255) : 255;
+            }
+        }
+        c.getContext('2d').putImageData(id, 0, 0);
+        wheelBaseCv = c;
+        return c;
+    }
+
+    function drawWheel(key) {
+        const cv = document.querySelector(`#wheelsEditor [data-range="${key}"] canvas`);
+        if (!cv) return;
+        const c = cv.getContext('2d'), v = state.wheels[key];
+        c.clearRect(0, 0, 240, 240);
+        c.drawImage(wheelBase(), 0, 0);
+        const rad = (v.h * Math.PI) / 180, px = 120 + Math.cos(rad) * (v.s / 100) * 112, py = 120 + Math.sin(rad) * (v.s / 100) * 112;
+        c.lineWidth = 6; c.strokeStyle = '#ffffff'; c.fillStyle = 'rgba(0,0,0,0.35)';
+        c.beginPath(); c.arc(px, py, 15, 0, 6.28); c.fill(); c.stroke();
+    }
+
+    function syncWheelsUI() {
+        WHEEL_KEYS.forEach((k) => {
+            drawWheel(k);
+            const col = document.querySelector(`#wheelsEditor [data-range="${k}"]`);
+            if (!col) return;
+            col.querySelector('.wheel-lum').value = state.wheels[k].l;
+            col.querySelector('.wheel-val').textContent = `${state.wheels[k].s ? 'H' + state.wheels[k].h + '° S' + state.wheels[k].s : 'NETRAL'} · L${state.wheels[k].l}`;
+        });
+    }
+
+    function bindWheelsEvents() {
+        if (wheelsBound) return;
+        wheelsBound = true;
+        WHEEL_KEYS.forEach((k) => {
+            const col = document.querySelector(`#wheelsEditor [data-range="${k}"]`), cv = col.querySelector('canvas'), lum = col.querySelector('.wheel-lum');
+            let drag = false;
+            const set = (e) => {
+                const r = cv.getBoundingClientRect();
+                const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2), dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+                const v = state.wheels[k];
+                v.h = Math.round((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360);
+                v.s = Math.round(Math.min(1, Math.hypot(dx, dy)) * 100);
+                syncWheelsUI();
+                renderEditorCanvas();
+            };
+            cv.addEventListener('pointerdown', (e) => { e.preventDefault(); drag = true; try { cv.setPointerCapture(e.pointerId); } catch (err) { /* abaikan */ } set(e); });
+            cv.addEventListener('pointermove', (e) => { if (drag) set(e); });
+            const end = () => { if (!drag) return; drag = false; pushHistory('Color Wheels', true); };
+            cv.addEventListener('pointerup', end);
+            cv.addEventListener('pointercancel', end);
+            cv.addEventListener('dblclick', () => { state.wheels[k].h = 0; state.wheels[k].s = 0; syncWheelsUI(); renderEditorCanvas(); pushHistory('Reset wheel', true); });
+            lum.addEventListener('input', () => { state.wheels[k].l = +lum.value; syncWheelsUI(); renderEditorCanvas(); });
+            lum.addEventListener('change', () => pushHistory('Wheel luminance', true));
+        });
+    }
+
+    // ==========================================
+    // WHITE BALANCE (auto + pipet)
+    // ==========================================
+    function wbApply(R, G, B) {
+        const clampV = (v) => Math.max(-100, Math.min(100, Math.round(v)));
+        const w = (B - R) / 1.84, t = (G + 0.14 * w - (R + B) / 2) / 1.1;
+        state.adjust.temperature = clampV(w);
+        state.adjust.tint = clampV(t);
+        renderToolsStrip();
+        renderEditorCanvas();
+        pushHistory('White Balance', true);
+    }
+
+    function wbAuto() {
+        const S = 48, c = createBlankCanvas(S, S), x = c.getContext('2d', { willReadFrequently: true });
+        x.drawImage(basePhotoCanvas, 0, 0, S, S);
+        const d = x.getImageData(0, 0, S, S).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+            const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            if (l > 25 && l < 230) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+        }
+        if (n) wbApply(r / n, g / n, b / n);
+    }
+
+    function wbPick(pt) {
+        const x = Math.max(0, Math.min(basePhotoCanvas.width - 11, Math.round(pt.x) - 5)), y = Math.max(0, Math.min(basePhotoCanvas.height - 11, Math.round(pt.y) - 5));
+        const d = basePhotoCtx.getImageData(x, y, 11, 11).data;
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+        const n = d.length / 4;
+        wbApply(r / n, g / n, b / n);
     }
 
     function pushHistory(label, light) {
@@ -3502,6 +3846,7 @@
         state = JSON.parse(JSON.stringify(snap.stateSnap));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
+        if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
 
         basePhotoCanvas.width = snap.w;
         basePhotoCanvas.height = snap.h;
@@ -3515,7 +3860,9 @@
 
         maskCanvases.clear();
         if (snap.maskSnap) snap.maskSnap.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
+        maskVer++;
         if (maskUiActive) refreshMaskBar();
+        if (!document.getElementById('wheelsEditor').classList.contains('hidden')) syncWheelsUI();
 
         switchEditorMainTab(activeEditorMainTab);
         renderEditorCanvas();
@@ -3894,7 +4241,7 @@ async function exportAll(pano) {
    Geser strip horizontal dengan mouse (drag) & scroll wheel
    ========================================== */
 (() => {
-  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip';
+  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,#fontCatRow';
   let el = null, sx = 0, sl = 0, moved = false;
   document.addEventListener('pointerdown', e => {
     moved = false; if (e.pointerType !== 'mouse' || e.button !== 0) return;
