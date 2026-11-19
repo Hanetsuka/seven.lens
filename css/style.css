@@ -1489,3 +1489,19 @@ body {
 .crop-handle.e::after, .crop-handle.w::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 30px; transform: translate(-50%, -50%); background: #f4f1ea; border-radius: 2px; }
 .crop-box { touch-action: none; }
 #fontCatRow { margin-bottom: 8px; }
+
+/* Masking panel (3 baris) */
+.mask-panel { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.mask-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.mask-row::-webkit-scrollbar { display: none; }
+.mask-row .dark-chip { flex: none; white-space: nowrap; }
+.tool-context-extras:has(.mask-panel) { overflow: visible; }
+
+/* Color wheels */
+.wheels-editor { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 4px 0 2px; }
+.wheel-col { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.wheel-label { font-size: 10px; letter-spacing: 0.14em; color: #a69d92; }
+.wheel-canvas { width: 100%; max-width: min(130px, 22vh); aspect-ratio: 1; touch-action: none; cursor: crosshair; }
+.wheel-lum { width: 100%; accent-color: #f4f1ea; }
+.wheel-val { font-size: 10px; letter-spacing: 0.06em; color: #7d746a; text-align: center; }
+.wheels-editor .curves-hint { grid-column: 1 / -1; text-align: center; }
