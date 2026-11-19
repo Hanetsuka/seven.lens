@@ -3920,6 +3920,48 @@
                 const adjPanel = document.createElement('div');
                 adjPanel.className = 'lr-adj-panel';
 
+                // Tombol cepat Kuas vs Penghapus selalu tampil untuk mask berbasis pixel (Brush / AI Subject / Sky / BG)
+                if (isPixelMaskType(sm.type)) {
+                    const modeBar = document.createElement('div');
+                    modeBar.className = 'mask-mode-bar';
+
+                    const btnPaint = document.createElement('button');
+                    btnPaint.type = 'button';
+                    btnPaint.id = 'btnMaskPaintMode';
+                    btnPaint.className = `mask-mode-btn ${!maskErase ? 'active' : ''}`;
+                    btnPaint.textContent = '🖌 KUAS';
+                    btnPaint.addEventListener('click', () => {
+                        maskErase = false;
+                        drawMaskOverlay();
+                        refreshMaskBar();
+                    });
+
+                    const btnErase = document.createElement('button');
+                    btnErase.type = 'button';
+                    btnErase.id = 'btnMaskEraseMode';
+                    btnErase.className = `mask-mode-btn ${maskErase ? 'erase-active' : ''}`;
+                    btnErase.textContent = '⌫ PENGHAPUS';
+                    btnErase.addEventListener('click', () => {
+                        maskErase = true;
+                        drawMaskOverlay();
+                        refreshMaskBar();
+                    });
+
+                    const btnSize = document.createElement('button');
+                    btnSize.type = 'button';
+                    btnSize.className = `mask-mode-btn ${maskAttr === 'size' ? 'active' : ''}`;
+                    btnSize.textContent = `UKURAN ${sm.size ?? 8}%`;
+                    btnSize.addEventListener('click', () => {
+                        maskAdjGroup = 'mask';
+                        maskAttr = 'size';
+                        syncMasterSliderForMask();
+                        refreshMaskBar();
+                    });
+
+                    modeBar.append(btnPaint, btnErase, btnSize);
+                    adjPanel.appendChild(modeBar);
+                }
+
                 const tabs = document.createElement('div');
                 tabs.className = 'lr-adj-tabs';
                 [
@@ -4469,9 +4511,36 @@
     // ==========================================
     let camStream = null;
     let camFacingMode = 'environment';
-    let camSelectedPresetId = 'original';
+    let camSelectedPresetId = 'y2k_ccd';
     let camWatermarkEnabled = false;
     let camGridEnabled = false;
+    let camDateEnabled = true;
+
+    function getDigicamDateStamp() {
+        const d = new Date();
+        const p2 = (n) => String(n).padStart(2, '0');
+        return `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
+    }
+
+    function playDigicamShutterSound() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            const ac = new Ctx();
+            const osc = ac.createOscillator();
+            const gain = ac.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(1100, ac.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(180, ac.currentTime + 0.055);
+            gain.gain.setValueAtTime(0.14, ac.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.065);
+            osc.connect(gain);
+            gain.connect(ac.destination);
+            osc.start();
+            osc.stop(ac.currentTime + 0.07);
+            setTimeout(() => ac.close().catch(() => {}), 150);
+        } catch (err) { /* abaikan bila audio diblokir */ }
+    }
 
     function buildCameraCssFilter(presetId) {
         if (!presetId || presetId === 'original') return 'none';
@@ -4538,8 +4607,9 @@
 
         const featuredIds = [
             'original',
+            'y2k_ccd', 'y2k_ixus', 'y2k_cyber', 'y2k_flash', 'x_d4', 'y2k_vga',
             'x_ac01', 'x_ac02', 'x_ac03', 'x_ac04', 'x_ac05', 'x_ac06', 'x_ac07',
-            'x_ed12', 'x_ed01', 'x_gz01', 'x_dg01', 'x_md01', 'x_bw01'
+            'x_ed12'
         ];
         const allPresets = window.FILM_PRESETS || [];
         const options = [{ id: 'original', code: 'ORIGINAL', category: 'base' }];
@@ -4573,6 +4643,11 @@
     function openCameraModal() {
         const modal = document.getElementById('cameraModal');
         if (!modal) return;
+        const dateEl = document.getElementById('cameraDatePreview');
+        if (dateEl) {
+            dateEl.textContent = getDigicamDateStamp();
+            dateEl.classList.toggle('hidden', !camDateEnabled);
+        }
         modal.classList.remove('hidden');
         renderCameraFilterStrip();
         startCameraStream();
@@ -4588,19 +4663,41 @@
         const added = addPhotoToLibrary(rawCanvas, title, false);
         added.editState.presetId = camSelectedPresetId || 'original';
         added.editState.watermark = camWatermarkEnabled ? 'br' : 'off';
-        if (camSelectedPresetId !== 'original' || camWatermarkEnabled) added.isEdited = true;
+        if (camDateEnabled) {
+            const w = rawCanvas.width, h = rawCanvas.height;
+            const fs = Math.max(16, Math.round(Math.min(w, h) * 0.032));
+            added.editState.texts.push({
+                id: 'digicam_date_' + Date.now(),
+                text: getDigicamDateStamp(),
+                x: camWatermarkEnabled ? Math.round(w * 0.16) : Math.round(w * 0.84),
+                y: Math.round(h * 0.91),
+                font: "'VT323', 'Space Mono', monospace",
+                fontName: 'Digicam Date',
+                size: fs,
+                color: '#ff7b00',
+                opacity: 92,
+                rotate: 0,
+                bold: false,
+                italic: false,
+                shadow: true,
+                outline: false,
+                align: 'center'
+            });
+        }
+        if (camSelectedPresetId !== 'original' || camWatermarkEnabled || camDateEnabled) added.isEdited = true;
         closeCameraModal();
         openPhotoInEditor(added.id, 'Presets');
         if (camSelectedPresetId !== 'original') {
             const found = (window.FILM_PRESETS || []).find((p) => p.id === camSelectedPresetId);
             if (found && found.category) activePresetCat = found.category;
             switchEditorMainTab('Presets');
-            pushHistory(`Camera Capture (${found ? found.code : 'Filter'})`);
+            pushHistory(`Digicam Capture (${found ? found.code : 'Filter'})`);
         }
     }
 
     function bindCameraModalEvents() {
         const btnClose = document.getElementById('btnCloseCamera');
+        const btnDate = document.getElementById('btnCameraDate');
         const btnFlip = document.getElementById('btnCameraFlip');
         const btnGrid = document.getElementById('btnCameraGrid');
         const btnWm = document.getElementById('btnCameraWatermark');
@@ -4611,6 +4708,15 @@
         if (!btnClose) return;
 
         btnClose.addEventListener('click', closeCameraModal);
+
+        if (btnDate) {
+            btnDate.addEventListener('click', () => {
+                camDateEnabled = !camDateEnabled;
+                btnDate.classList.toggle('active', camDateEnabled);
+                const dateEl = document.getElementById('cameraDatePreview');
+                if (dateEl) dateEl.classList.toggle('hidden', !camDateEnabled);
+            });
+        }
 
         if (btnFlip) {
             btnFlip.addEventListener('click', () => {
@@ -4660,7 +4766,17 @@
                 }
                 cctx.drawImage(video, 0, 0, cw, ch);
                 cctx.restore();
-                openCapturedCanvasInEditor(cloneCanvas(cap), `CAM_${Date.now().toString().slice(-4)}`);
+                playDigicamShutterSound();
+                const flashEl = document.getElementById('cameraFlashOverlay');
+                if (flashEl) {
+                    flashEl.classList.remove('hidden');
+                    setTimeout(() => {
+                        flashEl.classList.add('hidden');
+                        openCapturedCanvasInEditor(cloneCanvas(cap), `DIGICAM_${Date.now().toString().slice(-4)}`);
+                    }, 110);
+                } else {
+                    openCapturedCanvasInEditor(cloneCanvas(cap), `DIGICAM_${Date.now().toString().slice(-4)}`);
+                }
             });
         }
 

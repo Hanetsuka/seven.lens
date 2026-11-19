@@ -543,25 +543,42 @@
         </div>
     </div>
 
-    <!-- CAMERA CAPTURE MODAL -->
-    <div id="cameraModal" class="camera-modal hidden" role="dialog" aria-modal="true" aria-label="Direct Camera Capture">
+    <!-- CAMERA CAPTURE MODAL (DIGICAM EDITION) -->
+    <div id="cameraModal" class="camera-modal hidden" role="dialog" aria-modal="true" aria-label="Digicam Camera Capture">
         <div class="camera-topbar">
-            <button id="btnCloseCamera" class="camera-pill-btn">✕ CLOSE</button>
+            <button id="btnCloseCamera" class="camera-pill-btn">✕ OFF</button>
             <div class="camera-topbar-actions">
+                <button id="btnCameraDate" class="camera-pill-btn active" title="Toggle Retro Date Stamp">DATE</button>
                 <button id="btnCameraGrid" class="camera-pill-btn" title="Toggle 3x3 Grid">GRID</button>
                 <button id="btnCameraWatermark" class="camera-pill-btn" title="Retro Corner Watermark">WM: OFF</button>
                 <button id="btnCameraFlip" class="camera-pill-btn" title="Switch Camera">FLIP ↻</button>
             </div>
         </div>
 
-        <div class="camera-stage" id="cameraStage">
-            <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
-            <div id="cameraGridOverlay" class="camera-grid hidden" aria-hidden="true">
-                <span></span><span></span><span></span><span></span>
+        <div class="camera-lcd-bezel">
+            <div class="camera-stage" id="cameraStage">
+                <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+                <div class="camera-lcd-hud" aria-hidden="true">
+                    <div class="hud-left">
+                        <span class="hud-rec-dot">●</span>
+                        <span>DIGICAM</span>
+                        <span class="hud-badge">12M</span>
+                    </div>
+                    <div class="hud-center">ISO 400 · F2.8</div>
+                    <div class="hud-right">
+                        <span class="hud-batt">▮▮▮</span>
+                    </div>
+                </div>
+                <div class="camera-af-reticle" aria-hidden="true"></div>
+                <div id="cameraGridOverlay" class="camera-grid hidden" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span>
+                </div>
+                <div id="cameraDatePreview" class="camera-date-preview">'26 11 19</div>
+                <div id="cameraWmPreview" class="camera-wm-preview hidden">created using svn.lens</div>
+                <div id="cameraFlashOverlay" class="camera-flash-overlay hidden" aria-hidden="true"></div>
+                <div id="cameraStatusBadge" class="camera-status-badge hidden"></div>
+                <canvas id="cameraCaptureCanvas" class="hidden"></canvas>
             </div>
-            <div id="cameraWmPreview" class="camera-wm-preview hidden">created using svn.lens</div>
-            <div id="cameraStatusBadge" class="camera-status-badge hidden"></div>
-            <canvas id="cameraCaptureCanvas" class="hidden"></canvas>
         </div>
 
         <div class="camera-controls">
@@ -571,7 +588,7 @@
                 <button id="btnCameraShutter" class="camera-shutter-btn" aria-label="Take Photo">
                     <span class="camera-shutter-core"></span>
                 </button>
-                <span id="cameraActivePresetLabel" class="camera-preset-readout">ORIGINAL</span>
+                <span id="cameraActivePresetLabel" class="camera-preset-readout">CCD</span>
             </div>
         </div>
         <input type="file" id="cameraFallbackInput" accept="image/*" capture="environment" class="hidden">
