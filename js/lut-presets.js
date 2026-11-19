@@ -1138,7 +1138,17 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['x_ed8', 'LOWKEY', 'Low-Key Warm', 'editorial', 'EDITORIAL SUN', { exposure: -6, warmth: 14, contrast: 30, saturation: 12, shadows: -16, highlights: -6, fade: 3 }],
     ['x_ed9', 'HIGHSUN', 'High Sun Pop', 'editorial', 'EDITORIAL SUN', { exposure: 4, warmth: 12, contrast: 20, saturation: 16, vibrance: 10, highlights: -14, fade: 4 }],
     ['x_ed10', 'SOFTSUN', 'Soft Sunlit', 'editorial', 'EDITORIAL SUN', { warmth: 12, contrast: 14, saturation: 6, fade: 8, brightness: 4, highlights: -8 }],
-    ['x_ed11', 'EDTEAL', 'Editorial Teal Shadow', 'editorial', 'EDITORIAL SUN', { warmth: 10, contrast: 26, saturation: 10, shadowsTint: [14, 44, 52], highlightsTint: [255, 204, 150], splitStrength: 0.26 }]
+    ['x_ed11', 'EDTEAL', 'Editorial Teal Shadow', 'editorial', 'EDITORIAL SUN', { warmth: 10, contrast: 26, saturation: 10, shadowsTint: [14, 44, 52], highlightsTint: [255, 204, 150], splitStrength: 0.26 }],
+    ['x_ed12', 'CREAMGOLD', 'Creamy Editorial Sun', 'editorial', 'EDITORIAL SUN', { warmth: 12, contrast: 4, saturation: -14, vibrance: 6, highlights: -24, shadows: 14, fade: 8, shadowsTint: [38, 32, 26], highlightsTint: [255, 224, 186], splitStrength: 0.22, curve: { rgb: [[0, 14], [70, 68], [190, 198], [255, 246]] } }],
+
+    // Acid #cbff00 Pairings (Desaturated, Moody, Obsidian & Cool Slate looks engineered for #cbff00 typography)
+    ['x_ac01', 'ACIDLIME', 'Acid Lime Matte', 'acid', 'ACID #CBFF00', { exposure: -8, contrast: 18, saturation: -42, vibrance: -10, warmth: -10, fade: 18, blacks: -12, shadowsTint: [20, 28, 22], highlightsTint: [224, 242, 204], splitStrength: 0.22, curve: { rgb: [[0, 16], [68, 56], [192, 198], [255, 240]] } }],
+    ['x_ac02', 'BRATFILM', 'Brat Green Mono', 'acid', 'ACID #CBFF00', { exposure: -4, contrast: 24, saturation: -65, clarity: 22, warmth: -6, fade: 10, shadowsTint: [22, 34, 16], highlightsTint: [215, 245, 165], splitStrength: 0.28, grain: 22 }],
+    ['x_ac03', 'OBSIDIAN', 'Obsidian Dark', 'acid', 'ACID #CBFF00', { exposure: -22, contrast: 30, saturation: -35, highlights: -28, shadows: -16, blacks: -22, fade: 8, shadowsTint: [14, 18, 24], highlightsTint: [210, 220, 226], splitStrength: 0.2, vignette: 24 }],
+    ['x_ac04', 'CYBERLIME', 'Cyber Slate #CB', 'acid', 'ACID #CBFF00', { contrast: 20, saturation: -28, warmth: -22, tint: -8, clarity: 18, shadowsTint: [14, 34, 40], highlightsTint: [222, 248, 196], splitStrength: 0.26 }],
+    ['x_ac05', 'NOIRCB', 'Noir #CBFF00', 'acid', 'ACID #CBFF00', { contrast: 32, saturation: -100, blacks: -14, highlights: -10, fade: 12, clarity: 26, grain: 28, vignette: 18 }],
+    ['x_ac06', 'URBANSLATE', 'Urban Concrete', 'acid', 'ACID #CBFF00', { exposure: -6, contrast: 16, saturation: -48, warmth: -14, highlights: -18, shadows: 12, fade: 16, shadowsTint: [26, 28, 32], highlightsTint: [228, 232, 226], splitStrength: 0.16 }],
+    ['x_ac07', 'NIGHTACID', 'Night Street Acid', 'acid', 'ACID #CBFF00', { exposure: -16, contrast: 26, saturation: -22, warmth: -16, tint: -12, shadows: 14, highlights: -24, shadowsTint: [12, 32, 26], highlightsTint: [212, 242, 178], splitStrength: 0.3, vignette: 22 }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
 window.FILM_PRESETS = FILM_PRESETS;

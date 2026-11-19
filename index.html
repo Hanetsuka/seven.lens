@@ -86,6 +86,11 @@
                         <span class="row-title">Carousel templates</span>
                         <span class="row-arrow">→</span>
                     </button>
+                    <button class="home-menu-row" id="btnHomeCamera">
+                        <span class="row-num">05</span>
+                        <span class="row-title">Take photo with camera</span>
+                        <span class="row-arrow">→</span>
+                    </button>
                 </nav>
             </section>
 
@@ -197,6 +202,7 @@
             <div style="display:flex; align-items:center; gap:14px;">
                 <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
                 <button id="btnEditorImport" class="editor-top-link">+ PHOTO</button>
+                <button id="btnEditorCamera" class="editor-top-link">CAM</button>
             </div>
 
             <div class="editor-history-btns">
@@ -269,6 +275,7 @@
                     <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
                     <button class="subcat-btn active" data-pcat="genz">VSCO SOFT ✦</button>
                     <button class="subcat-btn" data-pcat="editorial">EDITORIAL SUN</button>
+                    <button class="subcat-btn" data-pcat="acid">ACID #CBFF00</button>
                     <button class="subcat-btn" data-pcat="digicam">Y2K DIGICAM</button>
                     <button class="subcat-btn" data-pcat="korean">K-SOFT</button>
                     <button class="subcat-btn" data-pcat="moody">MOODY</button>
@@ -408,6 +415,7 @@
                     <div id="textSubColor" class="text-sub-panel">
                         <div class="color-palette-strip" id="textColorStrip">
                             <button class="color-dot active" data-color="#ffffff" style="background:#ffffff;"></button>
+                            <button class="color-dot" data-color="#cbff00" style="background:#cbff00;" title="Acid Lime #cbff00"></button>
                             <button class="color-dot" data-color="#f4f1ea" style="background:#f4f1ea;"></button>
                             <button class="color-dot" data-color="#fde68a" style="background:#fde68a;"></button>
                             <button class="color-dot" data-color="#fb923c" style="background:#fb923c;"></button>
@@ -519,10 +527,54 @@
                     <label>QUALITY (<span id="valExportQuality">95%</span>)</label>
                     <input type="range" id="exportQuality" min="20" max="100" value="95" style="width:100%; accent-color:#26211e;">
                 </div>
+                <div class="form-row">
+                    <label>RETRO WATERMARK ("created using svn.lens")</label>
+                    <select id="exportWatermarkCorner" class="cream-input">
+                        <option value="off">Off — Clean Photo</option>
+                        <option value="br">Bottom Right (Estetik Pojok)</option>
+                        <option value="bl">Bottom Left</option>
+                        <option value="tr">Top Right</option>
+                        <option value="tl">Top Left</option>
+                    </select>
+                </div>
             </div>
 
             <button id="btnDownloadNow" class="btn-espresso-block">DOWNLOAD PHOTO →</button>
         </div>
+    </div>
+
+    <!-- CAMERA CAPTURE MODAL -->
+    <div id="cameraModal" class="camera-modal hidden" role="dialog" aria-modal="true" aria-label="Direct Camera Capture">
+        <div class="camera-topbar">
+            <button id="btnCloseCamera" class="camera-pill-btn">✕ CLOSE</button>
+            <div class="camera-topbar-actions">
+                <button id="btnCameraGrid" class="camera-pill-btn" title="Toggle 3x3 Grid">GRID</button>
+                <button id="btnCameraWatermark" class="camera-pill-btn" title="Retro Corner Watermark">WM: OFF</button>
+                <button id="btnCameraFlip" class="camera-pill-btn" title="Switch Camera">FLIP ↻</button>
+            </div>
+        </div>
+
+        <div class="camera-stage" id="cameraStage">
+            <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+            <div id="cameraGridOverlay" class="camera-grid hidden" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+            </div>
+            <div id="cameraWmPreview" class="camera-wm-preview hidden">created using svn.lens</div>
+            <div id="cameraStatusBadge" class="camera-status-badge hidden"></div>
+            <canvas id="cameraCaptureCanvas" class="hidden"></canvas>
+        </div>
+
+        <div class="camera-controls">
+            <div class="camera-filter-strip" id="cameraFilterStrip"></div>
+            <div class="camera-shutter-row">
+                <button id="btnCameraUploadFallback" class="camera-secondary-btn" title="Use Native Device Camera">NATIVE CAM</button>
+                <button id="btnCameraShutter" class="camera-shutter-btn" aria-label="Take Photo">
+                    <span class="camera-shutter-core"></span>
+                </button>
+                <span id="cameraActivePresetLabel" class="camera-preset-readout">ORIGINAL</span>
+            </div>
+        </div>
+        <input type="file" id="cameraFallbackInput" accept="image/*" capture="environment" class="hidden">
     </div>
 
     <script src="js/heic2any.min.js"></script>

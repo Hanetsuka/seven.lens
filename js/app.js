@@ -94,6 +94,7 @@
             dustStrength: 50,
             frameId: 'none_frame',
             frameStrength: 60,
+            watermark: 'off',
             masks: [],
             wheels: defaultWheels(),
             wheelsAmt: 100,
@@ -380,6 +381,8 @@
         document.getElementById('btnHomeImportPhoto').addEventListener('click', triggerPhotoPicker);
         document.getElementById('btnLibImport').addEventListener('click', triggerPhotoPicker);
         document.getElementById('btnEditorImport').addEventListener('click', triggerPhotoPicker);
+        document.getElementById('btnHomeCamera').addEventListener('click', () => openCameraModal());
+        document.getElementById('btnEditorCamera').addEventListener('click', () => openCameraModal());
 
         document.getElementById('btnHomeBrowsePresets').addEventListener('click', () => {
             if (libraryPhotos.length > 0) {
@@ -721,6 +724,7 @@
         state = JSON.parse(JSON.stringify(photo.editState));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
+        if (!state.watermark) state.watermark = 'off';
         if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
         if (!state.curves) state.curves = createIdentityCurves();
 
@@ -783,6 +787,7 @@
             !state.activeCubeLutId &&
             state.effectId === 'none_leak' &&
             (!state.frameId || state.frameId === 'none_frame') &&
+            (!state.watermark || state.watermark === 'off') &&
             (!state.masks || !state.masks.length) &&
             !wheelsActive(state) &&
             state.texts.length === 0 &&
@@ -1047,6 +1052,33 @@
             }
             ctx.restore();
         });
+
+        // 9. Retro Corner Watermark ("created using svn.lens")
+        renderWatermarkCorner(ctx, w, h, state.watermark);
+    }
+
+    function renderWatermarkCorner(ctx, w, h, corner) {
+        if (!corner || corner === 'off') return;
+        const minSide = Math.min(w, h);
+        const fontSize = Math.max(12, Math.round(minSide * 0.024));
+        const padX = Math.max(14, Math.round(minSide * 0.032));
+        const padY = Math.max(12, Math.round(minSide * 0.028));
+        const isRight = corner === 'br' || corner === 'tr';
+        const isBottom = corner === 'br' || corner === 'bl';
+
+        ctx.save();
+        ctx.font = `400 ${fontSize}px 'Courier Prime', 'Space Mono', monospace`;
+        ctx.textAlign = isRight ? 'right' : 'left';
+        ctx.textBaseline = isBottom ? 'bottom' : 'top';
+        ctx.fillStyle = 'rgba(244, 241, 234, 0.86)';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+        ctx.shadowBlur = Math.max(3, Math.round(fontSize * 0.25));
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 1;
+        const x = isRight ? w - padX : padX;
+        const y = isBottom ? h - padY : padY;
+        ctx.fillText('created using svn.lens', x, y);
+        ctx.restore();
     }
 
     function defaultWheels() {
@@ -1929,11 +1961,11 @@
     function selectToolKey(key) {
         let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
 
-        // Tone Curve tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
-        if (tool.isContext === 'curves') {
+        // Tone Curve & Masking tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
+        if (tool.isContext === 'curves' || tool.isContext === 'mask') {
             activeToolKey = tool.key;
             renderToolsStrip();
-            openToolContextBar('curves', tool.name);
+            openToolContextBar(tool.isContext, tool.name);
             return;
         }
         // Tool non-slider lain tidak bisa diikat ke slider utama
@@ -2103,44 +2135,7 @@
             });
         } else if (contextType === 'mask') {
             openMaskUI();
-            const panel = document.createElement('div');
-            panel.className = 'mask-panel';
-            const row = () => { const r = document.createElement('div'); r.className = 'mask-row'; panel.appendChild(r); return r; };
-            const mk = (r, label, fn, active) => {
-                const b = document.createElement('button');
-                b.className = `dark-chip ${active ? 'active' : ''}`;
-                b.textContent = label;
-                b.addEventListener('click', fn);
-                r.appendChild(b);
-            };
-            const r1 = row();
-            mk(r1, '+ LINEAR', () => addMask('linear'));
-            mk(r1, '+ RADIAL', () => addMask('radial'));
-            mk(r1, '+ BRUSH', () => addMask('brush'));
-            MASK_QUICK.forEach((q) => mk(r1, q.label, () => addMask(q.type, q.over)));
-            if (state.masks.length) {
-                const r2 = row();
-                state.masks.forEach((m, i) => mk(r2, `${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
-                const sm = selectedMask();
-                if (sm) {
-                    mk(r2, sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; maskVer++; renderEditorCanvas(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
-                    mk(r2, maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
-                    if (sm.type === 'brush') {
-                        mk(r2, maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
-                        mk(r2, 'ISI SEMUA', () => { const mc = maskCanvases.get(sm.id); if (mc) { const c = mc.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Fill mask', true); } });
-                        mk(r2, 'KOSONGKAN', () => { const mc = maskCanvases.get(sm.id); if (mc) { mc.getContext('2d').clearRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Clear mask', true); } });
-                    }
-                    mk(r2, '✕ HAPUS MASK', () => deleteMask(sm.id));
-                    const r3 = row();
-                    MASK_ATTRS.forEach(([k, label]) => {
-                        if (k === 'size' && sm.type !== 'brush') return;
-                        const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
-                        const txt = k === 'feather' || k === 'size' ? `${v}` : `${v > 0 ? '+' : ''}${v}`;
-                        mk(r3, `${label} ${txt}`, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
-                    });
-                }
-            }
-            bar.appendChild(panel);
+            renderLightroomMaskUI(bar);
             syncMasterSliderForMask();
         } else if (contextType === 'wb') {
             wbPickActive = false;
@@ -2496,6 +2491,26 @@
         }
 
         if (activeEffectCat === 'stamps') {
+            const wmCorner = state.watermark || 'off';
+            const wmLabels = { off: 'OFF', br: 'POJOK KANAN BAWAH', bl: 'KIRI BAWAH', tr: 'KANAN ATAS', tl: 'KIRI ATAS' };
+            const wmOrder = ['off', 'br', 'bl', 'tr', 'tl'];
+            const wmCard = document.createElement('div');
+            wmCard.className = `thumb-card ${wmCorner !== 'off' ? 'active' : ''}`;
+            wmCard.innerHTML = `
+                <div class="thumb-box" style="display:flex;align-items:center;justify-content:center;color:#cbff00;font-family:'Courier Prime','Space Mono',monospace;font-size:0.65rem;text-align:center;padding:6px;line-height:1.25;">
+                    created using<br>svn.lens
+                </div>
+                <span class="thumb-label">WM: ${wmLabels[wmCorner] || 'OFF'}</span>
+            `;
+            wmCard.addEventListener('click', () => {
+                const idx = wmOrder.indexOf(state.watermark || 'off');
+                state.watermark = wmOrder[(idx + 1) % wmOrder.length];
+                renderEffectsStrip();
+                renderEditorCanvas();
+                pushHistory(`Watermark ${state.watermark.toUpperCase()}`);
+            });
+            strip.appendChild(wmCard);
+
             const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
             const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
             const mono = "'Space Mono', monospace";
@@ -2827,7 +2842,12 @@
                 state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) mk[maskAttr] = val;
+                if (mk) {
+                    mk[maskAttr] = val;
+                    updateMaskAttrChipText(maskAttr, val);
+                    if (maskAttr === 'feather') { maskVer++; scheduleMaskOverlay(); }
+                    if (maskAttr === 'size') scheduleMaskOverlay();
+                }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'dust') state.dustStrength = val;
                 else if (activeEffectCat === 'frames') state.frameStrength = val;
@@ -2854,7 +2874,12 @@
                 masterSlider.value = 100;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) { mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0; masterSlider.value = mk[maskAttr]; }
+                if (mk) {
+                    mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0;
+                    masterSlider.value = mk[maskAttr];
+                    updateMaskAttrChipText(maskAttr, mk[maskAttr]);
+                    if (maskAttr === 'feather') { maskVer++; scheduleMaskOverlay(); }
+                }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
                 masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
@@ -3327,26 +3352,39 @@
     // 11. HISTORY (UNDO / REDO) & EXPORT
     // ==========================================
     // ==========================================
-    // LOCAL ADJUSTMENT MASKS (Linear / Radial / Brush) — pengaturan cahaya per area
+    // LOCAL ADJUSTMENT MASKS (Lightroom-Style Layers + Auto Subject / Sky / Background + Linear / Radial / Brush)
     // ==========================================
     const MASK_ATTRS = [
-        ['exposure', 'EXPOSURE'], ['contrast', 'CONTRAST'], ['highlights', 'HIGHLIGHTS'], ['shadows', 'SHADOWS'],
-        ['saturation', 'SATURATION'], ['warmth', 'WARMTH'], ['feather', 'FEATHER'], ['size', 'BRUSH SIZE']
+        ['exposure', 'EXPOSURE', 'light'],
+        ['contrast', 'CONTRAST', 'light'],
+        ['highlights', 'HIGHLIGHTS', 'light'],
+        ['shadows', 'SHADOWS', 'light'],
+        ['warmth', 'WARMTH', 'color'],
+        ['tint', 'TINT', 'color'],
+        ['saturation', 'SATURATION', 'color'],
+        ['opacity', 'OPACITY', 'mask'],
+        ['feather', 'FEATHER', 'mask'],
+        ['size', 'BRUSH SIZE', 'mask']
     ];
-    const MASK_DEFAULTS = { feather: 50, size: 8 };
-    const maskCanvases = new Map(); // id mask brush -> canvas alpha (≤1024px)
+    const MASK_DEFAULTS = { feather: 50, size: 8, opacity: 100 };
+    const MASK_MAX_LAYERS = 8;
+    const isPixelMaskType = (t) => t === 'brush' || t === 'subject' || t === 'sky' || t === 'background';
+    const maskCanvases = new Map(); // id mask pixel/AI/brush -> canvas alpha (≤1024px)
     const maskTmp = document.createElement('canvas');
     const maskTmpCtx = maskTmp.getContext('2d', { willReadFrequently: true });
     let maskUiActive = false, maskBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
+    let maskPickerOpen = false, maskAdjGroup = 'light';
     let activeFontCat = 'all';
     let maskVer = 0, maskSnapCache = { ver: -1, map: null }, maskHover = null, maskOvRaf = 0, wbPickActive = false;
-    const MASK_QUICK = [
-        { label: '☁ LANGIT', type: 'linear', over: { x1: 0.5, y1: 0.02, x2: 0.5, y2: 0.5, exposure: -45, highlights: -35, saturation: 10, feather: 60 } },
-        { label: '◉ SUBJEK', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.28, exposure: 30, shadows: 20, contrast: 10, feather: 70 } },
-        { label: '☀ WAJAH', type: 'radial', over: { cx: 0.5, cy: 0.38, r: 0.18, exposure: 35, shadows: 25, warmth: 8, feather: 85 } },
-        { label: '◌ VIGNET', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.45, exposure: -45, invert: true, feather: 85 } },
-        { label: '▁ BAWAH GELAP', type: 'linear', over: { x1: 0.5, y1: 0.98, x2: 0.5, y2: 0.55, exposure: -35, feather: 60 } }
-    ];
+
+    const MASK_TYPE_META = {
+        subject: { label: 'Subject', badge: 'AI SUBJECT' },
+        sky: { label: 'Sky', badge: 'AI SKY' },
+        background: { label: 'Background', badge: 'AI BG' },
+        linear: { label: 'Linear', badge: 'LINEAR' },
+        radial: { label: 'Radial', badge: 'RADIAL' },
+        brush: { label: 'Brush', badge: 'BRUSH' }
+    };
 
     const selectedMask = () => (state.masks || []).find((m) => m.id === selectedMaskId) || null;
 
@@ -3394,7 +3432,8 @@
                 maskSmallCanvas.width = sw;
                 maskSmallCanvas.height = sh;
                 maskSmallCtx.clearRect(0, 0, sw, sh);
-                maskSmallCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(sw, sh)}px)` : 'none';
+                const blurPx = m.type === 'brush' ? f * 0.02 * Math.max(sw, sh) : f * 0.012 * Math.max(sw, sh);
+                maskSmallCtx.filter = f > 0.02 ? `blur(${blurPx}px)` : 'none';
                 maskSmallCtx.drawImage(mc, 0, 0, sw, sh);
                 maskSmallCtx.filter = 'none';
                 const d = maskSmallCtx.getImageData(0, 0, sw, sh).data;
@@ -3427,7 +3466,7 @@
             A = new Uint8ClampedArray(gw * gh);
             for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
         }
-        if (maskAlphaCache.size > 10) maskAlphaCache.clear();
+        if (maskAlphaCache.size > 16) maskAlphaCache.clear();
         maskAlphaCache.set(key, A);
         return A;
     }
@@ -3435,70 +3474,547 @@
     function applyMasks(imgData, gw, gh) {
         const d = imgData.data;
         state.masks.forEach((m) => {
+            if (m.visible === false) return;
+            const op = (m.opacity ?? 100) / 100;
+            if (op <= 0) return;
             const ex = (m.exposure || 0) / 100, ct = (m.contrast || 0) / 100, hl = (m.highlights || 0) / 100;
-            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100;
-            if (!ex && !ct && !hl && !sh && !sa && !wm) return;
+            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100, ti = (m.tint || 0) / 100;
+            if (!ex && !ct && !hl && !sh && !sa && !wm && !ti) return;
             const A = computeMaskAlpha(m, gw, gh);
             for (let p = 0, i = 0; p < A.length; p++, i += 4) {
                 if (A[p] < 2) continue;
-                const k = A[p] / 255;
+                const k = (A[p] / 255) * op;
                 let r = d[i], g = d[i + 1], b = d[i + 2];
-                if (ex) { const f = 1 + ex * k * (ex > 0 ? 1.1 : 0.9); r *= f; g *= f; b *= f; }
+                if (ex > 0) {
+                    const lift = ex * k * 0.72;
+                    r += lift * (255 - r) * ((r / 255) * 0.55 + 0.45);
+                    g += lift * (255 - g) * ((g / 255) * 0.55 + 0.45);
+                    b += lift * (255 - b) * ((b / 255) * 0.55 + 0.45);
+                } else if (ex < 0) {
+                    const dim = Math.max(0.25, 1 + ex * k * 0.68);
+                    const floor = 8 * (1 - dim);
+                    r = r * dim + floor; g = g * dim + floor; b = b * dim + floor;
+                }
                 if (ct) { const c = 1 + ct * k * 0.8; r = (r - 128) * c + 128; g = (g - 128) * c + 128; b = (b - 128) * c + 128; }
                 const lum = 0.299 * r + 0.587 * g + 0.114 * b;
                 if (hl) { const v = hl * k * Math.max(0, (lum - 110) / 145) * 70; r += v; g += v; b += v; }
                 if (sh) { const v = sh * k * Math.max(0, (150 - lum) / 150) * 80; r += v; g += v; b += v; }
                 if (sa) { const s = 1 + sa * k; r = lum + (r - lum) * s; g = lum + (g - lum) * s; b = lum + (b - lum) * s; }
                 if (wm) { const v = wm * k * 30; r += v; b -= v; }
+                if (ti) { const v = ti * k * 25; g -= v; r += v * 0.5; b += v * 0.5; }
                 d[i] = r; d[i + 1] = g; d[i + 2] = b; // Uint8ClampedArray membatasi 0-255
             }
         });
     }
 
-    function addMask(type, over) {
-        if (state.masks.length >= 6) {
-            document.getElementById('gestureHintText').textContent = 'MAKSIMAL 6 MASK';
-            return;
-        }
-        const m = { id: 'mk_' + Date.now().toString(36), type, feather: 50, invert: false, exposure: 25, contrast: 0, highlights: 0, shadows: 0, saturation: 0, warmth: 0, size: 8 };
-        if (type === 'linear') Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
-        else if (type === 'radial') Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
-        else {
-            const sc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
-            maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * sc)), Math.max(8, Math.round(basePhotoCanvas.height * sc))));
+    function nextMaskLayerName(type) {
+        const base = (MASK_TYPE_META[type] && MASK_TYPE_META[type].label) || 'Mask';
+        const count = state.masks.filter((x) => x.type === type).length + 1;
+        return `${base} ${count}`;
+    }
+
+    function buildMaskLayer(type, over, precomputedCanvas) {
+        const m = {
+            id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
+            name: nextMaskLayerName(type),
+            type,
+            visible: true,
+            opacity: 100,
+            feather: type === 'subject' || type === 'sky' || type === 'background' ? 20 : 50,
+            invert: false,
+            exposure: 25,
+            contrast: 0,
+            highlights: 0,
+            shadows: 0,
+            saturation: 0,
+            warmth: 0,
+            tint: 0,
+            size: 8
+        };
+
+        const sc = Math.min(1, 512 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
+        const mw = Math.max(16, Math.round(basePhotoCanvas.width * sc));
+        const mh = Math.max(16, Math.round(basePhotoCanvas.height * sc));
+
+        if (type === 'linear') {
+            Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
+        } else if (type === 'radial') {
+            Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
+        } else if (type === 'subject') {
+            Object.assign(m, { exposure: 10, highlights: -10, shadows: 12 });
+            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh));
+            maskVer++;
+        } else if (type === 'background') {
+            Object.assign(m, { exposure: -16, highlights: -10, invert: true });
+            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh));
+            maskVer++;
+        } else if (type === 'sky') {
+            Object.assign(m, { exposure: -28, highlights: -24, saturation: 14 });
+            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSkyMask(basePhotoCanvas, mw, mh));
+            maskVer++;
+        } else {
+            const bsc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
+            maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * bsc)), Math.max(8, Math.round(basePhotoCanvas.height * bsc))));
             maskVer++;
         }
+
         if (over) Object.assign(m, over);
+        return m;
+    }
+
+    function addMask(type, over) {
+        if (state.masks.length >= MASK_MAX_LAYERS) {
+            document.getElementById('gestureHintText').textContent = `MAKSIMAL ${MASK_MAX_LAYERS} LAYER MASK`;
+            return;
+        }
+        const m = buildMaskLayer(type, over);
         state.masks.push(m);
         selectedMaskId = m.id;
         maskAttr = 'exposure';
-        maskShow = type === 'brush';
+        maskAdjGroup = 'light';
+        maskErase = false;
+        maskPickerOpen = false;
+        maskShow = true;
         refreshMaskBar();
         renderEditorCanvas();
-        pushHistory(`Add ${type} mask`, true);
+        pushHistory(`Add ${m.name}`, true);
+    }
+
+    function addStrobistMaskPair() {
+        if (state.masks.length > MASK_MAX_LAYERS - 2) {
+            document.getElementById('gestureHintText').textContent = `BUTUH 2 SLOT LAYER (MAKS ${MASK_MAX_LAYERS})`;
+            return;
+        }
+        const sc = Math.min(1, 512 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
+        const mw = Math.max(16, Math.round(basePhotoCanvas.width * sc));
+        const mh = Math.max(16, Math.round(basePhotoCanvas.height * sc));
+        const subjMatte = window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh);
+
+        const bgLayer = buildMaskLayer('background', {
+            name: 'Strobist BG',
+            exposure: -45,
+            highlights: -28,
+            contrast: 8,
+            warmth: -8,
+            feather: 26
+        }, cloneCanvas(subjMatte));
+
+        const flashLayer = buildMaskLayer('subject', {
+            name: 'Strobist Flash',
+            exposure: 16,
+            contrast: 8,
+            highlights: -8,
+            shadows: 14,
+            warmth: 6,
+            feather: 22
+        }, subjMatte);
+
+        state.masks.push(bgLayer, flashLayer);
+        selectedMaskId = flashLayer.id;
+        maskAttr = 'exposure';
+        maskAdjGroup = 'light';
+        maskErase = false;
+        maskPickerOpen = false;
+        maskShow = false;
+        refreshMaskBar();
+        renderEditorCanvas();
+        pushHistory('Add Strobist Lighting', true);
     }
 
     function selectMask(id) {
         selectedMaskId = id;
-        maskAttr = 'exposure';
         refreshMaskBar();
+        drawMaskOverlay();
+    }
+
+    function toggleMaskVisibility(id) {
+        const m = state.masks.find((x) => x.id === id);
+        if (!m) return;
+        m.visible = m.visible === false;
+        renderEditorCanvas();
+        refreshMaskBar();
+        pushHistory(m.visible ? `Show ${m.name || 'mask'}` : `Hide ${m.name || 'mask'}`, true);
+    }
+
+    function duplicateMask(id) {
+        if (state.masks.length >= MASK_MAX_LAYERS) {
+            document.getElementById('gestureHintText').textContent = `MAKSIMAL ${MASK_MAX_LAYERS} LAYER MASK`;
+            return;
+        }
+        const idx = state.masks.findIndex((x) => x.id === id);
+        if (idx < 0) return;
+        const src = state.masks[idx];
+        const copy = JSON.parse(JSON.stringify(src));
+        copy.id = 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5);
+        copy.name = `${src.name || (MASK_TYPE_META[src.type]?.label || 'Mask')} Copy`;
+        if (maskCanvases.has(src.id)) {
+            maskCanvases.set(copy.id, cloneCanvas(maskCanvases.get(src.id)));
+            maskVer++;
+        }
+        state.masks.splice(idx + 1, 0, copy);
+        selectedMaskId = copy.id;
+        refreshMaskBar();
+        renderEditorCanvas();
+        pushHistory(`Duplicate ${src.name || 'mask'}`, true);
+    }
+
+    function moveMaskLayer(id, delta) {
+        const idx = state.masks.findIndex((x) => x.id === id);
+        const target = idx + delta;
+        if (idx < 0 || target < 0 || target >= state.masks.length) return;
+        const [item] = state.masks.splice(idx, 1);
+        state.masks.splice(target, 0, item);
+        refreshMaskBar();
+        renderEditorCanvas();
+        pushHistory('Reorder mask layer', true);
     }
 
     function deleteMask(id) {
         state.masks = state.masks.filter((m) => m.id !== id);
         maskCanvases.delete(id);
         maskVer++;
-        selectedMaskId = state.masks[0]?.id || null;
+        selectedMaskId = state.masks[state.masks.length - 1]?.id || null;
+        if (!state.masks.length) maskPickerOpen = true;
         refreshMaskBar();
         renderEditorCanvas();
         pushHistory('Delete mask', true);
     }
 
+    function drawMaskLayerThumb(m, thumbCv) {
+        if (!thumbCv) return;
+        const sz = 36;
+        thumbCv.width = sz;
+        thumbCv.height = sz;
+        const tCtx = thumbCv.getContext('2d');
+        const A = maskAlphaSmall(m, sz, sz);
+        const id = tCtx.createImageData(sz, sz);
+        const d = id.data;
+        for (let p = 0, i = 0; p < A.length; p++, i += 4) {
+            const v = A[p];
+            d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+        }
+        tCtx.putImageData(id, 0, 0);
+    }
+
+    function updateMaskLayerThumbById(id) {
+        const m = state.masks.find((x) => x.id === id);
+        const cv = document.querySelector(`.lr-layer-thumb[data-mask-id="${id}"]`);
+        if (m && cv) drawMaskLayerThumb(m, cv);
+    }
+
+    function formatMaskAttrVal(k, v) {
+        if (k === 'opacity') return `${v}%`;
+        if (k === 'feather' || k === 'size') return `${v}`;
+        return `${v > 0 ? '+' : ''}${v}`;
+    }
+
+    function updateMaskAttrChipText(k, val) {
+        const chip = document.querySelector(`.lr-adj-panel [data-mask-attr="${k}"]`);
+        if (!chip) return;
+        const meta = MASK_ATTRS.find((x) => x[0] === k);
+        if (!meta) return;
+        chip.textContent = `${meta[1]} ${formatMaskAttrVal(k, val)}`;
+        const def = MASK_DEFAULTS[k] ?? 0;
+        chip.classList.toggle('lr-modified', val !== def);
+    }
+
+    function renderLightroomMaskUI(bar) {
+        const studio = document.createElement('div');
+        studio.className = 'lr-mask-studio';
+
+        // 1. Topbar (← Selesai | MASKING badge | Overlay toggle | + Tambah Mask)
+        const topbar = document.createElement('div');
+        topbar.className = 'lr-mask-topbar';
+        topbar.innerHTML = `
+            <div class="lr-mask-topbar-left">
+                <button type="button" class="lr-btn-done" id="lrMaskDoneBtn">← SELESAI</button>
+                <span class="lr-mask-title">MASKING</span>
+                <span class="lr-mask-badge">${state.masks.length}/${MASK_MAX_LAYERS}</span>
+            </div>
+            <div class="lr-mask-topbar-right">
+                <button type="button" class="lr-btn-overlay ${maskShow ? 'active' : ''}" id="lrMaskOverlayBtn" title="Tampilkan / sembunyikan overlay merah">
+                    <span class="lr-ov-dot"></span> OVERLAY
+                </button>
+                <button type="button" class="lr-btn-add" id="lrMaskAddBtn">${maskPickerOpen && state.masks.length ? '✕ TUTUP' : '+ MASK'}</button>
+            </div>
+        `;
+        studio.appendChild(topbar);
+
+        topbar.querySelector('#lrMaskDoneBtn').addEventListener('click', () => {
+            closeMaskUI();
+            document.getElementById('toolContextExtras').classList.add('hidden');
+            selectToolKey('exposure');
+        });
+        topbar.querySelector('#lrMaskOverlayBtn').addEventListener('click', () => {
+            maskShow = !maskShow;
+            drawMaskOverlay();
+            refreshMaskBar();
+        });
+        topbar.querySelector('#lrMaskAddBtn').addEventListener('click', () => {
+            maskPickerOpen = !maskPickerOpen;
+            refreshMaskBar();
+        });
+
+        // 2. Mask Creation Picker (muncul otomatis jika belum ada layer, atau saat klik + MASK)
+        if (!state.masks.length || maskPickerOpen) {
+            const picker = document.createElement('div');
+            picker.className = 'lr-mask-picker';
+            const choices = [
+                {
+                    type: 'subject', title: 'Auto Subject', sub: 'Seleksi objek', featured: true,
+                    icon: `<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3" opacity=".6"/>`
+                },
+                {
+                    type: 'sky', title: 'Auto Sky', sub: 'Seleksi langit', featured: true,
+                    icon: `<path d="M6.5 18h11a4 4 0 0 0 .8-7.9A5.5 5.5 0 0 0 7.7 8.4 3.5 3.5 0 0 0 6.5 18Z"/>`
+                },
+                {
+                    type: 'background', title: 'Background', sub: 'Latar belakang', featured: true,
+                    icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="11" r="3"/><path d="M7.5 19a4.5 4.5 0 0 1 9 0" stroke-dasharray="2 2"/>`
+                },
+                {
+                    type: 'linear', title: 'Linear', sub: 'Gradasi garis',
+                    icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="6" x2="12" y2="18" stroke-dasharray="2 2"/>`
+                },
+                {
+                    type: 'radial', title: 'Radial', sub: 'Gradasi lingkar',
+                    icon: `<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5" stroke-dasharray="2 2"/>`
+                },
+                {
+                    type: 'brush', title: 'Brush', sub: 'Kuas manual',
+                    icon: `<path d="m18 5-3-3-9 9v3h3l9-9Z"/><path d="M5 19h14"/>`
+                },
+                {
+                    type: 'strobist', title: 'Strobist', sub: 'Flash subjek + ambient gelap', featured: true, wide: true,
+                    icon: `<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`
+                }
+            ];
+            choices.forEach((ch) => {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = `lr-pick-card ${ch.featured ? 'ai-featured' : ''} ${ch.wide ? 'wide' : ''}`;
+                card.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ch.icon}</svg>
+                    <span class="lr-pick-title">${ch.title}</span>
+                    <span class="lr-pick-sub">${ch.sub}</span>
+                `;
+                card.addEventListener('click', () => ch.type === 'strobist' ? addStrobistMaskPair() : addMask(ch.type));
+                picker.appendChild(card);
+            });
+            studio.appendChild(picker);
+        }
+
+        // 3. Mask Layers Stack (urutan atas = diterapkan paling akhir, seperti Photoshop/Lightroom)
+        if (state.masks.length) {
+            const layersSec = document.createElement('div');
+            layersSec.className = 'lr-layers-section';
+            layersSec.innerHTML = `
+                <div class="lr-section-head">
+                    <span>MASK LAYERS</span>
+                    <span>KLIK LAYER UNTUK ATUR · 👁 HIDE · ◐ INVERT</span>
+                </div>
+            `;
+            const list = document.createElement('div');
+            list.className = 'lr-layers-list';
+
+            // Tampilkan dari layer teratas ke terbawah
+            for (let idx = state.masks.length - 1; idx >= 0; idx--) {
+                const m = state.masks[idx];
+                const isSel = m.id === selectedMaskId;
+                const isVis = m.visible !== false;
+                const meta = MASK_TYPE_META[m.type] || { label: m.type, badge: m.type.toUpperCase() };
+                const rowEl = document.createElement('div');
+                rowEl.className = `lr-layer-item ${isSel ? 'active' : ''} ${!isVis ? 'is-hidden' : ''}`;
+
+                const thumb = document.createElement('canvas');
+                thumb.className = 'lr-layer-thumb';
+                thumb.setAttribute('data-mask-id', m.id);
+                drawMaskLayerThumb(m, thumb);
+                rowEl.appendChild(thumb);
+
+                const info = document.createElement('div');
+                info.className = 'lr-layer-info';
+                info.innerHTML = `
+                    <span class="lr-layer-name">${m.name || `${meta.label} ${idx + 1}`}</span>
+                    <span class="lr-layer-meta">
+                        <span>${meta.badge}</span>
+                        <span>· ${m.opacity ?? 100}%</span>
+                        ${m.invert ? '<span class="lr-inv-tag">INV</span>' : ''}
+                    </span>
+                `;
+                rowEl.appendChild(info);
+
+                const actions = document.createElement('div');
+                actions.className = 'lr-layer-actions';
+
+                const mkIconBtn = (svg, title, cls, fn, disabled = false) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = `lr-icon-btn ${cls || ''}`;
+                    b.title = title;
+                    b.disabled = disabled;
+                    b.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+                    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+                    actions.appendChild(b);
+                };
+
+                // Visibility Eye
+                mkIconBtn(
+                    isVis
+                        ? `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`
+                        : `<path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="M6.6 6.6A17.7 17.7 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><line x1="2" y1="2" x2="22" y2="22"/>`,
+                    isVis ? 'Sembunyikan layer' : 'Tampilkan layer',
+                    isVis ? '' : 'active',
+                    () => toggleMaskVisibility(m.id)
+                );
+
+                // Invert
+                mkIconBtn(
+                    `<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/>`,
+                    'Balikkan mask (Invert)',
+                    m.invert ? 'active' : '',
+                    () => {
+                        m.invert = !m.invert;
+                        maskVer++;
+                        renderEditorCanvas();
+                        drawMaskOverlay();
+                        pushHistory('Invert mask', true);
+                        refreshMaskBar();
+                    }
+                );
+
+                // Move Up / Down (jika > 1 layer)
+                if (state.masks.length > 1) {
+                    mkIconBtn(`<path d="m18 15-6-6-6 6"/>`, 'Naikkan layer', '', () => moveMaskLayer(m.id, 1), idx === state.masks.length - 1);
+                    mkIconBtn(`<path d="m6 9 6 6 6-6"/>`, 'Turunkan layer', '', () => moveMaskLayer(m.id, -1), idx === 0);
+                }
+
+                // Duplicate
+                mkIconBtn(
+                    `<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
+                    'Duplikat layer',
+                    '',
+                    () => duplicateMask(m.id),
+                    state.masks.length >= MASK_MAX_LAYERS
+                );
+
+                // Delete
+                mkIconBtn(
+                    `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>`,
+                    'Hapus layer',
+                    'danger',
+                    () => deleteMask(m.id)
+                );
+
+                rowEl.appendChild(actions);
+                rowEl.addEventListener('click', () => selectMask(m.id));
+                list.appendChild(rowEl);
+            }
+
+            layersSec.appendChild(list);
+            studio.appendChild(layersSec);
+
+            // 4. Local Adjustment Panel untuk layer aktif (CAHAYA | WARNA | MASK & KUAS)
+            const sm = selectedMask();
+            if (sm) {
+                const adjPanel = document.createElement('div');
+                adjPanel.className = 'lr-adj-panel';
+
+                const tabs = document.createElement('div');
+                tabs.className = 'lr-adj-tabs';
+                [
+                    ['light', 'CAHAYA'],
+                    ['color', 'WARNA'],
+                    ['mask', isPixelMaskType(sm.type) ? 'MASK & KUAS' : 'MASK']
+                ].forEach(([gid, glabel]) => {
+                    const t = document.createElement('button');
+                    t.type = 'button';
+                    t.className = `lr-adj-tab ${maskAdjGroup === gid ? 'active' : ''}`;
+                    t.textContent = glabel;
+                    t.addEventListener('click', () => {
+                        maskAdjGroup = gid;
+                        const firstInGroup = MASK_ATTRS.find((a) => a[2] === gid && !(a[0] === 'size' && !isPixelMaskType(sm.type)));
+                        if (firstInGroup) maskAttr = firstInGroup[0];
+                        syncMasterSliderForMask();
+                        refreshMaskBar();
+                    });
+                    tabs.appendChild(t);
+                });
+                adjPanel.appendChild(tabs);
+
+                const attrRow = document.createElement('div');
+                attrRow.className = 'mask-row';
+
+                MASK_ATTRS.filter((a) => a[2] === maskAdjGroup).forEach(([k, label]) => {
+                    if (k === 'size' && !isPixelMaskType(sm.type)) return;
+                    const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
+                    const def = MASK_DEFAULTS[k] ?? 0;
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = `dark-chip ${maskAttr === k ? 'active' : ''} ${v !== def ? 'lr-modified' : ''}`;
+                    b.setAttribute('data-mask-attr', k);
+                    b.textContent = `${label} ${formatMaskAttrVal(k, v)}`;
+                    b.addEventListener('click', () => {
+                        maskAttr = k;
+                        syncMasterSliderForMask();
+                        refreshMaskBar();
+                    });
+                    attrRow.appendChild(b);
+                });
+
+                // Kontrol Kuas Refine (Tambah / Kurangi / Isi / Kosongkan) untuk Brush & Auto Subject/Sky/BG
+                if (maskAdjGroup === 'mask' && isPixelMaskType(sm.type)) {
+                    const mkSub = (label, fn, active) => {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = `dark-chip ${active ? 'active' : ''}`;
+                        b.textContent = label;
+                        b.addEventListener('click', fn);
+                        attrRow.appendChild(b);
+                    };
+                    mkSub('+ KUAS', () => { maskErase = false; drawMaskOverlay(); refreshMaskBar(); }, !maskErase);
+                    mkSub('− HAPUS', () => { maskErase = true; drawMaskOverlay(); refreshMaskBar(); }, maskErase);
+                    mkSub('ISI SEMUA', () => {
+                        const mc = maskCanvases.get(sm.id);
+                        if (mc) {
+                            const c = mc.getContext('2d');
+                            c.fillStyle = '#fff';
+                            c.fillRect(0, 0, mc.width, mc.height);
+                            maskVer++;
+                            renderEditorCanvas();
+                            drawMaskOverlay();
+                            refreshMaskBar();
+                            pushHistory('Fill mask', true);
+                        }
+                    }, false);
+                    mkSub('KOSONGKAN', () => {
+                        const mc = maskCanvases.get(sm.id);
+                        if (mc) {
+                            mc.getContext('2d').clearRect(0, 0, mc.width, mc.height);
+                            maskVer++;
+                            renderEditorCanvas();
+                            drawMaskOverlay();
+                            refreshMaskBar();
+                            pushHistory('Clear mask', true);
+                        }
+                    }, false);
+                }
+
+                adjPanel.appendChild(attrRow);
+                studio.appendChild(adjPanel);
+            }
+        }
+
+        bar.appendChild(studio);
+    }
+
     function refreshMaskBar() {
         const b = document.getElementById('toolContextExtras');
-        const sl = b.scrollLeft;
+        const layersList = b.querySelector('.lr-layers-list');
+        const listScroll = layersList ? layersList.scrollTop : 0;
         openToolContextBar('mask', 'Masking');
-        b.scrollLeft = sl;
+        const nextList = b.querySelector('.lr-layers-list');
+        if (nextList) nextList.scrollTop = listScroll;
     }
 
     function syncMasterSliderForMask() {
@@ -3506,21 +4022,22 @@
         if (!m) {
             masterSliderMode = 'context';
             slider.disabled = true;
-            document.getElementById('activeParamCategory').textContent = 'MASKING';
-            document.getElementById('activeParamTitle').textContent = 'Tambah mask';
+            document.getElementById('activeParamCategory').textContent = 'MASKING STUDIO';
+            document.getElementById('activeParamTitle').textContent = 'Pilih atau buat mask';
             document.getElementById('activeParamValue').textContent = '';
             return;
         }
-        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && m.type !== 'brush'));
+        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && !isPixelMaskType(m.type)));
         if (ai < 0) ai = 0;
         maskAttr = MASK_ATTRS[ai][0];
-        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size';
+        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size', isOpacity = maskAttr === 'opacity';
         masterSliderMode = 'mask';
         slider.disabled = false;
-        slider.min = isSize ? 1 : isFeather ? 0 : -100;
+        slider.min = isSize ? 1 : (isFeather || isOpacity) ? 0 : -100;
         slider.max = isSize ? 40 : 100;
         slider.value = m[maskAttr] ?? (MASK_DEFAULTS[maskAttr] ?? 0);
-        document.getElementById('activeParamCategory').textContent = `MASK ${state.masks.indexOf(m) + 1} · ${m.type.toUpperCase()}`;
+        const layerLabel = m.name || `Mask ${state.masks.indexOf(m) + 1}`;
+        document.getElementById('activeParamCategory').textContent = `${layerLabel.toUpperCase()} · ${(MASK_TYPE_META[m.type]?.badge || m.type.toUpperCase())}`;
         document.getElementById('activeParamTitle').textContent = MASK_ATTRS[ai][1];
         document.getElementById('activeParamValue').textContent = slider.value;
     }
@@ -3533,10 +4050,13 @@
 
     function maskHintText() {
         const m = selectedMask();
-        if (!m) return 'PILIH BENTUK MASK DI BAWAH, ATAU COBA TEMPLATE CEPAT (LANGIT, SUBJEK, WAJAH, VIGNET)';
-        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK DI AREA LAIN = BUAT ULANG';
+        if (!m) return 'PILIH AUTO SUBJECT, AUTO SKY, BACKGROUND, LINEAR, RADIAL, ATAU BRUSH';
+        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK AREA LAIN = BUAT ULANG';
         if (m.type === 'radial') return 'GESER LINGKARAN = PINDAH · TITIK KANAN = UBAH UKURAN · FEATHER = KELEMBUTAN TEPI';
-        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · SHOW MASK UNTUK MELIHAT AREA';
+        if (m.type === 'subject' || m.type === 'sky' || m.type === 'background') {
+            return maskErase ? 'MODE HAPUS: SAPU FOTO UNTUK MENGURANGI AREA MASK AI' : 'SELEKSI OTOMATIS AKTIF · SAPU FOTO UNTUK MENAMBAH / RAPIKAN TEPI MASK';
+        }
+        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · OVERLAY UNTUK MELIHAT AREA';
     }
 
     function scheduleMaskOverlay() {
@@ -3584,7 +4104,7 @@
             handle(cx, cy, 8); handle(cx + R, cy, 11);
         } else if (maskHover) {
             c.setLineDash([]);
-            c.strokeStyle = '#ffffff';
+            c.strokeStyle = maskErase ? '#f87171' : '#ffffff';
             c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, (((m.size ?? 8) / 100) * Math.min(W, Hh)) / 2, 0, 6.28); c.stroke();
         }
         c.setLineDash([]);
@@ -3592,8 +4112,10 @@
 
     function openMaskUI() {
         maskUiActive = true;
+        const panelTools = document.getElementById('panelTools');
+        if (panelTools) panelTools.classList.add('masking-mode');
         bindMaskEvents();
-        if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[0].id;
+        if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[state.masks.length - 1].id;
         document.getElementById('maskOverlay').classList.remove('hidden');
         sizeMaskOverlay();
         drawMaskOverlay();
@@ -3605,6 +4127,8 @@
 
     function closeMaskUI() {
         maskUiActive = false;
+        const panelTools = document.getElementById('panelTools');
+        if (panelTools) panelTools.classList.remove('masking-mode');
         const ov = document.getElementById('maskOverlay');
         if (ov) ov.classList.add('hidden');
     }
@@ -3618,7 +4142,8 @@
         c.lineCap = 'round';
         c.lineJoin = 'round';
         c.lineWidth = Math.max(2, ((m.size ?? 8) / 100) * Math.min(mc.width, mc.height));
-        c.globalCompositeOperation = maskErase ? 'destination-out' : 'source-over';
+        const effectiveErase = m.invert ? !maskErase : maskErase;
+        c.globalCompositeOperation = effectiveErase ? 'destination-out' : 'source-over';
         c.strokeStyle = '#ffffff';
         c.beginPath();
         c.moveTo(from.x * mc.width, from.y * mc.height);
@@ -3705,9 +4230,10 @@
                 if (m.y2 - m.y1 < 0.05) { m.y2 = m.y1; m.y1 = Math.max(0, m.y1 - 0.3); }
             }
             if (d.fresh && m.type === 'radial' && m.r < 0.03) m.r = 0.25;
+            updateMaskLayerThumbById(m.id);
             renderEditorCanvas();
             scheduleMaskOverlay();
-            if (d.moved || d.fresh) pushHistory(`Mask ${m.type}`, true);
+            if (d.moved || d.fresh) pushHistory(`Mask ${m.name || m.type}`, true);
         };
         ov.addEventListener('pointerup', end);
         ov.addEventListener('pointercancel', end);
@@ -3846,6 +4372,7 @@
         state = JSON.parse(JSON.stringify(snap.stateSnap));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
+        if (!state.watermark) state.watermark = 'off';
         if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
 
         basePhotoCanvas.width = snap.w;
@@ -3885,12 +4412,22 @@
     function bindExportModalEvents() {
         const modal = document.getElementById('exportModal');
         const qSlider = document.getElementById('exportQuality');
+        const wmSelect = document.getElementById('exportWatermarkCorner');
 
         document.getElementById('btnOpenExport').addEventListener('click', () => {
             state.selectedTextId = null;
+            if (wmSelect) wmSelect.value = state.watermark || 'off';
             renderEditorCanvas();
             modal.classList.remove('hidden');
         });
+
+        if (wmSelect) {
+            wmSelect.addEventListener('change', () => {
+                state.watermark = wmSelect.value;
+                renderEditorCanvas();
+                pushHistory(`Watermark ${state.watermark.toUpperCase()}`);
+            });
+        }
 
         document.getElementById('btnCloseExportModal').addEventListener('click', () => {
             modal.classList.add('hidden');
@@ -3923,6 +4460,231 @@
             saveCurrentPhotoBackToLibrary();
             modal.classList.add('hidden');
         });
+
+        bindCameraModalEvents();
+    }
+
+    // ==========================================
+    // DIRECT CAMERA CAPTURE WITH LIVE FILTERS
+    // ==========================================
+    let camStream = null;
+    let camFacingMode = 'environment';
+    let camSelectedPresetId = 'original';
+    let camWatermarkEnabled = false;
+    let camGridEnabled = false;
+
+    function buildCameraCssFilter(presetId) {
+        if (!presetId || presetId === 'original') return 'none';
+        const preset = (window.FILM_PRESETS || []).find((p) => p.id === presetId);
+        if (!preset || !preset.params) return 'none';
+        const p = preset.params;
+        const bright = 100 + Math.round((p.exposure || 0) * 0.45);
+        const cont = 100 + Math.round((p.contrast || 0) * 0.85);
+        const sat = Math.max(0, 100 + Math.round((p.saturation || 0) * 0.95));
+        const sepia = p.warmth > 0 ? Math.min(35, Math.round(p.warmth * 0.65)) : 0;
+        const hue = p.warmth < 0 ? Math.max(-18, Math.round(p.warmth * 0.45)) : 0;
+        return `brightness(${bright}%) contrast(${cont}%) saturate(${sat}%) sepia(${sepia}%) hue-rotate(${hue}deg)`;
+    }
+
+    function stopCameraStream() {
+        if (camStream) {
+            camStream.getTracks().forEach((t) => t.stop());
+            camStream = null;
+        }
+        const video = document.getElementById('cameraVideo');
+        if (video) video.srcObject = null;
+    }
+
+    async function startCameraStream() {
+        const video = document.getElementById('cameraVideo');
+        const badge = document.getElementById('cameraStatusBadge');
+        stopCameraStream();
+        if (badge) badge.classList.add('hidden');
+        if (video) {
+            video.classList.toggle('mirrored', camFacingMode === 'user');
+            video.style.filter = buildCameraCssFilter(camSelectedPresetId);
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            if (badge) {
+                badge.textContent = 'Kamera browser tidak tersedia. Gunakan tombol NATIVE CAM di bawah.';
+                badge.classList.remove('hidden');
+            }
+            return;
+        }
+
+        try {
+            camStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: camFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            });
+            if (video) {
+                video.srcObject = camStream;
+                await video.play().catch(() => {});
+            }
+        } catch (err) {
+            if (badge) {
+                badge.textContent = `Akses kamera ditolak / tidak ditemukan (${err.name}). Gunakan NATIVE CAM.`;
+                badge.classList.remove('hidden');
+            }
+        }
+    }
+
+    function renderCameraFilterStrip() {
+        const strip = document.getElementById('cameraFilterStrip');
+        const readout = document.getElementById('cameraActivePresetLabel');
+        if (!strip) return;
+        strip.innerHTML = '';
+
+        const featuredIds = [
+            'original',
+            'x_ac01', 'x_ac02', 'x_ac03', 'x_ac04', 'x_ac05', 'x_ac06', 'x_ac07',
+            'x_ed12', 'x_ed01', 'x_gz01', 'x_dg01', 'x_md01', 'x_bw01'
+        ];
+        const allPresets = window.FILM_PRESETS || [];
+        const options = [{ id: 'original', code: 'ORIGINAL', category: 'base' }];
+        featuredIds.slice(1).forEach((id) => {
+            const found = allPresets.find((p) => p.id === id);
+            if (found) options.push(found);
+        });
+
+        options.forEach((opt) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = `camera-filter-chip ${opt.category === 'acid' ? 'acid' : ''} ${camSelectedPresetId === opt.id ? 'active' : ''}`;
+            btn.dataset.presetId = opt.id;
+            btn.textContent = opt.code;
+            btn.addEventListener('click', () => {
+                camSelectedPresetId = opt.id;
+                const video = document.getElementById('cameraVideo');
+                if (video) video.style.filter = buildCameraCssFilter(camSelectedPresetId);
+                if (readout) readout.textContent = opt.code;
+                strip.querySelectorAll('.camera-filter-chip').forEach((el) => {
+                    el.classList.toggle('active', el.dataset.presetId === camSelectedPresetId);
+                });
+            });
+            strip.appendChild(btn);
+        });
+
+        const activeOpt = options.find((o) => o.id === camSelectedPresetId) || options[0];
+        if (readout && activeOpt) readout.textContent = activeOpt.code;
+    }
+
+    function openCameraModal() {
+        const modal = document.getElementById('cameraModal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+        renderCameraFilterStrip();
+        startCameraStream();
+    }
+
+    function closeCameraModal() {
+        stopCameraStream();
+        const modal = document.getElementById('cameraModal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function openCapturedCanvasInEditor(rawCanvas, title) {
+        const added = addPhotoToLibrary(rawCanvas, title, false);
+        added.editState.presetId = camSelectedPresetId || 'original';
+        added.editState.watermark = camWatermarkEnabled ? 'br' : 'off';
+        if (camSelectedPresetId !== 'original' || camWatermarkEnabled) added.isEdited = true;
+        closeCameraModal();
+        openPhotoInEditor(added.id, 'Presets');
+        if (camSelectedPresetId !== 'original') {
+            const found = (window.FILM_PRESETS || []).find((p) => p.id === camSelectedPresetId);
+            if (found && found.category) activePresetCat = found.category;
+            switchEditorMainTab('Presets');
+            pushHistory(`Camera Capture (${found ? found.code : 'Filter'})`);
+        }
+    }
+
+    function bindCameraModalEvents() {
+        const btnClose = document.getElementById('btnCloseCamera');
+        const btnFlip = document.getElementById('btnCameraFlip');
+        const btnGrid = document.getElementById('btnCameraGrid');
+        const btnWm = document.getElementById('btnCameraWatermark');
+        const btnShutter = document.getElementById('btnCameraShutter');
+        const btnNative = document.getElementById('btnCameraUploadFallback');
+        const fallbackInput = document.getElementById('cameraFallbackInput');
+
+        if (!btnClose) return;
+
+        btnClose.addEventListener('click', closeCameraModal);
+
+        if (btnFlip) {
+            btnFlip.addEventListener('click', () => {
+                camFacingMode = camFacingMode === 'environment' ? 'user' : 'environment';
+                startCameraStream();
+            });
+        }
+
+        if (btnGrid) {
+            btnGrid.addEventListener('click', () => {
+                camGridEnabled = !camGridEnabled;
+                btnGrid.classList.toggle('active', camGridEnabled);
+                const grid = document.getElementById('cameraGridOverlay');
+                if (grid) grid.classList.toggle('hidden', !camGridEnabled);
+            });
+        }
+
+        if (btnWm) {
+            btnWm.addEventListener('click', () => {
+                camWatermarkEnabled = !camWatermarkEnabled;
+                btnWm.classList.toggle('active', camWatermarkEnabled);
+                btnWm.textContent = camWatermarkEnabled ? 'WM: ON' : 'WM: OFF';
+                const wmPreview = document.getElementById('cameraWmPreview');
+                if (wmPreview) wmPreview.classList.toggle('hidden', !camWatermarkEnabled);
+            });
+        }
+
+        if (btnShutter) {
+            btnShutter.addEventListener('click', () => {
+                const video = document.getElementById('cameraVideo');
+                if (!video || !video.videoWidth || !video.videoHeight) {
+                    if (fallbackInput) { fallbackInput.value = ''; fallbackInput.click(); }
+                    return;
+                }
+                const maxDim = 2400;
+                const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+                const cw = Math.max(1, Math.round(video.videoWidth * scale));
+                const ch = Math.max(1, Math.round(video.videoHeight * scale));
+                const cap = document.getElementById('cameraCaptureCanvas');
+                cap.width = cw;
+                cap.height = ch;
+                const cctx = cap.getContext('2d');
+                cctx.save();
+                if (camFacingMode === 'user') {
+                    cctx.translate(cw, 0);
+                    cctx.scale(-1, 1);
+                }
+                cctx.drawImage(video, 0, 0, cw, ch);
+                cctx.restore();
+                openCapturedCanvasInEditor(cloneCanvas(cap), `CAM_${Date.now().toString().slice(-4)}`);
+            });
+        }
+
+        if (btnNative && fallbackInput) {
+            btnNative.addEventListener('click', () => {
+                fallbackInput.value = '';
+                fallbackInput.click();
+            });
+            fallbackInput.addEventListener('change', (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = () => {
+                    const maxDim = 2400;
+                    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+                    const c = createBlankCanvas(Math.round(img.naturalWidth * scale), Math.round(img.naturalHeight * scale));
+                    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                    URL.revokeObjectURL(url);
+                    openCapturedCanvasInEditor(c, file.name.replace(/\.[^.]+$/, ''));
+                };
+                img.src = url;
+            });
+        }
     }
 
     // Jembatan untuk fitur Templates
