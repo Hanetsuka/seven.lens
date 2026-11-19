@@ -268,6 +268,7 @@
                     <button class="subcat-btn" data-pcat="favorites">★ MY PRESETS</button>
                     <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
                     <button class="subcat-btn active" data-pcat="genz">VSCO SOFT ✦</button>
+                    <button class="subcat-btn" data-pcat="editorial">EDITORIAL SUN</button>
                     <button class="subcat-btn" data-pcat="digicam">Y2K DIGICAM</button>
                     <button class="subcat-btn" data-pcat="korean">K-SOFT</button>
                     <button class="subcat-btn" data-pcat="moody">MOODY</button>
@@ -313,6 +314,13 @@
                 <div id="curvesEditor" class="curves-editor hidden">
                     <canvas id="curvesCanvas" class="curves-canvas" width="512" height="512"></canvas>
                     <p class="curves-hint">TAP UNTUK TAMBAH TITIK · GESER UNTUK MENGATUR · DOUBLE-TAP UNTUK HAPUS</p>
+                </div>
+
+                <div id="wheelsEditor" class="wheels-editor hidden">
+                    <div class="wheel-col" data-range="sh"><span class="wheel-label">SHADOWS</span><canvas class="wheel-canvas" width="240" height="240"></canvas><input type="range" class="wheel-lum" min="-100" max="100" value="0"><span class="wheel-val">NETRAL · L0</span></div>
+                    <div class="wheel-col" data-range="mid"><span class="wheel-label">MIDTONES</span><canvas class="wheel-canvas" width="240" height="240"></canvas><input type="range" class="wheel-lum" min="-100" max="100" value="0"><span class="wheel-val">NETRAL · L0</span></div>
+                    <div class="wheel-col" data-range="hi"><span class="wheel-label">HIGHLIGHTS</span><canvas class="wheel-canvas" width="240" height="240"></canvas><input type="range" class="wheel-lum" min="-100" max="100" value="0"><span class="wheel-val">NETRAL · L0</span></div>
+                    <p class="curves-hint">GESER TITIK DI RODA UNTUK WARNA · DOUBLE-TAP RODA = RESET</p>
                 </div>
 
                 <div id="toolsStrip" class="tools-icon-strip">
