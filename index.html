@@ -543,45 +543,49 @@
         </div>
     </div>
 
-    <!-- CAMERA CAPTURE MODAL (DIGICAM EDITION) -->
-    <div id="cameraModal" class="camera-modal hidden" role="dialog" aria-modal="true" aria-label="Digicam Camera Capture">
+    <!-- CAMERA CAPTURE MODAL -->
+    <div id="cameraModal" class="camera-modal hidden" role="dialog" aria-modal="true" aria-label="Camera Capture">
         <div class="camera-topbar">
-            <button id="btnCloseCamera" class="camera-pill-btn">✕ OFF</button>
+            <button id="btnCloseCamera" class="camera-pill-btn">✕ CLOSE</button>
             <div class="camera-topbar-actions">
-                <button id="btnCameraDate" class="camera-pill-btn active" title="Toggle Retro Date Stamp">DATE</button>
+                <button id="btnCameraFlash" class="camera-pill-btn" title="Digicam Direct Flash (Off / Fill / Hard)">⚡ OFF</button>
+                <button id="btnCameraDate" class="camera-pill-btn" title="Toggle Retro Date Stamp">DATE</button>
                 <button id="btnCameraGrid" class="camera-pill-btn" title="Toggle 3x3 Grid">GRID</button>
                 <button id="btnCameraWatermark" class="camera-pill-btn" title="Retro Corner Watermark">WM: OFF</button>
                 <button id="btnCameraFlip" class="camera-pill-btn" title="Switch Camera">FLIP ↻</button>
             </div>
         </div>
 
-        <div class="camera-lcd-bezel">
-            <div class="camera-stage" id="cameraStage">
-                <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
-                <div class="camera-lcd-hud" aria-hidden="true">
-                    <div class="hud-left">
-                        <span class="hud-rec-dot">●</span>
-                        <span>DIGICAM</span>
-                        <span class="hud-badge">12M</span>
-                    </div>
-                    <div class="hud-center">ISO 400 · F2.8</div>
-                    <div class="hud-right">
-                        <span class="hud-batt">▮▮▮</span>
-                    </div>
-                </div>
-                <div class="camera-af-reticle" aria-hidden="true"></div>
-                <div id="cameraGridOverlay" class="camera-grid hidden" aria-hidden="true">
-                    <span></span><span></span><span></span><span></span>
-                </div>
-                <div id="cameraDatePreview" class="camera-date-preview">'26 11 19</div>
-                <div id="cameraWmPreview" class="camera-wm-preview hidden">created using svn.lens</div>
-                <div id="cameraFlashOverlay" class="camera-flash-overlay hidden" aria-hidden="true"></div>
-                <div id="cameraStatusBadge" class="camera-status-badge hidden"></div>
-                <canvas id="cameraCaptureCanvas" class="hidden"></canvas>
+        <div class="camera-stage" id="cameraStage">
+            <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+            <div id="cameraDofOverlay" class="camera-dof-overlay" aria-hidden="true"></div>
+            <div id="cameraGridOverlay" class="camera-grid hidden" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
             </div>
+            <div id="cameraDatePreview" class="camera-date-preview hidden">'26 11 19</div>
+            <div id="cameraWmPreview" class="camera-wm-preview hidden">created using svn.lens</div>
+            <div id="cameraFlashOverlay" class="camera-flash-overlay hidden" aria-hidden="true"></div>
+            <div id="cameraStatusBadge" class="camera-status-badge hidden"></div>
+            <canvas id="cameraCaptureCanvas" class="hidden"></canvas>
         </div>
 
         <div class="camera-controls">
+            <div id="cameraDialOptions" class="camera-dial-options hidden"></div>
+            <div class="camera-exposure-bar">
+                <button type="button" id="btnDialISO" class="camera-dial-chip" data-dial="iso">
+                    <span class="dial-k">ISO</span>
+                    <span class="dial-v" id="valCamISO">400</span>
+                </button>
+                <button type="button" id="btnDialAperture" class="camera-dial-chip" data-dial="aperture">
+                    <span class="dial-k">APERTURE</span>
+                    <span class="dial-v" id="valCamAperture">f/2.8</span>
+                </button>
+                <button type="button" id="btnDialShutter" class="camera-dial-chip" data-dial="shutter">
+                    <span class="dial-k">SHUTTER</span>
+                    <span class="dial-v" id="valCamShutter">1/125</span>
+                </button>
+                <div class="camera-ev-readout" id="valCamEV" title="Exposure Compensation Balance">EV 0.0</div>
+            </div>
             <div class="camera-filter-strip" id="cameraFilterStrip"></div>
             <div class="camera-shutter-row">
                 <button id="btnCameraUploadFallback" class="camera-secondary-btn" title="Use Native Device Camera">NATIVE CAM</button>

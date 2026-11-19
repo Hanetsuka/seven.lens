@@ -4514,7 +4514,24 @@
     let camSelectedPresetId = 'y2k_ccd';
     let camWatermarkEnabled = false;
     let camGridEnabled = false;
-    let camDateEnabled = true;
+    let camDateEnabled = false;
+    let camFlashMode = 'off'; // 'off' | 'fill' | 'hard'
+    let camISO = 400;
+    let camAperture = 2.8;
+    let camShutter = '1/125';
+    let camActiveDial = null; // null | 'iso' | 'aperture' | 'shutter'
+
+    const CAM_ISOS = [100, 200, 400, 800, 1600, 3200];
+    const CAM_APERTURES = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0];
+    const CAM_SHUTTERS = ['1/30', '1/60', '1/125', '1/250', '1/500', '1/1000'];
+
+    function getCameraEvStops() {
+        const isoEv = Math.log2(camISO / 400);
+        const apEv = Math.log2((2.8 * 2.8) / (camAperture * camAperture));
+        const ssDen = parseInt(camShutter.split('/')[1], 10) || 125;
+        const ssEv = Math.log2(125 / ssDen);
+        return Math.max(-4.5, Math.min(4.5, isoEv + apEv + ssEv));
+    }
 
     function getDigicamDateStamp() {
         const d = new Date();
@@ -4532,7 +4549,7 @@
             osc.type = 'triangle';
             osc.frequency.setValueAtTime(1100, ac.currentTime);
             osc.frequency.exponentialRampToValueAtTime(180, ac.currentTime + 0.055);
-            gain.gain.setValueAtTime(0.14, ac.currentTime);
+            gain.gain.setValueAtTime(0.12, ac.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.065);
             osc.connect(gain);
             gain.connect(ac.destination);
@@ -4543,16 +4560,174 @@
     }
 
     function buildCameraCssFilter(presetId) {
-        if (!presetId || presetId === 'original') return 'none';
-        const preset = (window.FILM_PRESETS || []).find((p) => p.id === presetId);
-        if (!preset || !preset.params) return 'none';
-        const p = preset.params;
-        const bright = 100 + Math.round((p.exposure || 0) * 0.45);
-        const cont = 100 + Math.round((p.contrast || 0) * 0.85);
-        const sat = Math.max(0, 100 + Math.round((p.saturation || 0) * 0.95));
-        const sepia = p.warmth > 0 ? Math.min(35, Math.round(p.warmth * 0.65)) : 0;
-        const hue = p.warmth < 0 ? Math.max(-18, Math.round(p.warmth * 0.45)) : 0;
+        let bright = 100, cont = 100, sat = 100, sepia = 0, hue = 0;
+        if (presetId && presetId !== 'original') {
+            const preset = (window.FILM_PRESETS || []).find((p) => p.id === presetId);
+            if (preset && preset.params) {
+                const p = preset.params;
+                bright += Math.round((p.exposure || 0) * 0.45);
+                cont += Math.round((p.contrast || 0) * 0.85);
+                sat = Math.max(0, sat + Math.round((p.saturation || 0) * 0.95));
+                sepia = p.warmth > 0 ? Math.min(35, Math.round(p.warmth * 0.65)) : 0;
+                hue = p.warmth < 0 ? Math.max(-18, Math.round(p.warmth * 0.45)) : 0;
+            }
+        }
+        // Pengaruh Exposure Triangle (ISO + F + Shutter Speed) secara real-time di preview
+        const ev = getCameraEvStops();
+        const evMul = Math.pow(2, ev * 0.28);
+        bright = Math.max(38, Math.min(185, Math.round(bright * evMul)));
+        if (camAperture >= 5.6) cont += 8;
+        if (camFlashMode === 'hard') cont += 10;
         return `brightness(${bright}%) contrast(${cont}%) saturate(${sat}%) sepia(${sepia}%) hue-rotate(${hue}deg)`;
+    }
+
+    function syncHardwareCameraConstraints() {
+        if (!camStream) return;
+        const track = camStream.getVideoTracks && camStream.getVideoTracks()[0];
+        if (!track || !track.getCapabilities || !track.applyConstraints) return;
+        try {
+            const caps = track.getCapabilities();
+            const adv = {};
+            if (caps.iso) {
+                adv.iso = Math.min(caps.iso.max, Math.max(caps.iso.min, camISO));
+            }
+            if (caps.exposureCompensation) {
+                const ev = getCameraEvStops();
+                adv.exposureCompensation = Math.min(caps.exposureCompensation.max, Math.max(caps.exposureCompensation.min, ev * 0.5));
+            }
+            if (Object.keys(adv).length) {
+                track.applyConstraints({ advanced: [adv] }).catch(() => {});
+            }
+        } catch (err) { /* abaikan bila browser desktop tidak mendukung hardware constraints */ }
+    }
+
+    function updateCameraOpticsPreview() {
+        const video = document.getElementById('cameraVideo');
+        if (video) video.style.filter = buildCameraCssFilter(camSelectedPresetId);
+
+        const dof = document.getElementById('cameraDofOverlay');
+        if (dof) {
+            const blurMap = { 1.4: 5, 2.0: 3, 2.8: 1.4, 4.0: 0, 5.6: 0, 8.0: 0 };
+            const px = blurMap[camAperture] || 0;
+            dof.style.backdropFilter = px > 0 ? `blur(${px}px)` : 'none';
+            dof.style.webkitBackdropFilter = px > 0 ? `blur(${px}px)` : 'none';
+            dof.style.opacity = px > 0 ? '1' : '0';
+        }
+
+        const elIso = document.getElementById('valCamISO');
+        const elAp = document.getElementById('valCamAperture');
+        const elSs = document.getElementById('valCamShutter');
+        const elEv = document.getElementById('valCamEV');
+        if (elIso) elIso.textContent = String(camISO);
+        if (elAp) elAp.textContent = `f/${camAperture}`;
+        if (elSs) elSs.textContent = camShutter;
+        if (elEv) {
+            const ev = getCameraEvStops();
+            const rounded = Math.round(ev * 10) / 10;
+            elEv.textContent = `EV ${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}`;
+        }
+        syncHardwareCameraConstraints();
+    }
+
+    function renderCameraDialOptions() {
+        const box = document.getElementById('cameraDialOptions');
+        const dialBtns = {
+            iso: document.getElementById('btnDialISO'),
+            aperture: document.getElementById('btnDialAperture'),
+            shutter: document.getElementById('btnDialShutter')
+        };
+        Object.entries(dialBtns).forEach(([k, btn]) => {
+            if (btn) btn.classList.toggle('active', camActiveDial === k);
+        });
+        if (!box) return;
+        if (!camActiveDial) {
+            box.classList.add('hidden');
+            box.innerHTML = '';
+            return;
+        }
+        box.classList.remove('hidden');
+        box.innerHTML = '';
+
+        const list = camActiveDial === 'iso' ? CAM_ISOS
+            : camActiveDial === 'aperture' ? CAM_APERTURES
+            : CAM_SHUTTERS;
+
+        list.forEach((val) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            const isActive = (camActiveDial === 'iso' && camISO === val)
+                || (camActiveDial === 'aperture' && camAperture === val)
+                || (camActiveDial === 'shutter' && camShutter === val);
+            btn.className = `camera-stop-btn ${isActive ? 'active' : ''}`;
+            btn.textContent = camActiveDial === 'aperture' ? `f/${val}` : String(val);
+            btn.addEventListener('click', () => {
+                if (camActiveDial === 'iso') camISO = val;
+                else if (camActiveDial === 'aperture') camAperture = val;
+                else camShutter = val;
+                updateCameraOpticsPreview();
+                renderCameraDialOptions();
+            });
+            box.appendChild(btn);
+        });
+    }
+
+    function applyDigicamFlashToCanvas(canvas, mode) {
+        if (!mode || mode === 'off') return;
+        const w = canvas.width, h = canvas.height;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.getImageData(0, 0, w, h);
+        const d = img.data;
+        const cx = w * 0.5, cy = h * 0.46;
+        const maxR = Math.hypot(w * 0.55, h * 0.55) || 1;
+        const isHard = mode === 'hard';
+        const centerBoost = isHard ? 1.38 : 1.2;
+        const edgeDrop = isHard ? 0.56 : 0.78;
+        const specularPop = isHard ? 14 : 6;
+
+        for (let y = 0; y < h; y++) {
+            const dy = y - cy;
+            const row = y * w;
+            for (let x = 0; x < w; x++) {
+                const dx = x - cx;
+                const dist = Math.min(1, Math.hypot(dx, dy) / maxR);
+                // Inverse-square style digicam on-axis flash falloff cone
+                const falloff = Math.pow(1 - dist, 1.65);
+                const gain = edgeDrop + (centerBoost - edgeDrop) * falloff;
+                const idx = (row + x) * 4;
+                const luma = 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2];
+                const spec = luma > 175 ? specularPop * falloff : 0;
+                // Xenon ~5600K crisp flash tone (sedikit cool neutral + punchy)
+                d[idx] = Math.max(0, Math.min(255, Math.round(d[idx] * gain * 0.99 + spec)));
+                d[idx + 1] = Math.max(0, Math.min(255, Math.round(d[idx + 1] * gain * 1.0 + spec)));
+                d[idx + 2] = Math.max(0, Math.min(255, Math.round(d[idx + 2] * gain * 1.03 + spec)));
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+    }
+
+    function applyDigicamCcdNoise(canvas, iso) {
+        if (iso < 400) return;
+        const w = canvas.width, h = canvas.height;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.getImageData(0, 0, w, h);
+        const d = img.data;
+        const lumaAmp = { 400: 3, 800: 7, 1600: 13, 3200: 21 }[iso] || 4;
+        const chromaAmp = { 400: 1, 800: 4, 1600: 9, 3200: 15 }[iso] || 2;
+        let seed = (iso * 7919 + w * 31) >>> 0;
+        const rnd = () => {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            return (seed / 4294967296) - 0.5;
+        };
+        for (let i = 0; i < d.length; i += 4) {
+            const shadowWeight = 1.25 - ((d[i] + d[i + 1] + d[i + 2]) / 765) * 0.65;
+            const nL = rnd() * 2 * lumaAmp * shadowWeight;
+            const nC1 = rnd() * 2 * chromaAmp * shadowWeight;
+            const nC2 = rnd() * 2 * chromaAmp * shadowWeight;
+            d[i] = Math.max(0, Math.min(255, d[i] + nL + nC1));
+            d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + nL - (nC1 + nC2) * 0.35));
+            d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + nL + nC2));
+        }
+        ctx.putImageData(img, 0, 0);
     }
 
     function stopCameraStream() {
@@ -4571,8 +4746,8 @@
         if (badge) badge.classList.add('hidden');
         if (video) {
             video.classList.toggle('mirrored', camFacingMode === 'user');
-            video.style.filter = buildCameraCssFilter(camSelectedPresetId);
         }
+        updateCameraOpticsPreview();
 
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             if (badge) {
@@ -4591,6 +4766,7 @@
                 video.srcObject = camStream;
                 await video.play().catch(() => {});
             }
+            syncHardwareCameraConstraints();
         } catch (err) {
             if (badge) {
                 badge.textContent = `Akses kamera ditolak / tidak ditemukan (${err.name}). Gunakan NATIVE CAM.`;
@@ -4626,8 +4802,7 @@
             btn.textContent = opt.code;
             btn.addEventListener('click', () => {
                 camSelectedPresetId = opt.id;
-                const video = document.getElementById('cameraVideo');
-                if (video) video.style.filter = buildCameraCssFilter(camSelectedPresetId);
+                updateCameraOpticsPreview();
                 if (readout) readout.textContent = opt.code;
                 strip.querySelectorAll('.camera-filter-chip').forEach((el) => {
                     el.classList.toggle('active', el.dataset.presetId === camSelectedPresetId);
@@ -4649,7 +4824,9 @@
             dateEl.classList.toggle('hidden', !camDateEnabled);
         }
         modal.classList.remove('hidden');
+        renderCameraDialOptions();
         renderCameraFilterStrip();
+        updateCameraOpticsPreview();
         startCameraStream();
     }
 
@@ -4660,12 +4837,31 @@
     }
 
     function openCapturedCanvasInEditor(rawCanvas, title) {
+        // 1. Proses fisika sensor & flash digicam langsung pada frame tertangkap
+        applyDigicamFlashToCanvas(rawCanvas, camFlashMode);
+        applyDigicamCcdNoise(rawCanvas, camISO);
+
         const added = addPhotoToLibrary(rawCanvas, title, false);
         added.editState.presetId = camSelectedPresetId || 'original';
         added.editState.watermark = camWatermarkEnabled ? 'br' : 'off';
+
+        // 2. Terapkan hasil Exposure Triangle (ISO + F-Stop + Shutter Speed + Flash) ke parameter non-destruktif
+        const evStops = getCameraEvStops();
+        const adj = added.editState.adjust;
+        adj.exposure = Math.max(-85, Math.min(85, Math.round(evStops * 16)));
+        adj.grain = { 100: 0, 200: 4, 400: 10, 800: 22, 1600: 36, 3200: 52 }[camISO] || 10;
+        adj.edgeBlur = { 1.4: 48, 2.0: 30, 2.8: 14, 4.0: 4, 5.6: 0, 8.0: 0 }[camAperture] || 0;
+        adj.dreamGlow = { 1.4: 16, 2.0: 8, 2.8: 3 }[camAperture] || 0;
+        adj.clarity = (camAperture >= 5.6 ? (camAperture >= 8.0 ? 18 : 12) : 6) + (camFlashMode === 'hard' ? 8 : 0);
+        adj.contrast = (camAperture >= 5.6 ? 6 : 0) + (camFlashMode === 'hard' ? 10 : camFlashMode === 'fill' ? 4 : 0);
+        adj.vignette = Math.max(
+            camAperture <= 2.0 ? (camAperture === 1.4 ? 18 : 10) : 0,
+            camFlashMode === 'hard' ? 24 : camFlashMode === 'fill' ? 10 : 0
+        );
+
         if (camDateEnabled) {
             const w = rawCanvas.width, h = rawCanvas.height;
-            const fs = Math.max(16, Math.round(Math.min(w, h) * 0.032));
+            const fs = Math.max(16, Math.round(Math.min(w, h) * 0.03));
             added.editState.texts.push({
                 id: 'digicam_date_' + Date.now(),
                 text: getDigicamDateStamp(),
@@ -4684,19 +4880,20 @@
                 align: 'center'
             });
         }
-        if (camSelectedPresetId !== 'original' || camWatermarkEnabled || camDateEnabled) added.isEdited = true;
+        added.isEdited = true;
         closeCameraModal();
         openPhotoInEditor(added.id, 'Presets');
         if (camSelectedPresetId !== 'original') {
             const found = (window.FILM_PRESETS || []).find((p) => p.id === camSelectedPresetId);
             if (found && found.category) activePresetCat = found.category;
             switchEditorMainTab('Presets');
-            pushHistory(`Digicam Capture (${found ? found.code : 'Filter'})`);
         }
+        pushHistory(`Shot ISO ${camISO} f/${camAperture} ${camShutter}`);
     }
 
     function bindCameraModalEvents() {
         const btnClose = document.getElementById('btnCloseCamera');
+        const btnFlash = document.getElementById('btnCameraFlash');
         const btnDate = document.getElementById('btnCameraDate');
         const btnFlip = document.getElementById('btnCameraFlip');
         const btnGrid = document.getElementById('btnCameraGrid');
@@ -4708,6 +4905,26 @@
         if (!btnClose) return;
 
         btnClose.addEventListener('click', closeCameraModal);
+
+        const toggleDial = (dialName) => {
+            camActiveDial = camActiveDial === dialName ? null : dialName;
+            renderCameraDialOptions();
+        };
+        document.getElementById('btnDialISO')?.addEventListener('click', () => toggleDial('iso'));
+        document.getElementById('btnDialAperture')?.addEventListener('click', () => toggleDial('aperture'));
+        document.getElementById('btnDialShutter')?.addEventListener('click', () => toggleDial('shutter'));
+
+        if (btnFlash) {
+            const flashOrder = ['off', 'fill', 'hard'];
+            const flashLabels = { off: '⚡ OFF', fill: '⚡ FILL', hard: '⚡ HARD' };
+            btnFlash.addEventListener('click', () => {
+                const idx = flashOrder.indexOf(camFlashMode);
+                camFlashMode = flashOrder[(idx + 1) % flashOrder.length];
+                btnFlash.textContent = flashLabels[camFlashMode];
+                btnFlash.classList.toggle('active', camFlashMode !== 'off');
+                updateCameraOpticsPreview();
+            });
+        }
 
         if (btnDate) {
             btnDate.addEventListener('click', () => {

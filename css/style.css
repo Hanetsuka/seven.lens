@@ -1995,65 +1995,95 @@ body {
     color: #cbff00;
 }
 
-/* Digicam LCD Bezel & HUD */
-.camera-lcd-bezel {
-    flex: 1;
-    min-height: 0;
-    margin: 4px 12px 10px;
-    padding: 8px;
-    border-radius: 14px;
-    background: linear-gradient(145deg, #2b2927, #161413);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.7), 0 8px 24px rgba(0, 0, 0, 0.6);
-    display: flex;
-}
-.camera-lcd-bezel .camera-stage {
-    border-radius: 8px;
-    border: 2px solid #050505;
-}
-.camera-lcd-hud {
+/* Clean Camera Optical Preview & Analog/Digicam Exposure Dials */
+.camera-dof-overlay {
     position: absolute;
-    top: 10px;
-    left: 12px;
-    right: 12px;
-    display: flex;
+    inset: 0;
+    pointer-events: none;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+    transition: opacity 0.2s ease;
+    opacity: 0;
+    mask-image: radial-gradient(circle at center, transparent 36%, black 88%);
+    -webkit-mask-image: radial-gradient(circle at center, transparent 36%, black 88%);
+}
+.camera-exposure-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    font-family: 'VT323', 'Space Mono', monospace;
-    font-size: 0.92rem;
+    gap: 8px;
+}
+.camera-dial-chip {
+    background: rgba(244, 241, 234, 0.06);
+    border: 1px solid rgba(244, 241, 234, 0.16);
+    border-radius: 8px;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    cursor: pointer;
+    color: #f4f1ea;
+    text-align: left;
+}
+.camera-dial-chip.active {
+    border-color: #cbff00;
+    background: rgba(203, 255, 0, 0.1);
+}
+.camera-dial-chip .dial-k {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.56rem;
+    letter-spacing: 0.14em;
+    color: #9c9288;
+}
+.camera-dial-chip .dial-v {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #f4f1ea;
+}
+.camera-dial-chip.active .dial-v { color: #cbff00; }
+.camera-ev-readout {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
     letter-spacing: 0.08em;
-    color: rgba(244, 241, 234, 0.92);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
-    pointer-events: none;
-    z-index: 2;
-}
-.hud-left { display: flex; align-items: center; gap: 6px; }
-.hud-rec-dot { color: #ff3b30; animation: digicamBlink 1.2s steps(2, start) infinite; }
-.hud-badge {
-    border: 1px solid rgba(244, 241, 234, 0.5);
+    color: #d6cfc7;
     padding: 0 4px;
-    font-size: 0.72rem;
-    border-radius: 2px;
+    white-space: nowrap;
 }
-.hud-batt { color: #4ade80; letter-spacing: 1px; }
-@keyframes digicamBlink { 50% { opacity: 0.25; } }
-.camera-af-reticle {
-    position: absolute;
-    width: 68px;
-    height: 48px;
-    border-left: 2px solid rgba(203, 255, 0, 0.7);
-    border-right: 2px solid rgba(203, 255, 0, 0.7);
-    border-top: 1px solid transparent;
-    border-bottom: 1px solid transparent;
-    pointer-events: none;
+.camera-dial-options {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+}
+.camera-dial-options::-webkit-scrollbar { display: none; }
+.camera-dial-options.hidden { display: none; }
+.camera-stop-btn {
+    flex: none;
+    background: rgba(244, 241, 234, 0.05);
+    border: 1px solid rgba(244, 241, 234, 0.18);
+    color: #d6cfc7;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+.camera-stop-btn.active {
+    background: #cbff00;
+    color: #141210;
+    border-color: #cbff00;
+    font-weight: 700;
 }
 .camera-date-preview {
     position: absolute;
     right: 16px;
     bottom: 34px;
-    font-family: 'VT323', 'Space Mono', monospace;
-    font-size: 1.05rem;
-    letter-spacing: 0.1em;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    letter-spacing: 0.12em;
     color: #ff7b00;
     text-shadow: 0 0 6px rgba(255, 123, 0, 0.65), 0 1px 2px rgba(0, 0, 0, 0.9);
     pointer-events: none;
