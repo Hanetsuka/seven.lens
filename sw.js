@@ -4,7 +4,7 @@
  * dan fallback ke Cache perangkat saat offline 100%.
  */
 
-const CACHE_NAME = 'svnlens-studio-offline-v17';
+const CACHE_NAME = 'svnlens-studio-offline-v12';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
