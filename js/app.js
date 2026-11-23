@@ -94,7 +94,6 @@
             dustStrength: 50,
             frameId: 'none_frame',
             frameStrength: 60,
-            watermark: 'off',
             masks: [],
             wheels: defaultWheels(),
             wheelsAmt: 100,
@@ -210,8 +209,378 @@
     // ==========================================
     // 3. INITIALIZATION & STARTER LIBRARY PHOTOS
     // ==========================================
+    // ==========================================
+    // PERSISTENCE (IndexedDB) — library & hasil edit tersimpan permanen di perangkat
+    // ==========================================
+    const DB_NAME = 'svnlens-library';
+    let dbPromise = null, editorDirty = false, autosaveTimer = 0, currentPixelEdited = false, quotaWarned = false;
+    const persistTimers = new Map();
+
+    function dbOpen() {
+        if (!dbPromise) {
+            dbPromise = new Promise((resolve, reject) => {
+                if (!window.indexedDB) { reject(new Error('IndexedDB tidak tersedia')); return; }
+                const rq = indexedDB.open(DB_NAME, 2);
+                rq.onupgradeneeded = () => {
+                    ['meta', 'blobs', 'looks'].forEach((n) => { if (!rq.result.objectStoreNames.contains(n)) rq.result.createObjectStore(n, { keyPath: 'id' }); });
+                };
+                rq.onsuccess = () => resolve(rq.result);
+                rq.onerror = () => reject(rq.error);
+            });
+        }
+        return dbPromise;
+    }
+
+    function idbRun(stores, mode, fn) {
+        return dbOpen().then((db) => new Promise((resolve, reject) => {
+            const tx = db.transaction(stores, mode);
+            const out = fn(...stores.map((s) => tx.objectStore(s)));
+            tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        }));
+    }
+
+    const encodeCanvas = (cv, type = 'image/webp', q = 0.93) => new Promise((res) => {
+        cv.toBlob((b) => { if (b) res(b); else cv.toBlob((p) => res(p), 'image/png'); }, type, q);
+    });
+
+    async function blobToCanvas(b) {
+        if (window.createImageBitmap) {
+            const bm = await createImageBitmap(b);
+            const c = createBlankCanvas(bm.width, bm.height);
+            c.getContext('2d').drawImage(bm, 0, 0);
+            if (bm.close) bm.close();
+            return c;
+        }
+        const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(b); });
+        const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+        const c = createBlankCanvas(img.naturalWidth, img.naturalHeight);
+        c.getContext('2d').drawImage(img, 0, 0);
+        return c;
+    }
+
+    function schedulePersist(photo, delay = 700) {
+        if (!photo) return;
+        clearTimeout(persistTimers.get(photo.id));
+        persistTimers.set(photo.id, setTimeout(() => persistPhoto(photo), delay));
+    }
+
+    let persistError = null;
+    function setPersistError(err) {
+        persistError = err ? `${err.name || ''} ${err.message || err}`.trim() : null;
+        let b = document.getElementById('persistBanner');
+        const host = document.getElementById('libraryGrid');
+        if (!err) { if (b) b.remove(); return; }
+        if (!b && host) {
+            b = document.createElement('div');
+            b.id = 'persistBanner';
+            b.className = 'persist-banner';
+            host.parentNode.insertBefore(b, host);
+        }
+        if (b) b.textContent = `⚠ Penyimpanan permanen tidak aktif (${persistError}). Hasil edit hanya bertahan selama halaman ini terbuka — gunakan EXPORT, atau buka aplikasi lewat https / localhost.`;
+    }
+
+    async function persistPhoto(photo) {
+        if (!photo || photo._skipPersist || photo._lazy) return false;
+        try { await persistPhotoRaw(photo); setPersistError(null); return true; } catch (err) { setPersistError(err); return false; }
+    }
+
+    async function persistPhotoRaw(photo) {
+        if (!photo || photo._skipPersist || photo._lazy) return;
+        try {
+            if (!photo._origBlob) photo._origBlob = await encodeCanvas(photo.originalCanvas);
+            const meta = {
+                id: photo.id, title: photo.title, createdAt: photo.createdAt || Date.now(), isEdited: !!photo.isEdited, pixelEdited: !!photo.pixelEdited,
+                editState: photo.editState, thumbUrl: photo.thumbUrl, editedThumbUrl: photo.editedThumbUrl
+            };
+            const blobs = {
+                id: photo.id, original: photo._origBlob, base: await encodeCanvas(photo.workingBaseCanvas),
+                brush: await encodeCanvas(photo.workingBrushCanvas, 'image/png'),
+                edited: photo.editedCanvas ? await encodeCanvas(photo.editedCanvas, 'image/jpeg', 0.9) : null, masks: {}
+            };
+            if (photo.maskCanvases) for (const [k, c] of photo.maskCanvases) blobs.masks[k] = await encodeCanvas(c, 'image/png');
+            await idbRun(['meta', 'blobs'], 'readwrite', (m, b) => { m.put(meta); b.put(blobs); });
+            if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+        } catch (err) {
+            console.warn('Gagal menyimpan ke penyimpanan perangkat', err);
+            if (!quotaWarned && err && /quota/i.test(String(err.name || err.message))) {
+                quotaWarned = true;
+                alert('Penyimpanan perangkat penuh, sebagian foto tidak dapat disimpan permanen. Hapus foto lama atau kosongkan ruang.');
+            }
+            throw err;
+        }
+    }
+
+    function dbDelete(id) {
+        clearTimeout(persistTimers.get(id));
+        idbRun(['meta', 'blobs'], 'readwrite', (m, b) => { m.delete(id); b.delete(id); }).catch(() => {});
+    }
+
+    async function loadLibraryFromDB() {
+        const metas = await idbRun(['meta'], 'readonly', (m) => m.getAll());
+        if (!metas || !metas.length) return false;
+        metas.sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+        metas.forEach((r) => {
+            libraryPhotos.push({
+                id: r.id, title: r.title, createdAt: r.createdAt, isEdited: r.isEdited, pixelEdited: r.pixelEdited, editState: r.editState,
+                thumbUrl: r.thumbUrl, editedThumbUrl: r.editedThumbUrl, _lazy: true
+            });
+        });
+        currentPhotoId = libraryPhotos[0] ? libraryPhotos[0].id : null;
+        return true;
+    }
+
+    // Foto dimuat penuh hanya saat dibuka (hemat memori)
+    async function hydratePhoto(photo) {
+        if (!photo || !photo._lazy) return;
+        if (!photo._hydrating) {
+            photo._hydrating = (async () => {
+                const r = await idbRun(['blobs'], 'readonly', (b) => b.get(photo.id));
+                if (!r) throw new Error('Data foto tidak ditemukan');
+                photo.originalCanvas = await blobToCanvas(r.original);
+                photo.workingBaseCanvas = await blobToCanvas(r.base);
+                photo.workingBrushCanvas = await blobToCanvas(r.brush);
+                if (r.edited) photo.editedCanvas = await blobToCanvas(r.edited);
+                photo.maskCanvases = new Map();
+                for (const k of Object.keys(r.masks || {})) photo.maskCanvases.set(k, await blobToCanvas(r.masks[k]));
+                photo._origBlob = r.original;
+                photo._lazy = false;
+            })();
+        }
+        try { await photo._hydrating; } finally { photo._hydrating = null; }
+    }
+
+    function markEditorDirty() {
+        editorDirty = true;
+        clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(autosaveNow, 6000);
+    }
+
+    function autosaveNow() {
+        clearTimeout(autosaveTimer);
+        const shell = document.getElementById('editorShell');
+        if (editorDirty && currentPhotoId && shell && !shell.classList.contains('hidden')) saveCurrentPhotoBackToLibrary();
+    }
+
+    document.addEventListener('visibilitychange', () => { if (document.hidden) autosaveNow(); });
+    window.addEventListener('pagehide', autosaveNow);
+
+    // ==========================================
+    // SIMPAN / SALIN EDIT / PRESET HASIL EDIT
+    // ==========================================
+    let lookClipboard = null, myLooks = [], toastTimer = 0, libSelectMode = false;
+    const LOOK_OPT = { masks: false, texts: false };
+    const libSelected = new Set();
+    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt'];
+
+    function flashToast(msg, ms = 1900) {
+        let t = document.getElementById('saveToast');
+        if (!t) { t = document.createElement('div'); t.id = 'saveToast'; t.className = 'save-toast'; document.body.appendChild(t); }
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    // Simpan eksplisit + konfirmasi hanya jika penyimpanan permanen benar-benar berhasil
+    async function saveNowExplicit() {
+        saveCurrentPhotoBackToLibrary();
+        const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+        if (!photo) return;
+        clearTimeout(persistTimers.get(photo.id));
+        const ok = await persistPhoto(photo);
+        flashToast(ok ? '✓ Tersimpan di Library (permanen)' : `⚠ Tersimpan sementara — penyimpanan permanen gagal: ${persistError || 'tidak diketahui'}`, ok ? 1900 : 6000);
+    }
+
+    // Simpan hasil edit sebagai foto BARU di Library (salinan resolusi penuh)
+    function saveAsNewPhoto() {
+        const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+        saveCurrentPhotoBackToLibrary();
+        renderEditorCanvasSync();
+        const out = createBlankCanvas(mainCanvas.width, mainCanvas.height);
+        out.getContext('2d').drawImage(mainCanvas, 0, 0);
+        addPhotoToLibrary(out, `${photo ? photo.title : 'Foto'} (edit)`, true);
+        renderLibraryGrid();
+        flashToast('✓ Disimpan sebagai foto baru di Library');
+    }
+
+    function captureLook(opts = {}) {
+        const look = { v: 1 };
+        LOOK_KEYS.forEach((k) => { look[k] = state[k] === undefined ? null : JSON.parse(JSON.stringify(state[k])); });
+        look.adjust = JSON.parse(JSON.stringify(state.adjust));
+        delete look.adjust.straighten; // geometri tidak ikut disalin
+        if (opts.masks) look.masks = state.masks.filter((m) => m.type !== 'brush').map((m) => JSON.parse(JSON.stringify(m)));
+        if (opts.texts) look.texts = JSON.parse(JSON.stringify(state.texts));
+        return look;
+    }
+
+    function applyLookToState(look) {
+        const d = createDefaultEditState();
+        LOOK_KEYS.forEach((k) => { state[k] = look[k] !== undefined && look[k] !== null ? JSON.parse(JSON.stringify(look[k])) : d[k]; });
+        if (state.activeCubeLutId && !myCubeLuts.find((l) => l.id === state.activeCubeLutId)) state.activeCubeLutId = null;
+        state.adjust = { ...d.adjust, ...look.adjust, straighten: (state.adjust && state.adjust.straighten) || 0 };
+        if (look.masks) {
+            const keep = state.masks.filter((m) => m.type === 'brush');
+            state.masks = keep.concat(look.masks.map((m) => ({ ...JSON.parse(JSON.stringify(m)), id: 'mk_' + Math.random().toString(36).slice(2, 8) })));
+            maskVer++;
+        }
+        if (look.texts) state.texts = look.texts.map((t) => ({ ...JSON.parse(JSON.stringify(t)), id: 'txt_' + Math.random().toString(36).slice(2, 8) }));
+        if (!state.curves) state.curves = createIdentityCurves();
+    }
+
+    function applyLookInEditor(look, label = 'Paste edit') {
+        if (!look) return;
+        applyLookToState(look);
+        switchEditorMainTab(activeEditorMainTab);
+        renderEditorCanvas();
+        pushHistory(label, true);
+        flashToast('✓ Edit diterapkan');
+    }
+
+    function persistClipboard() {
+        idbRun(['looks'], 'readwrite', (s) => s.put({ id: '__clip__', look: lookClipboard })).catch(() => {});
+    }
+
+    async function loadLooks() {
+        try {
+            const recs = await idbRun(['looks'], 'readonly', (s) => s.getAll());
+            myLooks = (recs || []).filter((r) => r.id !== '__clip__').sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+            const clip = (recs || []).find((r) => r.id === '__clip__');
+            if (clip) lookClipboard = clip.look;
+            updateLibActions();
+        } catch (e) { /* tanpa penyimpanan: preset hanya tersimpan selama sesi */ }
+    }
+
+    function makeLookThumb() {
+        const c = createBlankCanvas(76, 76), m = Math.min(mainCanvas.width, mainCanvas.height);
+        c.getContext('2d').drawImage(mainCanvas, (mainCanvas.width - m) / 2, (mainCanvas.height - m) / 2, m, m, 0, 0, 76, 76);
+        return c.toDataURL('image/jpeg', 0.8);
+    }
+
+    function saveLookAsPreset() {
+        const name = (window.prompt('Nama preset hasil edit ini:', `Edit ${myLooks.length + 1}`) || '').trim();
+        if (!name) return;
+        renderEditorCanvasSync('good');
+        const rec = { id: 'look_' + Date.now(), name, look: captureLook({ masks: LOOK_OPT.masks, texts: LOOK_OPT.texts }), thumb: makeLookThumb(), createdAt: Date.now() };
+        myLooks.unshift(rec);
+        idbRun(['looks'], 'readwrite', (s) => s.put(rec)).catch(() => flashToast('⚠ Preset hanya tersimpan selama sesi (penyimpanan permanen gagal)', 4000));
+        activePresetCat = 'myedits';
+        switchEditorMainTab('Presets');
+        document.querySelectorAll('#presetCatBar [data-pcat]').forEach((b) => b.classList.toggle('active', b.dataset.pcat === 'myedits'));
+        flashToast(`★ Preset "${name}" tersimpan di MY EDITS`);
+    }
+
+    function buildEditMenu() {
+        const hist = document.querySelector('.editor-history-btns');
+        if (!hist || document.getElementById('btnEditMenu')) return;
+        const btn = document.createElement('button');
+        btn.id = 'btnEditMenu';
+        btn.className = 'hist-icon-btn';
+        btn.title = 'Simpan · Salin edit · Preset';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="3" width="12" height="14" rx="2"/><path d="M16 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2"/></svg>';
+        hist.appendChild(btn);
+        const menu = document.createElement('div');
+        menu.id = 'editMenu';
+        menu.className = 'edit-menu hidden';
+        menu.innerHTML = `
+            <button data-act="save">✓ SIMPAN KE LIBRARY</button>
+            <button data-act="savecopy">＋ SIMPAN SEBAGAI FOTO BARU</button>
+            <div class="edit-menu-sep"></div>
+            <button data-act="copy">⧉ SALIN EDIT</button>
+            <div class="edit-menu-opts"><button data-opt="masks" class="dark-chip">+ MASKING</button><button data-opt="texts" class="dark-chip">+ TEKS</button></div>
+            <button data-act="paste">⎘ TEMPEL EDIT</button>
+            <button data-act="savelook">★ SIMPAN SEBAGAI PRESET</button>`;
+        document.body.appendChild(menu);
+        const refresh = () => {
+            menu.querySelector('[data-act="paste"]').disabled = !lookClipboard;
+            menu.querySelectorAll('[data-opt]').forEach((b) => b.classList.toggle('active', !!LOOK_OPT[b.dataset.opt]));
+        };
+        btn.addEventListener('click', (e) => { e.stopPropagation(); refresh(); menu.classList.toggle('hidden'); });
+        document.addEventListener('click', (e) => { if (!menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden'); });
+        menu.addEventListener('click', async (e) => {
+            const o = e.target.closest('[data-opt]');
+            if (o) { LOOK_OPT[o.dataset.opt] = !LOOK_OPT[o.dataset.opt]; refresh(); return; }
+            const b = e.target.closest('[data-act]');
+            if (!b || b.disabled) return;
+            menu.classList.add('hidden');
+            const act = b.dataset.act;
+            if (act === 'save') await saveNowExplicit();
+            else if (act === 'savecopy') saveAsNewPhoto();
+            else if (act === 'copy') {
+                lookClipboard = captureLook({ masks: LOOK_OPT.masks, texts: LOOK_OPT.texts });
+                persistClipboard();
+                updateLibActions();
+                flashToast('⧉ Edit disalin — buka foto lain lalu TEMPEL EDIT', 3200);
+            } else if (act === 'paste') applyLookInEditor(lookClipboard);
+            else if (act === 'savelook') saveLookAsPreset();
+        });
+    }
+
+    function buildLibActions() {
+        const grid = document.getElementById('libraryGrid');
+        if (!grid || document.getElementById('libActions')) return;
+        const row = document.createElement('div');
+        row.id = 'libActions';
+        row.className = 'lib-actions';
+        row.innerHTML = '<button id="btnLibSelect" class="link-underlined">PILIH FOTO</button><span id="libSelInfo" class="meta-label"></span><button id="btnLibPaste" class="link-underlined hidden">TEMPEL EDIT →</button>';
+        grid.parentNode.insertBefore(row, grid);
+        document.getElementById('btnLibSelect').addEventListener('click', () => {
+            libSelectMode = !libSelectMode;
+            libSelected.clear();
+            renderLibraryGrid();
+        });
+        document.getElementById('btnLibPaste').addEventListener('click', () => batchPasteLook([...libSelected]));
+    }
+
+    function updateLibActions() {
+        const sel = document.getElementById('btnLibSelect');
+        if (!sel) return;
+        sel.textContent = libSelectMode ? 'SELESAI' : 'PILIH FOTO';
+        const info = document.getElementById('libSelInfo'), paste = document.getElementById('btnLibPaste');
+        if (!libSelectMode) { info.textContent = ''; paste.classList.add('hidden'); return; }
+        info.textContent = lookClipboard ? `${libSelected.size} DIPILIH` : 'SALIN EDIT DULU DI EDITOR (IKON ⧉ DI ATAS)';
+        paste.textContent = `TEMPEL EDIT (${libSelected.size}) →`;
+        paste.classList.toggle('hidden', !(lookClipboard && libSelected.size));
+    }
+
+    async function batchPasteLook(ids) {
+        if (!lookClipboard || !ids.length) return;
+        let done = 0;
+        for (const id of ids) {
+            const p = libraryPhotos.find((x) => x.id === id);
+            if (!p) continue;
+            flashToast(`Menerapkan edit ${++done}/${ids.length}…`, 60000);
+            try { await hydratePhoto(p); } catch (err) { continue; }
+            openPhotoInEditorNow(p.id, 'Presets');
+            applyLookToState(lookClipboard);
+            renderEditorCanvasSync('good');
+            saveCurrentPhotoBackToLibrary();
+            await new Promise((r) => setTimeout(r, 15));
+        }
+        libSelectMode = false;
+        libSelected.clear();
+        switchStudioView('viewLibrary');
+        renderLibraryGrid();
+        flashToast(`✓ Edit diterapkan & tersimpan di ${done} foto`);
+    }
+
     function init() {
-        generateStarterLibraryPhotos();
+        const seed = () => {
+            let seeded = false;
+            try { seeded = !!localStorage.getItem('svnlens_seeded'); } catch (e) { /* abaikan */ }
+            if (!seeded) {
+                generateStarterLibraryPhotos();
+                try { localStorage.setItem('svnlens_seeded', '1'); } catch (e) { /* abaikan */ }
+            }
+        };
+        loadLibraryFromDB()
+            .then((has) => { if (!has) seed(); renderLibraryGrid(); updatePhotoCountLabels(); })
+            .catch((e) => { setPersistError(e); generateStarterLibraryPhotos(); renderLibraryGrid(); });
+        buildEditMenu();
+        buildLibActions();
+        loadLooks();
+        dbOpen().then(() => setPersistError(null)).catch((e) => setPersistError(e));
         renderLibraryGrid();
         renderMyLutsView();
         bindStudioNavigation();
@@ -251,6 +620,7 @@
             pCtx.fillRect(0, 0, w, h);
 
             const item = addPhotoToLibrary(placeholder, sample.title || 'Sample Photo', !!sample.markEdited);
+            item._skipPersist = true;
             if (sample.dataUrl) {
                 item.thumbUrl = sample.dataUrl;
                 item.editedThumbUrl = sample.dataUrl;
@@ -274,6 +644,8 @@
                         openPhotoInEditor(item.id);
                     }
                     renderLibraryGrid();
+                    item._skipPersist = false;
+                    schedulePersist(item);
                 };
                 img.src = sample.dataUrl;
             }
@@ -309,10 +681,12 @@
             thumbUrl,
             editedThumbUrl: thumbUrl,
             isEdited: markEdited,
+            createdAt: Date.now(),
             editState
         };
 
         libraryPhotos.unshift(item);
+        schedulePersist(item);
         updatePhotoCountLabels();
         return item;
     }
@@ -342,6 +716,7 @@
     // 4. STUDIO SHELL NAVIGATION (HOME / LIBRARY / LUTS)
     // ==========================================
     function switchStudioView(viewId) {
+        autosaveNow();
         document.getElementById('editorShell').classList.add('hidden');
         document.getElementById('studioShell').classList.remove('hidden');
 
@@ -368,7 +743,7 @@
         // Home Actions
         document.getElementById('btnContinueEditing').addEventListener('click', () => {
             if (libraryPhotos.length > 0) {
-                openPhotoInEditor(currentPhotoId || libraryPhotos[0].id);
+                openPhotoInEditor(currentPhotoId || libraryPhotos[0]?.id);
             }
         });
 
@@ -381,12 +756,10 @@
         document.getElementById('btnHomeImportPhoto').addEventListener('click', triggerPhotoPicker);
         document.getElementById('btnLibImport').addEventListener('click', triggerPhotoPicker);
         document.getElementById('btnEditorImport').addEventListener('click', triggerPhotoPicker);
-        document.getElementById('btnHomeCamera').addEventListener('click', () => openCameraModal());
-        document.getElementById('btnEditorCamera').addEventListener('click', () => openCameraModal());
 
         document.getElementById('btnHomeBrowsePresets').addEventListener('click', () => {
             if (libraryPhotos.length > 0) {
-                openPhotoInEditor(currentPhotoId || libraryPhotos[0].id, 'Presets');
+                openPhotoInEditor(currentPhotoId || libraryPhotos[0]?.id, 'Presets');
             }
         });
 
@@ -654,7 +1027,7 @@
         list.forEach((photo, idx) => {
             const numStr = String(idx + 1).padStart(2, '0');
             const card = document.createElement('div');
-            card.className = 'lib-photo-card';
+            card.className = 'lib-photo-card' + (libSelectMode && libSelected.has(photo.id) ? ' selected' : '');
             card.innerHTML = `
                 <div class="lib-thumb-wrap">
                     <img src="${photo.editedThumbUrl || photo.thumbUrl}" alt="${photo.title}">
@@ -670,7 +1043,13 @@
                 if (e.target.classList.contains('lib-card-Delete')) {
                     e.stopPropagation();
                     libraryPhotos = libraryPhotos.filter((item) => item.id !== photo.id);
+                    dbDelete(photo.id);
                     updatePhotoCountLabels();
+                    renderLibraryGrid();
+                    return;
+                }
+                if (libSelectMode) {
+                    if (libSelected.has(photo.id)) libSelected.delete(photo.id); else libSelected.add(photo.id);
                     renderLibraryGrid();
                     return;
                 }
@@ -679,6 +1058,7 @@
 
             grid.appendChild(card);
         });
+        updateLibActions();
     }
 
     function renderMyLutsView() {
@@ -710,11 +1090,23 @@
     // ==========================================
     // 5. OPENING A PHOTO IN DARKROOM EDITOR
     // ==========================================
-    function openPhotoInEditor(photoId, initialTab = 'Presets') {
+    async function openPhotoInEditor(photoId, initialTab = 'Presets') {
+        const target = libraryPhotos.find((p) => p.id === photoId) || libraryPhotos[0];
+        const edShell = document.getElementById('editorShell');
+        if (editorDirty && currentPhotoId && target && currentPhotoId !== target.id && edShell && !edShell.classList.contains('hidden')) saveCurrentPhotoBackToLibrary();
+        if (target && target._lazy) {
+            try { await hydratePhoto(target); } catch (err) { alert('Foto tidak dapat dimuat: ' + (err.message || err)); return; }
+        }
+        openPhotoInEditorNow(photoId, initialTab);
+    }
+
+    function openPhotoInEditorNow(photoId, initialTab = 'Presets') {
         const photo = libraryPhotos.find((p) => p.id === photoId) || libraryPhotos[0];
         if (!photo) return;
 
         currentPhotoId = photo.id;
+        currentPixelEdited = !!photo.pixelEdited;
+        editorDirty = false;
         thumbCache.clear();
         closeMaskUI();
         selectedMaskId = null;
@@ -724,7 +1116,6 @@
         state = JSON.parse(JSON.stringify(photo.editState));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
-        if (!state.watermark) state.watermark = 'off';
         if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
         if (!state.curves) state.curves = createIdentityCurves();
 
@@ -779,6 +1170,7 @@
         ec.getContext('2d').drawImage(mainCanvas, 0, 0, ec.width, ec.height);
         photo.editedCanvas = ec;
         photo.maskCanvases = snapshotMasks();
+        photo.pixelEdited = currentPixelEdited;
         state.selectedTextId = prevSel;
 
         // Tandai edited jika ada perubahan dari default
@@ -787,13 +1179,16 @@
             !state.activeCubeLutId &&
             state.effectId === 'none_leak' &&
             (!state.frameId || state.frameId === 'none_frame') &&
-            (!state.watermark || state.watermark === 'off') &&
             (!state.masks || !state.masks.length) &&
             !wheelsActive(state) &&
+            (!state.dustId || state.dustId === 'none_dust') &&
+            !state.flipH && !state.flipV && !currentPixelEdited &&
             state.texts.length === 0 &&
             isCurvesIdentity(state.curves) &&
             Object.values(state.adjust).every((v) => v === 0);
         photo.isEdited = !isDefault;
+        editorDirty = false;
+        schedulePersist(photo, 50);
     }
 
     // ==========================================
@@ -1052,33 +1447,6 @@
             }
             ctx.restore();
         });
-
-        // 9. Retro Corner Watermark ("created using svn.lens")
-        renderWatermarkCorner(ctx, w, h, state.watermark);
-    }
-
-    function renderWatermarkCorner(ctx, w, h, corner) {
-        if (!corner || corner === 'off') return;
-        const minSide = Math.min(w, h);
-        const fontSize = Math.max(12, Math.round(minSide * 0.024));
-        const padX = Math.max(14, Math.round(minSide * 0.032));
-        const padY = Math.max(12, Math.round(minSide * 0.028));
-        const isRight = corner === 'br' || corner === 'tr';
-        const isBottom = corner === 'br' || corner === 'bl';
-
-        ctx.save();
-        ctx.font = `400 ${fontSize}px 'Courier Prime', 'Space Mono', monospace`;
-        ctx.textAlign = isRight ? 'right' : 'left';
-        ctx.textBaseline = isBottom ? 'bottom' : 'top';
-        ctx.fillStyle = 'rgba(244, 241, 234, 0.86)';
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-        ctx.shadowBlur = Math.max(3, Math.round(fontSize * 0.25));
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 1;
-        const x = isRight ? w - padX : padX;
-        const y = isBottom ? h - padY : padY;
-        ctx.fillText('created using svn.lens', x, y);
-        ctx.restore();
     }
 
     function defaultWheels() {
@@ -1786,6 +2154,46 @@
             return;
         }
 
+        if (activePresetCat === 'myedits') {
+            myLooks.forEach((rec) => {
+                const card = document.createElement('div');
+                card.className = 'thumb-card';
+                const box = document.createElement('div');
+                box.className = 'thumb-box';
+                const img = document.createElement('img');
+                img.src = rec.thumb;
+                img.alt = rec.name;
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+                box.appendChild(img);
+                const del = document.createElement('span');
+                del.className = 'fav-star-badge';
+                del.textContent = '×';
+                del.title = 'Hapus preset';
+                del.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    if (!confirm(`Hapus preset "${rec.name}"?`)) return;
+                    myLooks = myLooks.filter((x) => x.id !== rec.id);
+                    idbRun(['looks'], 'readwrite', (s) => s.delete(rec.id)).catch(() => {});
+                    renderPresetsStrip();
+                });
+                box.appendChild(del);
+                const lbl = document.createElement('span');
+                lbl.className = 'thumb-label';
+                lbl.textContent = rec.name.toUpperCase().slice(0, 12);
+                card.appendChild(box);
+                card.appendChild(lbl);
+                card.addEventListener('click', () => applyLookInEditor(rec.look, `Preset ${rec.name}`));
+                strip.appendChild(card);
+            });
+            if (!myLooks.length) {
+                const hint = document.createElement('div');
+                hint.className = 'thumb-card';
+                hint.innerHTML = '<div class="thumb-box" style="display:flex;align-items:center;justify-content:center;border:1px dashed #6e655c;color:#e7e2d8;font-size:1.3rem;">★</div><span class="thumb-label">SIMPAN DARI ⧉</span>';
+                strip.appendChild(hint);
+            }
+            return;
+        }
+
         // Filter daftar preset berdasarkan kategori
         let list = [];
         if (activePresetCat === 'favorites') {
@@ -1961,11 +2369,11 @@
     function selectToolKey(key) {
         let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
 
-        // Tone Curve & Masking tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
-        if (tool.isContext === 'curves' || tool.isContext === 'mask') {
+        // Tone Curve tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
+        if (tool.isContext === 'curves') {
             activeToolKey = tool.key;
             renderToolsStrip();
-            openToolContextBar(tool.isContext, tool.name);
+            openToolContextBar('curves', tool.name);
             return;
         }
         // Tool non-slider lain tidak bisa diikat ke slider utama
@@ -2135,7 +2543,44 @@
             });
         } else if (contextType === 'mask') {
             openMaskUI();
-            renderLightroomMaskUI(bar);
+            const panel = document.createElement('div');
+            panel.className = 'mask-panel';
+            const row = () => { const r = document.createElement('div'); r.className = 'mask-row'; panel.appendChild(r); return r; };
+            const mk = (r, label, fn, active) => {
+                const b = document.createElement('button');
+                b.className = `dark-chip ${active ? 'active' : ''}`;
+                b.textContent = label;
+                b.addEventListener('click', fn);
+                r.appendChild(b);
+            };
+            const r1 = row();
+            mk(r1, '+ LINEAR', () => addMask('linear'));
+            mk(r1, '+ RADIAL', () => addMask('radial'));
+            mk(r1, '+ BRUSH', () => addMask('brush'));
+            MASK_QUICK.forEach((q) => mk(r1, q.label, () => addMask(q.type, q.over)));
+            if (state.masks.length) {
+                const r2 = row();
+                state.masks.forEach((m, i) => mk(r2, `${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
+                const sm = selectedMask();
+                if (sm) {
+                    mk(r2, sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; maskVer++; renderEditorCanvas(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
+                    mk(r2, maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
+                    if (sm.type === 'brush') {
+                        mk(r2, maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
+                        mk(r2, 'ISI SEMUA', () => { const mc = maskCanvases.get(sm.id); if (mc) { const c = mc.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Fill mask', true); } });
+                        mk(r2, 'KOSONGKAN', () => { const mc = maskCanvases.get(sm.id); if (mc) { mc.getContext('2d').clearRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Clear mask', true); } });
+                    }
+                    mk(r2, '✕ HAPUS MASK', () => deleteMask(sm.id));
+                    const r3 = row();
+                    MASK_ATTRS.forEach(([k, label]) => {
+                        if (k === 'size' && sm.type !== 'brush') return;
+                        const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
+                        const txt = k === 'feather' || k === 'size' ? `${v}` : `${v > 0 ? '+' : ''}${v}`;
+                        mk(r3, `${label} ${txt}`, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
+                    });
+                }
+            }
+            bar.appendChild(panel);
             syncMasterSliderForMask();
         } else if (contextType === 'wb') {
             wbPickActive = false;
@@ -2491,26 +2936,6 @@
         }
 
         if (activeEffectCat === 'stamps') {
-            const wmCorner = state.watermark || 'off';
-            const wmLabels = { off: 'OFF', br: 'POJOK KANAN BAWAH', bl: 'KIRI BAWAH', tr: 'KANAN ATAS', tl: 'KIRI ATAS' };
-            const wmOrder = ['off', 'br', 'bl', 'tr', 'tl'];
-            const wmCard = document.createElement('div');
-            wmCard.className = `thumb-card ${wmCorner !== 'off' ? 'active' : ''}`;
-            wmCard.innerHTML = `
-                <div class="thumb-box" style="display:flex;align-items:center;justify-content:center;color:#cbff00;font-family:'Courier Prime','Space Mono',monospace;font-size:0.65rem;text-align:center;padding:6px;line-height:1.25;">
-                    created using<br>svn.lens
-                </div>
-                <span class="thumb-label">WM: ${wmLabels[wmCorner] || 'OFF'}</span>
-            `;
-            wmCard.addEventListener('click', () => {
-                const idx = wmOrder.indexOf(state.watermark || 'off');
-                state.watermark = wmOrder[(idx + 1) % wmOrder.length];
-                renderEffectsStrip();
-                renderEditorCanvas();
-                pushHistory(`Watermark ${state.watermark.toUpperCase()}`);
-            });
-            strip.appendChild(wmCard);
-
             const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
             const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
             const mono = "'Space Mono', monospace";
@@ -2786,6 +3211,7 @@
         // Back to Library
         document.getElementById('btnBackToLibrary').addEventListener('click', () => {
             saveCurrentPhotoBackToLibrary();
+            flashToast('✓ Tersimpan di Library');
             switchStudioView('viewLibrary');
         });
 
@@ -2842,12 +3268,7 @@
                 state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) {
-                    mk[maskAttr] = val;
-                    updateMaskAttrChipText(maskAttr, val);
-                    if (maskAttr === 'feather') { maskVer++; scheduleMaskOverlay(); }
-                    if (maskAttr === 'size') scheduleMaskOverlay();
-                }
+                if (mk) mk[maskAttr] = val;
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'dust') state.dustStrength = val;
                 else if (activeEffectCat === 'frames') state.frameStrength = val;
@@ -2874,12 +3295,7 @@
                 masterSlider.value = 100;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) {
-                    mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0;
-                    masterSlider.value = mk[maskAttr];
-                    updateMaskAttrChipText(maskAttr, mk[maskAttr]);
-                    if (maskAttr === 'feather') { maskVer++; scheduleMaskOverlay(); }
-                }
+                if (mk) { mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0; masterSlider.value = mk[maskAttr]; }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
                 masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
@@ -3352,39 +3768,26 @@
     // 11. HISTORY (UNDO / REDO) & EXPORT
     // ==========================================
     // ==========================================
-    // LOCAL ADJUSTMENT MASKS (Lightroom-Style Layers + Auto Subject / Sky / Background + Linear / Radial / Brush)
+    // LOCAL ADJUSTMENT MASKS (Linear / Radial / Brush) — pengaturan cahaya per area
     // ==========================================
     const MASK_ATTRS = [
-        ['exposure', 'EXPOSURE', 'light'],
-        ['contrast', 'CONTRAST', 'light'],
-        ['highlights', 'HIGHLIGHTS', 'light'],
-        ['shadows', 'SHADOWS', 'light'],
-        ['warmth', 'WARMTH', 'color'],
-        ['tint', 'TINT', 'color'],
-        ['saturation', 'SATURATION', 'color'],
-        ['opacity', 'OPACITY', 'mask'],
-        ['feather', 'FEATHER', 'mask'],
-        ['size', 'BRUSH SIZE', 'mask']
+        ['exposure', 'EXPOSURE'], ['contrast', 'CONTRAST'], ['highlights', 'HIGHLIGHTS'], ['shadows', 'SHADOWS'],
+        ['saturation', 'SATURATION'], ['warmth', 'WARMTH'], ['feather', 'FEATHER'], ['size', 'BRUSH SIZE']
     ];
-    const MASK_DEFAULTS = { feather: 50, size: 8, opacity: 100 };
-    const MASK_MAX_LAYERS = 8;
-    const isPixelMaskType = (t) => t === 'brush' || t === 'subject' || t === 'sky' || t === 'background';
-    const maskCanvases = new Map(); // id mask pixel/AI/brush -> canvas alpha (≤1024px)
+    const MASK_DEFAULTS = { feather: 50, size: 8 };
+    const maskCanvases = new Map(); // id mask brush -> canvas alpha (≤1024px)
     const maskTmp = document.createElement('canvas');
     const maskTmpCtx = maskTmp.getContext('2d', { willReadFrequently: true });
     let maskUiActive = false, maskBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
-    let maskPickerOpen = false, maskAdjGroup = 'light';
     let activeFontCat = 'all';
     let maskVer = 0, maskSnapCache = { ver: -1, map: null }, maskHover = null, maskOvRaf = 0, wbPickActive = false;
-
-    const MASK_TYPE_META = {
-        subject: { label: 'Subject', badge: 'AI SUBJECT' },
-        sky: { label: 'Sky', badge: 'AI SKY' },
-        background: { label: 'Background', badge: 'AI BG' },
-        linear: { label: 'Linear', badge: 'LINEAR' },
-        radial: { label: 'Radial', badge: 'RADIAL' },
-        brush: { label: 'Brush', badge: 'BRUSH' }
-    };
+    const MASK_QUICK = [
+        { label: '☁ LANGIT', type: 'linear', over: { x1: 0.5, y1: 0.02, x2: 0.5, y2: 0.5, exposure: -45, highlights: -35, saturation: 10, feather: 60 } },
+        { label: '◉ SUBJEK', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.28, exposure: 30, shadows: 20, contrast: 10, feather: 70 } },
+        { label: '☀ WAJAH', type: 'radial', over: { cx: 0.5, cy: 0.38, r: 0.18, exposure: 35, shadows: 25, warmth: 8, feather: 85 } },
+        { label: '◌ VIGNET', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.45, exposure: -45, invert: true, feather: 85 } },
+        { label: '▁ BAWAH GELAP', type: 'linear', over: { x1: 0.5, y1: 0.98, x2: 0.5, y2: 0.55, exposure: -35, feather: 60 } }
+    ];
 
     const selectedMask = () => (state.masks || []).find((m) => m.id === selectedMaskId) || null;
 
@@ -3432,8 +3835,7 @@
                 maskSmallCanvas.width = sw;
                 maskSmallCanvas.height = sh;
                 maskSmallCtx.clearRect(0, 0, sw, sh);
-                const blurPx = m.type === 'brush' ? f * 0.02 * Math.max(sw, sh) : f * 0.012 * Math.max(sw, sh);
-                maskSmallCtx.filter = f > 0.02 ? `blur(${blurPx}px)` : 'none';
+                maskSmallCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(sw, sh)}px)` : 'none';
                 maskSmallCtx.drawImage(mc, 0, 0, sw, sh);
                 maskSmallCtx.filter = 'none';
                 const d = maskSmallCtx.getImageData(0, 0, sw, sh).data;
@@ -3466,7 +3868,7 @@
             A = new Uint8ClampedArray(gw * gh);
             for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
         }
-        if (maskAlphaCache.size > 16) maskAlphaCache.clear();
+        if (maskAlphaCache.size > 10) maskAlphaCache.clear();
         maskAlphaCache.set(key, A);
         return A;
     }
@@ -3474,589 +3876,70 @@
     function applyMasks(imgData, gw, gh) {
         const d = imgData.data;
         state.masks.forEach((m) => {
-            if (m.visible === false) return;
-            const op = (m.opacity ?? 100) / 100;
-            if (op <= 0) return;
             const ex = (m.exposure || 0) / 100, ct = (m.contrast || 0) / 100, hl = (m.highlights || 0) / 100;
-            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100, ti = (m.tint || 0) / 100;
-            if (!ex && !ct && !hl && !sh && !sa && !wm && !ti) return;
+            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100;
+            if (!ex && !ct && !hl && !sh && !sa && !wm) return;
             const A = computeMaskAlpha(m, gw, gh);
             for (let p = 0, i = 0; p < A.length; p++, i += 4) {
                 if (A[p] < 2) continue;
-                const k = (A[p] / 255) * op;
+                const k = A[p] / 255;
                 let r = d[i], g = d[i + 1], b = d[i + 2];
-                if (ex > 0) {
-                    const lift = ex * k * 0.72;
-                    r += lift * (255 - r) * ((r / 255) * 0.55 + 0.45);
-                    g += lift * (255 - g) * ((g / 255) * 0.55 + 0.45);
-                    b += lift * (255 - b) * ((b / 255) * 0.55 + 0.45);
-                } else if (ex < 0) {
-                    const dim = Math.max(0.25, 1 + ex * k * 0.68);
-                    const floor = 8 * (1 - dim);
-                    r = r * dim + floor; g = g * dim + floor; b = b * dim + floor;
-                }
+                if (ex) { const f = 1 + ex * k * (ex > 0 ? 1.1 : 0.9); r *= f; g *= f; b *= f; }
                 if (ct) { const c = 1 + ct * k * 0.8; r = (r - 128) * c + 128; g = (g - 128) * c + 128; b = (b - 128) * c + 128; }
                 const lum = 0.299 * r + 0.587 * g + 0.114 * b;
                 if (hl) { const v = hl * k * Math.max(0, (lum - 110) / 145) * 70; r += v; g += v; b += v; }
                 if (sh) { const v = sh * k * Math.max(0, (150 - lum) / 150) * 80; r += v; g += v; b += v; }
                 if (sa) { const s = 1 + sa * k; r = lum + (r - lum) * s; g = lum + (g - lum) * s; b = lum + (b - lum) * s; }
                 if (wm) { const v = wm * k * 30; r += v; b -= v; }
-                if (ti) { const v = ti * k * 25; g -= v; r += v * 0.5; b += v * 0.5; }
                 d[i] = r; d[i + 1] = g; d[i + 2] = b; // Uint8ClampedArray membatasi 0-255
             }
         });
     }
 
-    function nextMaskLayerName(type) {
-        const base = (MASK_TYPE_META[type] && MASK_TYPE_META[type].label) || 'Mask';
-        const count = state.masks.filter((x) => x.type === type).length + 1;
-        return `${base} ${count}`;
-    }
-
-    function buildMaskLayer(type, over, precomputedCanvas) {
-        const m = {
-            id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
-            name: nextMaskLayerName(type),
-            type,
-            visible: true,
-            opacity: 100,
-            feather: type === 'subject' || type === 'sky' || type === 'background' ? 20 : 50,
-            invert: false,
-            exposure: 25,
-            contrast: 0,
-            highlights: 0,
-            shadows: 0,
-            saturation: 0,
-            warmth: 0,
-            tint: 0,
-            size: 8
-        };
-
-        const sc = Math.min(1, 512 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
-        const mw = Math.max(16, Math.round(basePhotoCanvas.width * sc));
-        const mh = Math.max(16, Math.round(basePhotoCanvas.height * sc));
-
-        if (type === 'linear') {
-            Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
-        } else if (type === 'radial') {
-            Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
-        } else if (type === 'subject') {
-            Object.assign(m, { exposure: 10, highlights: -10, shadows: 12 });
-            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh));
-            maskVer++;
-        } else if (type === 'background') {
-            Object.assign(m, { exposure: -16, highlights: -10, invert: true });
-            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh));
-            maskVer++;
-        } else if (type === 'sky') {
-            Object.assign(m, { exposure: -28, highlights: -24, saturation: 14 });
-            maskCanvases.set(m.id, precomputedCanvas || window.AITools.detectSkyMask(basePhotoCanvas, mw, mh));
-            maskVer++;
-        } else {
-            const bsc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
-            maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * bsc)), Math.max(8, Math.round(basePhotoCanvas.height * bsc))));
-            maskVer++;
-        }
-
-        if (over) Object.assign(m, over);
-        return m;
-    }
-
     function addMask(type, over) {
-        if (state.masks.length >= MASK_MAX_LAYERS) {
-            document.getElementById('gestureHintText').textContent = `MAKSIMAL ${MASK_MAX_LAYERS} LAYER MASK`;
+        if (state.masks.length >= 6) {
+            document.getElementById('gestureHintText').textContent = 'MAKSIMAL 6 MASK';
             return;
         }
-        const m = buildMaskLayer(type, over);
+        const m = { id: 'mk_' + Date.now().toString(36), type, feather: 50, invert: false, exposure: 25, contrast: 0, highlights: 0, shadows: 0, saturation: 0, warmth: 0, size: 8 };
+        if (type === 'linear') Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
+        else if (type === 'radial') Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
+        else {
+            const sc = Math.min(1, 1024 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
+            maskCanvases.set(m.id, createBlankCanvas(Math.max(8, Math.round(basePhotoCanvas.width * sc)), Math.max(8, Math.round(basePhotoCanvas.height * sc))));
+            maskVer++;
+        }
+        if (over) Object.assign(m, over);
         state.masks.push(m);
         selectedMaskId = m.id;
         maskAttr = 'exposure';
-        maskAdjGroup = 'light';
-        maskErase = false;
-        maskPickerOpen = false;
-        maskShow = true;
+        maskShow = type === 'brush';
         refreshMaskBar();
         renderEditorCanvas();
-        pushHistory(`Add ${m.name}`, true);
-    }
-
-    function addStrobistMaskPair() {
-        if (state.masks.length > MASK_MAX_LAYERS - 2) {
-            document.getElementById('gestureHintText').textContent = `BUTUH 2 SLOT LAYER (MAKS ${MASK_MAX_LAYERS})`;
-            return;
-        }
-        const sc = Math.min(1, 512 / Math.max(basePhotoCanvas.width, basePhotoCanvas.height));
-        const mw = Math.max(16, Math.round(basePhotoCanvas.width * sc));
-        const mh = Math.max(16, Math.round(basePhotoCanvas.height * sc));
-        const subjMatte = window.AITools.detectSubjectMask(basePhotoCanvas, mw, mh);
-
-        const bgLayer = buildMaskLayer('background', {
-            name: 'Strobist BG',
-            exposure: -45,
-            highlights: -28,
-            contrast: 8,
-            warmth: -8,
-            feather: 26
-        }, cloneCanvas(subjMatte));
-
-        const flashLayer = buildMaskLayer('subject', {
-            name: 'Strobist Flash',
-            exposure: 16,
-            contrast: 8,
-            highlights: -8,
-            shadows: 14,
-            warmth: 6,
-            feather: 22
-        }, subjMatte);
-
-        state.masks.push(bgLayer, flashLayer);
-        selectedMaskId = flashLayer.id;
-        maskAttr = 'exposure';
-        maskAdjGroup = 'light';
-        maskErase = false;
-        maskPickerOpen = false;
-        maskShow = false;
-        refreshMaskBar();
-        renderEditorCanvas();
-        pushHistory('Add Strobist Lighting', true);
+        pushHistory(`Add ${type} mask`, true);
     }
 
     function selectMask(id) {
         selectedMaskId = id;
+        maskAttr = 'exposure';
         refreshMaskBar();
-        drawMaskOverlay();
-    }
-
-    function toggleMaskVisibility(id) {
-        const m = state.masks.find((x) => x.id === id);
-        if (!m) return;
-        m.visible = m.visible === false;
-        renderEditorCanvas();
-        refreshMaskBar();
-        pushHistory(m.visible ? `Show ${m.name || 'mask'}` : `Hide ${m.name || 'mask'}`, true);
-    }
-
-    function duplicateMask(id) {
-        if (state.masks.length >= MASK_MAX_LAYERS) {
-            document.getElementById('gestureHintText').textContent = `MAKSIMAL ${MASK_MAX_LAYERS} LAYER MASK`;
-            return;
-        }
-        const idx = state.masks.findIndex((x) => x.id === id);
-        if (idx < 0) return;
-        const src = state.masks[idx];
-        const copy = JSON.parse(JSON.stringify(src));
-        copy.id = 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5);
-        copy.name = `${src.name || (MASK_TYPE_META[src.type]?.label || 'Mask')} Copy`;
-        if (maskCanvases.has(src.id)) {
-            maskCanvases.set(copy.id, cloneCanvas(maskCanvases.get(src.id)));
-            maskVer++;
-        }
-        state.masks.splice(idx + 1, 0, copy);
-        selectedMaskId = copy.id;
-        refreshMaskBar();
-        renderEditorCanvas();
-        pushHistory(`Duplicate ${src.name || 'mask'}`, true);
-    }
-
-    function moveMaskLayer(id, delta) {
-        const idx = state.masks.findIndex((x) => x.id === id);
-        const target = idx + delta;
-        if (idx < 0 || target < 0 || target >= state.masks.length) return;
-        const [item] = state.masks.splice(idx, 1);
-        state.masks.splice(target, 0, item);
-        refreshMaskBar();
-        renderEditorCanvas();
-        pushHistory('Reorder mask layer', true);
     }
 
     function deleteMask(id) {
         state.masks = state.masks.filter((m) => m.id !== id);
         maskCanvases.delete(id);
         maskVer++;
-        selectedMaskId = state.masks[state.masks.length - 1]?.id || null;
-        if (!state.masks.length) maskPickerOpen = true;
+        selectedMaskId = state.masks[0]?.id || null;
         refreshMaskBar();
         renderEditorCanvas();
         pushHistory('Delete mask', true);
     }
 
-    function drawMaskLayerThumb(m, thumbCv) {
-        if (!thumbCv) return;
-        const sz = 36;
-        thumbCv.width = sz;
-        thumbCv.height = sz;
-        const tCtx = thumbCv.getContext('2d');
-        const A = maskAlphaSmall(m, sz, sz);
-        const id = tCtx.createImageData(sz, sz);
-        const d = id.data;
-        for (let p = 0, i = 0; p < A.length; p++, i += 4) {
-            const v = A[p];
-            d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
-        }
-        tCtx.putImageData(id, 0, 0);
-    }
-
-    function updateMaskLayerThumbById(id) {
-        const m = state.masks.find((x) => x.id === id);
-        const cv = document.querySelector(`.lr-layer-thumb[data-mask-id="${id}"]`);
-        if (m && cv) drawMaskLayerThumb(m, cv);
-    }
-
-    function formatMaskAttrVal(k, v) {
-        if (k === 'opacity') return `${v}%`;
-        if (k === 'feather' || k === 'size') return `${v}`;
-        return `${v > 0 ? '+' : ''}${v}`;
-    }
-
-    function updateMaskAttrChipText(k, val) {
-        const chip = document.querySelector(`.lr-adj-panel [data-mask-attr="${k}"]`);
-        if (!chip) return;
-        const meta = MASK_ATTRS.find((x) => x[0] === k);
-        if (!meta) return;
-        chip.textContent = `${meta[1]} ${formatMaskAttrVal(k, val)}`;
-        const def = MASK_DEFAULTS[k] ?? 0;
-        chip.classList.toggle('lr-modified', val !== def);
-    }
-
-    function renderLightroomMaskUI(bar) {
-        const studio = document.createElement('div');
-        studio.className = 'lr-mask-studio';
-
-        // 1. Topbar (← Selesai | MASKING badge | Overlay toggle | + Tambah Mask)
-        const topbar = document.createElement('div');
-        topbar.className = 'lr-mask-topbar';
-        topbar.innerHTML = `
-            <div class="lr-mask-topbar-left">
-                <button type="button" class="lr-btn-done" id="lrMaskDoneBtn">← SELESAI</button>
-                <span class="lr-mask-title">MASKING</span>
-                <span class="lr-mask-badge">${state.masks.length}/${MASK_MAX_LAYERS}</span>
-            </div>
-            <div class="lr-mask-topbar-right">
-                <button type="button" class="lr-btn-overlay ${maskShow ? 'active' : ''}" id="lrMaskOverlayBtn" title="Tampilkan / sembunyikan overlay merah">
-                    <span class="lr-ov-dot"></span> OVERLAY
-                </button>
-                <button type="button" class="lr-btn-add" id="lrMaskAddBtn">${maskPickerOpen && state.masks.length ? '✕ TUTUP' : '+ MASK'}</button>
-            </div>
-        `;
-        studio.appendChild(topbar);
-
-        topbar.querySelector('#lrMaskDoneBtn').addEventListener('click', () => {
-            closeMaskUI();
-            document.getElementById('toolContextExtras').classList.add('hidden');
-            selectToolKey('exposure');
-        });
-        topbar.querySelector('#lrMaskOverlayBtn').addEventListener('click', () => {
-            maskShow = !maskShow;
-            drawMaskOverlay();
-            refreshMaskBar();
-        });
-        topbar.querySelector('#lrMaskAddBtn').addEventListener('click', () => {
-            maskPickerOpen = !maskPickerOpen;
-            refreshMaskBar();
-        });
-
-        // 2. Mask Creation Picker (muncul otomatis jika belum ada layer, atau saat klik + MASK)
-        if (!state.masks.length || maskPickerOpen) {
-            const picker = document.createElement('div');
-            picker.className = 'lr-mask-picker';
-            const choices = [
-                {
-                    type: 'subject', title: 'Auto Subject', sub: 'Seleksi objek', featured: true,
-                    icon: `<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3" opacity=".6"/>`
-                },
-                {
-                    type: 'sky', title: 'Auto Sky', sub: 'Seleksi langit', featured: true,
-                    icon: `<path d="M6.5 18h11a4 4 0 0 0 .8-7.9A5.5 5.5 0 0 0 7.7 8.4 3.5 3.5 0 0 0 6.5 18Z"/>`
-                },
-                {
-                    type: 'background', title: 'Background', sub: 'Latar belakang', featured: true,
-                    icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="11" r="3"/><path d="M7.5 19a4.5 4.5 0 0 1 9 0" stroke-dasharray="2 2"/>`
-                },
-                {
-                    type: 'linear', title: 'Linear', sub: 'Gradasi garis',
-                    icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="6" x2="12" y2="18" stroke-dasharray="2 2"/>`
-                },
-                {
-                    type: 'radial', title: 'Radial', sub: 'Gradasi lingkar',
-                    icon: `<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5" stroke-dasharray="2 2"/>`
-                },
-                {
-                    type: 'brush', title: 'Brush', sub: 'Kuas manual',
-                    icon: `<path d="m18 5-3-3-9 9v3h3l9-9Z"/><path d="M5 19h14"/>`
-                },
-                {
-                    type: 'strobist', title: 'Strobist', sub: 'Flash subjek + ambient gelap', featured: true, wide: true,
-                    icon: `<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`
-                }
-            ];
-            choices.forEach((ch) => {
-                const card = document.createElement('button');
-                card.type = 'button';
-                card.className = `lr-pick-card ${ch.featured ? 'ai-featured' : ''} ${ch.wide ? 'wide' : ''}`;
-                card.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ch.icon}</svg>
-                    <span class="lr-pick-title">${ch.title}</span>
-                    <span class="lr-pick-sub">${ch.sub}</span>
-                `;
-                card.addEventListener('click', () => ch.type === 'strobist' ? addStrobistMaskPair() : addMask(ch.type));
-                picker.appendChild(card);
-            });
-            studio.appendChild(picker);
-        }
-
-        // 3. Mask Layers Stack (urutan atas = diterapkan paling akhir, seperti Photoshop/Lightroom)
-        if (state.masks.length) {
-            const layersSec = document.createElement('div');
-            layersSec.className = 'lr-layers-section';
-            layersSec.innerHTML = `
-                <div class="lr-section-head">
-                    <span>MASK LAYERS</span>
-                    <span>KLIK LAYER UNTUK ATUR · 👁 HIDE · ◐ INVERT</span>
-                </div>
-            `;
-            const list = document.createElement('div');
-            list.className = 'lr-layers-list';
-
-            // Tampilkan dari layer teratas ke terbawah
-            for (let idx = state.masks.length - 1; idx >= 0; idx--) {
-                const m = state.masks[idx];
-                const isSel = m.id === selectedMaskId;
-                const isVis = m.visible !== false;
-                const meta = MASK_TYPE_META[m.type] || { label: m.type, badge: m.type.toUpperCase() };
-                const rowEl = document.createElement('div');
-                rowEl.className = `lr-layer-item ${isSel ? 'active' : ''} ${!isVis ? 'is-hidden' : ''}`;
-
-                const thumb = document.createElement('canvas');
-                thumb.className = 'lr-layer-thumb';
-                thumb.setAttribute('data-mask-id', m.id);
-                drawMaskLayerThumb(m, thumb);
-                rowEl.appendChild(thumb);
-
-                const info = document.createElement('div');
-                info.className = 'lr-layer-info';
-                info.innerHTML = `
-                    <span class="lr-layer-name">${m.name || `${meta.label} ${idx + 1}`}</span>
-                    <span class="lr-layer-meta">
-                        <span>${meta.badge}</span>
-                        <span>· ${m.opacity ?? 100}%</span>
-                        ${m.invert ? '<span class="lr-inv-tag">INV</span>' : ''}
-                    </span>
-                `;
-                rowEl.appendChild(info);
-
-                const actions = document.createElement('div');
-                actions.className = 'lr-layer-actions';
-
-                const mkIconBtn = (svg, title, cls, fn, disabled = false) => {
-                    const b = document.createElement('button');
-                    b.type = 'button';
-                    b.className = `lr-icon-btn ${cls || ''}`;
-                    b.title = title;
-                    b.disabled = disabled;
-                    b.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
-                    b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
-                    actions.appendChild(b);
-                };
-
-                // Visibility Eye
-                mkIconBtn(
-                    isVis
-                        ? `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`
-                        : `<path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="M6.6 6.6A17.7 17.7 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><line x1="2" y1="2" x2="22" y2="22"/>`,
-                    isVis ? 'Sembunyikan layer' : 'Tampilkan layer',
-                    isVis ? '' : 'active',
-                    () => toggleMaskVisibility(m.id)
-                );
-
-                // Invert
-                mkIconBtn(
-                    `<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/>`,
-                    'Balikkan mask (Invert)',
-                    m.invert ? 'active' : '',
-                    () => {
-                        m.invert = !m.invert;
-                        maskVer++;
-                        renderEditorCanvas();
-                        drawMaskOverlay();
-                        pushHistory('Invert mask', true);
-                        refreshMaskBar();
-                    }
-                );
-
-                // Move Up / Down (jika > 1 layer)
-                if (state.masks.length > 1) {
-                    mkIconBtn(`<path d="m18 15-6-6-6 6"/>`, 'Naikkan layer', '', () => moveMaskLayer(m.id, 1), idx === state.masks.length - 1);
-                    mkIconBtn(`<path d="m6 9 6 6 6-6"/>`, 'Turunkan layer', '', () => moveMaskLayer(m.id, -1), idx === 0);
-                }
-
-                // Duplicate
-                mkIconBtn(
-                    `<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
-                    'Duplikat layer',
-                    '',
-                    () => duplicateMask(m.id),
-                    state.masks.length >= MASK_MAX_LAYERS
-                );
-
-                // Delete
-                mkIconBtn(
-                    `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>`,
-                    'Hapus layer',
-                    'danger',
-                    () => deleteMask(m.id)
-                );
-
-                rowEl.appendChild(actions);
-                rowEl.addEventListener('click', () => selectMask(m.id));
-                list.appendChild(rowEl);
-            }
-
-            layersSec.appendChild(list);
-            studio.appendChild(layersSec);
-
-            // 4. Local Adjustment Panel untuk layer aktif (CAHAYA | WARNA | MASK & KUAS)
-            const sm = selectedMask();
-            if (sm) {
-                const adjPanel = document.createElement('div');
-                adjPanel.className = 'lr-adj-panel';
-
-                // Tombol cepat Kuas vs Penghapus selalu tampil untuk mask berbasis pixel (Brush / AI Subject / Sky / BG)
-                if (isPixelMaskType(sm.type)) {
-                    const modeBar = document.createElement('div');
-                    modeBar.className = 'mask-mode-bar';
-
-                    const btnPaint = document.createElement('button');
-                    btnPaint.type = 'button';
-                    btnPaint.id = 'btnMaskPaintMode';
-                    btnPaint.className = `mask-mode-btn ${!maskErase ? 'active' : ''}`;
-                    btnPaint.textContent = '🖌 KUAS';
-                    btnPaint.addEventListener('click', () => {
-                        maskErase = false;
-                        drawMaskOverlay();
-                        refreshMaskBar();
-                    });
-
-                    const btnErase = document.createElement('button');
-                    btnErase.type = 'button';
-                    btnErase.id = 'btnMaskEraseMode';
-                    btnErase.className = `mask-mode-btn ${maskErase ? 'erase-active' : ''}`;
-                    btnErase.textContent = '⌫ PENGHAPUS';
-                    btnErase.addEventListener('click', () => {
-                        maskErase = true;
-                        drawMaskOverlay();
-                        refreshMaskBar();
-                    });
-
-                    const btnSize = document.createElement('button');
-                    btnSize.type = 'button';
-                    btnSize.className = `mask-mode-btn ${maskAttr === 'size' ? 'active' : ''}`;
-                    btnSize.textContent = `UKURAN ${sm.size ?? 8}%`;
-                    btnSize.addEventListener('click', () => {
-                        maskAdjGroup = 'mask';
-                        maskAttr = 'size';
-                        syncMasterSliderForMask();
-                        refreshMaskBar();
-                    });
-
-                    modeBar.append(btnPaint, btnErase, btnSize);
-                    adjPanel.appendChild(modeBar);
-                }
-
-                const tabs = document.createElement('div');
-                tabs.className = 'lr-adj-tabs';
-                [
-                    ['light', 'CAHAYA'],
-                    ['color', 'WARNA'],
-                    ['mask', isPixelMaskType(sm.type) ? 'MASK & KUAS' : 'MASK']
-                ].forEach(([gid, glabel]) => {
-                    const t = document.createElement('button');
-                    t.type = 'button';
-                    t.className = `lr-adj-tab ${maskAdjGroup === gid ? 'active' : ''}`;
-                    t.textContent = glabel;
-                    t.addEventListener('click', () => {
-                        maskAdjGroup = gid;
-                        const firstInGroup = MASK_ATTRS.find((a) => a[2] === gid && !(a[0] === 'size' && !isPixelMaskType(sm.type)));
-                        if (firstInGroup) maskAttr = firstInGroup[0];
-                        syncMasterSliderForMask();
-                        refreshMaskBar();
-                    });
-                    tabs.appendChild(t);
-                });
-                adjPanel.appendChild(tabs);
-
-                const attrRow = document.createElement('div');
-                attrRow.className = 'mask-row';
-
-                MASK_ATTRS.filter((a) => a[2] === maskAdjGroup).forEach(([k, label]) => {
-                    if (k === 'size' && !isPixelMaskType(sm.type)) return;
-                    const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
-                    const def = MASK_DEFAULTS[k] ?? 0;
-                    const b = document.createElement('button');
-                    b.type = 'button';
-                    b.className = `dark-chip ${maskAttr === k ? 'active' : ''} ${v !== def ? 'lr-modified' : ''}`;
-                    b.setAttribute('data-mask-attr', k);
-                    b.textContent = `${label} ${formatMaskAttrVal(k, v)}`;
-                    b.addEventListener('click', () => {
-                        maskAttr = k;
-                        syncMasterSliderForMask();
-                        refreshMaskBar();
-                    });
-                    attrRow.appendChild(b);
-                });
-
-                // Kontrol Kuas Refine (Tambah / Kurangi / Isi / Kosongkan) untuk Brush & Auto Subject/Sky/BG
-                if (maskAdjGroup === 'mask' && isPixelMaskType(sm.type)) {
-                    const mkSub = (label, fn, active) => {
-                        const b = document.createElement('button');
-                        b.type = 'button';
-                        b.className = `dark-chip ${active ? 'active' : ''}`;
-                        b.textContent = label;
-                        b.addEventListener('click', fn);
-                        attrRow.appendChild(b);
-                    };
-                    mkSub('+ KUAS', () => { maskErase = false; drawMaskOverlay(); refreshMaskBar(); }, !maskErase);
-                    mkSub('− HAPUS', () => { maskErase = true; drawMaskOverlay(); refreshMaskBar(); }, maskErase);
-                    mkSub('ISI SEMUA', () => {
-                        const mc = maskCanvases.get(sm.id);
-                        if (mc) {
-                            const c = mc.getContext('2d');
-                            c.fillStyle = '#fff';
-                            c.fillRect(0, 0, mc.width, mc.height);
-                            maskVer++;
-                            renderEditorCanvas();
-                            drawMaskOverlay();
-                            refreshMaskBar();
-                            pushHistory('Fill mask', true);
-                        }
-                    }, false);
-                    mkSub('KOSONGKAN', () => {
-                        const mc = maskCanvases.get(sm.id);
-                        if (mc) {
-                            mc.getContext('2d').clearRect(0, 0, mc.width, mc.height);
-                            maskVer++;
-                            renderEditorCanvas();
-                            drawMaskOverlay();
-                            refreshMaskBar();
-                            pushHistory('Clear mask', true);
-                        }
-                    }, false);
-                }
-
-                adjPanel.appendChild(attrRow);
-                studio.appendChild(adjPanel);
-            }
-        }
-
-        bar.appendChild(studio);
-    }
-
     function refreshMaskBar() {
         const b = document.getElementById('toolContextExtras');
-        const layersList = b.querySelector('.lr-layers-list');
-        const listScroll = layersList ? layersList.scrollTop : 0;
+        const sl = b.scrollLeft;
         openToolContextBar('mask', 'Masking');
-        const nextList = b.querySelector('.lr-layers-list');
-        if (nextList) nextList.scrollTop = listScroll;
+        b.scrollLeft = sl;
     }
 
     function syncMasterSliderForMask() {
@@ -4064,22 +3947,21 @@
         if (!m) {
             masterSliderMode = 'context';
             slider.disabled = true;
-            document.getElementById('activeParamCategory').textContent = 'MASKING STUDIO';
-            document.getElementById('activeParamTitle').textContent = 'Pilih atau buat mask';
+            document.getElementById('activeParamCategory').textContent = 'MASKING';
+            document.getElementById('activeParamTitle').textContent = 'Tambah mask';
             document.getElementById('activeParamValue').textContent = '';
             return;
         }
-        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && !isPixelMaskType(m.type)));
+        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && m.type !== 'brush'));
         if (ai < 0) ai = 0;
         maskAttr = MASK_ATTRS[ai][0];
-        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size', isOpacity = maskAttr === 'opacity';
+        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size';
         masterSliderMode = 'mask';
         slider.disabled = false;
-        slider.min = isSize ? 1 : (isFeather || isOpacity) ? 0 : -100;
+        slider.min = isSize ? 1 : isFeather ? 0 : -100;
         slider.max = isSize ? 40 : 100;
         slider.value = m[maskAttr] ?? (MASK_DEFAULTS[maskAttr] ?? 0);
-        const layerLabel = m.name || `Mask ${state.masks.indexOf(m) + 1}`;
-        document.getElementById('activeParamCategory').textContent = `${layerLabel.toUpperCase()} · ${(MASK_TYPE_META[m.type]?.badge || m.type.toUpperCase())}`;
+        document.getElementById('activeParamCategory').textContent = `MASK ${state.masks.indexOf(m) + 1} · ${m.type.toUpperCase()}`;
         document.getElementById('activeParamTitle').textContent = MASK_ATTRS[ai][1];
         document.getElementById('activeParamValue').textContent = slider.value;
     }
@@ -4092,13 +3974,10 @@
 
     function maskHintText() {
         const m = selectedMask();
-        if (!m) return 'PILIH AUTO SUBJECT, AUTO SKY, BACKGROUND, LINEAR, RADIAL, ATAU BRUSH';
-        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK AREA LAIN = BUAT ULANG';
+        if (!m) return 'PILIH BENTUK MASK DI BAWAH, ATAU COBA TEMPLATE CEPAT (LANGIT, SUBJEK, WAJAH, VIGNET)';
+        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK DI AREA LAIN = BUAT ULANG';
         if (m.type === 'radial') return 'GESER LINGKARAN = PINDAH · TITIK KANAN = UBAH UKURAN · FEATHER = KELEMBUTAN TEPI';
-        if (m.type === 'subject' || m.type === 'sky' || m.type === 'background') {
-            return maskErase ? 'MODE HAPUS: SAPU FOTO UNTUK MENGURANGI AREA MASK AI' : 'SELEKSI OTOMATIS AKTIF · SAPU FOTO UNTUK MENAMBAH / RAPIKAN TEPI MASK';
-        }
-        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · OVERLAY UNTUK MELIHAT AREA';
+        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · SHOW MASK UNTUK MELIHAT AREA';
     }
 
     function scheduleMaskOverlay() {
@@ -4146,7 +4025,7 @@
             handle(cx, cy, 8); handle(cx + R, cy, 11);
         } else if (maskHover) {
             c.setLineDash([]);
-            c.strokeStyle = maskErase ? '#f87171' : '#ffffff';
+            c.strokeStyle = '#ffffff';
             c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, (((m.size ?? 8) / 100) * Math.min(W, Hh)) / 2, 0, 6.28); c.stroke();
         }
         c.setLineDash([]);
@@ -4154,10 +4033,8 @@
 
     function openMaskUI() {
         maskUiActive = true;
-        const panelTools = document.getElementById('panelTools');
-        if (panelTools) panelTools.classList.add('masking-mode');
         bindMaskEvents();
-        if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[state.masks.length - 1].id;
+        if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[0].id;
         document.getElementById('maskOverlay').classList.remove('hidden');
         sizeMaskOverlay();
         drawMaskOverlay();
@@ -4169,8 +4046,6 @@
 
     function closeMaskUI() {
         maskUiActive = false;
-        const panelTools = document.getElementById('panelTools');
-        if (panelTools) panelTools.classList.remove('masking-mode');
         const ov = document.getElementById('maskOverlay');
         if (ov) ov.classList.add('hidden');
     }
@@ -4184,8 +4059,7 @@
         c.lineCap = 'round';
         c.lineJoin = 'round';
         c.lineWidth = Math.max(2, ((m.size ?? 8) / 100) * Math.min(mc.width, mc.height));
-        const effectiveErase = m.invert ? !maskErase : maskErase;
-        c.globalCompositeOperation = effectiveErase ? 'destination-out' : 'source-over';
+        c.globalCompositeOperation = maskErase ? 'destination-out' : 'source-over';
         c.strokeStyle = '#ffffff';
         c.beginPath();
         c.moveTo(from.x * mc.width, from.y * mc.height);
@@ -4272,10 +4146,9 @@
                 if (m.y2 - m.y1 < 0.05) { m.y2 = m.y1; m.y1 = Math.max(0, m.y1 - 0.3); }
             }
             if (d.fresh && m.type === 'radial' && m.r < 0.03) m.r = 0.25;
-            updateMaskLayerThumbById(m.id);
             renderEditorCanvas();
             scheduleMaskOverlay();
-            if (d.moved || d.fresh) pushHistory(`Mask ${m.name || m.type}`, true);
+            if (d.moved || d.fresh) pushHistory(`Mask ${m.type}`, true);
         };
         ov.addEventListener('pointerup', end);
         ov.addEventListener('pointercancel', end);
@@ -4388,6 +4261,8 @@
     }
 
     function pushHistory(label, light) {
+        if (label !== 'Open Photo') markEditorDirty();
+        if (!light && label !== 'Open Photo') currentPixelEdited = label !== 'Reset All';
         if (historyIndex < historyStack.length - 1) {
             historyStack = historyStack.slice(0, historyIndex + 1);
         }
@@ -4414,7 +4289,6 @@
         state = JSON.parse(JSON.stringify(snap.stateSnap));
         state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
         if (!state.masks) state.masks = [];
-        if (!state.watermark) state.watermark = 'off';
         if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
 
         basePhotoCanvas.width = snap.w;
@@ -4454,22 +4328,12 @@
     function bindExportModalEvents() {
         const modal = document.getElementById('exportModal');
         const qSlider = document.getElementById('exportQuality');
-        const wmSelect = document.getElementById('exportWatermarkCorner');
 
         document.getElementById('btnOpenExport').addEventListener('click', () => {
             state.selectedTextId = null;
-            if (wmSelect) wmSelect.value = state.watermark || 'off';
             renderEditorCanvas();
             modal.classList.remove('hidden');
         });
-
-        if (wmSelect) {
-            wmSelect.addEventListener('change', () => {
-                state.watermark = wmSelect.value;
-                renderEditorCanvas();
-                pushHistory(`Watermark ${state.watermark.toUpperCase()}`);
-            });
-        }
 
         document.getElementById('btnCloseExportModal').addEventListener('click', () => {
             modal.classList.add('hidden');
@@ -4500,528 +4364,16 @@
             a.click();
 
             saveCurrentPhotoBackToLibrary();
+            flashToast('✓ Diekspor & tersimpan di Library');
             modal.classList.add('hidden');
         });
-
-        bindCameraModalEvents();
-    }
-
-    // ==========================================
-    // DIRECT CAMERA CAPTURE WITH LIVE FILTERS
-    // ==========================================
-    let camStream = null;
-    let camFacingMode = 'environment';
-    let camSelectedPresetId = 'y2k_ccd';
-    let camWatermarkEnabled = false;
-    let camGridEnabled = false;
-    let camDateEnabled = false;
-    let camFlashMode = 'off'; // 'off' | 'fill' | 'hard'
-    let camISO = 400;
-    let camAperture = 2.8;
-    let camShutter = '1/125';
-    let camActiveDial = null; // null | 'iso' | 'aperture' | 'shutter'
-
-    const CAM_ISOS = [100, 200, 400, 800, 1600, 3200];
-    const CAM_APERTURES = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0];
-    const CAM_SHUTTERS = ['1/30', '1/60', '1/125', '1/250', '1/500', '1/1000'];
-
-    function getCameraEvStops() {
-        const isoEv = Math.log2(camISO / 400);
-        const apEv = Math.log2((2.8 * 2.8) / (camAperture * camAperture));
-        const ssDen = parseInt(camShutter.split('/')[1], 10) || 125;
-        const ssEv = Math.log2(125 / ssDen);
-        return Math.max(-4.5, Math.min(4.5, isoEv + apEv + ssEv));
-    }
-
-    function getDigicamDateStamp() {
-        const d = new Date();
-        const p2 = (n) => String(n).padStart(2, '0');
-        return `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
-    }
-
-    function playDigicamShutterSound() {
-        try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (!Ctx) return;
-            const ac = new Ctx();
-            const osc = ac.createOscillator();
-            const gain = ac.createGain();
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(1100, ac.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(180, ac.currentTime + 0.055);
-            gain.gain.setValueAtTime(0.12, ac.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.065);
-            osc.connect(gain);
-            gain.connect(ac.destination);
-            osc.start();
-            osc.stop(ac.currentTime + 0.07);
-            setTimeout(() => ac.close().catch(() => {}), 150);
-        } catch (err) { /* abaikan bila audio diblokir */ }
-    }
-
-    function buildCameraCssFilter(presetId) {
-        let bright = 100, cont = 100, sat = 100, sepia = 0, hue = 0;
-        if (presetId && presetId !== 'original') {
-            const preset = (window.FILM_PRESETS || []).find((p) => p.id === presetId);
-            if (preset && preset.params) {
-                const p = preset.params;
-                bright += Math.round((p.exposure || 0) * 0.45);
-                cont += Math.round((p.contrast || 0) * 0.85);
-                sat = Math.max(0, sat + Math.round((p.saturation || 0) * 0.95));
-                sepia = p.warmth > 0 ? Math.min(35, Math.round(p.warmth * 0.65)) : 0;
-                hue = p.warmth < 0 ? Math.max(-18, Math.round(p.warmth * 0.45)) : 0;
-            }
-        }
-        // Pengaruh Exposure Triangle (ISO + F + Shutter Speed) secara real-time di preview
-        const ev = getCameraEvStops();
-        const evMul = Math.pow(2, ev * 0.28);
-        bright = Math.max(38, Math.min(185, Math.round(bright * evMul)));
-        if (camAperture >= 5.6) cont += 8;
-        if (camFlashMode === 'hard') cont += 10;
-        return `brightness(${bright}%) contrast(${cont}%) saturate(${sat}%) sepia(${sepia}%) hue-rotate(${hue}deg)`;
-    }
-
-    function syncHardwareCameraConstraints() {
-        if (!camStream) return;
-        const track = camStream.getVideoTracks && camStream.getVideoTracks()[0];
-        if (!track || !track.getCapabilities || !track.applyConstraints) return;
-        try {
-            const caps = track.getCapabilities();
-            const adv = {};
-            if (caps.iso) {
-                adv.iso = Math.min(caps.iso.max, Math.max(caps.iso.min, camISO));
-            }
-            if (caps.exposureCompensation) {
-                const ev = getCameraEvStops();
-                adv.exposureCompensation = Math.min(caps.exposureCompensation.max, Math.max(caps.exposureCompensation.min, ev * 0.5));
-            }
-            if (Object.keys(adv).length) {
-                track.applyConstraints({ advanced: [adv] }).catch(() => {});
-            }
-        } catch (err) { /* abaikan bila browser desktop tidak mendukung hardware constraints */ }
-    }
-
-    function updateCameraOpticsPreview() {
-        const video = document.getElementById('cameraVideo');
-        if (video) video.style.filter = buildCameraCssFilter(camSelectedPresetId);
-
-        const dof = document.getElementById('cameraDofOverlay');
-        if (dof) {
-            const blurMap = { 1.4: 5, 2.0: 3, 2.8: 1.4, 4.0: 0, 5.6: 0, 8.0: 0 };
-            const px = blurMap[camAperture] || 0;
-            dof.style.backdropFilter = px > 0 ? `blur(${px}px)` : 'none';
-            dof.style.webkitBackdropFilter = px > 0 ? `blur(${px}px)` : 'none';
-            dof.style.opacity = px > 0 ? '1' : '0';
-        }
-
-        const elIso = document.getElementById('valCamISO');
-        const elAp = document.getElementById('valCamAperture');
-        const elSs = document.getElementById('valCamShutter');
-        const elEv = document.getElementById('valCamEV');
-        if (elIso) elIso.textContent = String(camISO);
-        if (elAp) elAp.textContent = `f/${camAperture}`;
-        if (elSs) elSs.textContent = camShutter;
-        if (elEv) {
-            const ev = getCameraEvStops();
-            const rounded = Math.round(ev * 10) / 10;
-            elEv.textContent = `EV ${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}`;
-        }
-        syncHardwareCameraConstraints();
-    }
-
-    function renderCameraDialOptions() {
-        const box = document.getElementById('cameraDialOptions');
-        const dialBtns = {
-            iso: document.getElementById('btnDialISO'),
-            aperture: document.getElementById('btnDialAperture'),
-            shutter: document.getElementById('btnDialShutter')
-        };
-        Object.entries(dialBtns).forEach(([k, btn]) => {
-            if (btn) btn.classList.toggle('active', camActiveDial === k);
-        });
-        if (!box) return;
-        if (!camActiveDial) {
-            box.classList.add('hidden');
-            box.innerHTML = '';
-            return;
-        }
-        box.classList.remove('hidden');
-        box.innerHTML = '';
-
-        const list = camActiveDial === 'iso' ? CAM_ISOS
-            : camActiveDial === 'aperture' ? CAM_APERTURES
-            : CAM_SHUTTERS;
-
-        list.forEach((val) => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            const isActive = (camActiveDial === 'iso' && camISO === val)
-                || (camActiveDial === 'aperture' && camAperture === val)
-                || (camActiveDial === 'shutter' && camShutter === val);
-            btn.className = `camera-stop-btn ${isActive ? 'active' : ''}`;
-            btn.textContent = camActiveDial === 'aperture' ? `f/${val}` : String(val);
-            btn.addEventListener('click', () => {
-                if (camActiveDial === 'iso') camISO = val;
-                else if (camActiveDial === 'aperture') camAperture = val;
-                else camShutter = val;
-                updateCameraOpticsPreview();
-                renderCameraDialOptions();
-            });
-            box.appendChild(btn);
-        });
-    }
-
-    function applyDigicamFlashToCanvas(canvas, mode) {
-        if (!mode || mode === 'off') return;
-        const w = canvas.width, h = canvas.height;
-        const ctx = canvas.getContext('2d');
-        const img = ctx.getImageData(0, 0, w, h);
-        const d = img.data;
-        const cx = w * 0.5, cy = h * 0.46;
-        const maxR = Math.hypot(w * 0.55, h * 0.55) || 1;
-        const isHard = mode === 'hard';
-        const centerBoost = isHard ? 1.38 : 1.2;
-        const edgeDrop = isHard ? 0.56 : 0.78;
-        const specularPop = isHard ? 14 : 6;
-
-        for (let y = 0; y < h; y++) {
-            const dy = y - cy;
-            const row = y * w;
-            for (let x = 0; x < w; x++) {
-                const dx = x - cx;
-                const dist = Math.min(1, Math.hypot(dx, dy) / maxR);
-                // Inverse-square style digicam on-axis flash falloff cone
-                const falloff = Math.pow(1 - dist, 1.65);
-                const gain = edgeDrop + (centerBoost - edgeDrop) * falloff;
-                const idx = (row + x) * 4;
-                const luma = 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2];
-                const spec = luma > 175 ? specularPop * falloff : 0;
-                // Xenon ~5600K crisp flash tone (sedikit cool neutral + punchy)
-                d[idx] = Math.max(0, Math.min(255, Math.round(d[idx] * gain * 0.99 + spec)));
-                d[idx + 1] = Math.max(0, Math.min(255, Math.round(d[idx + 1] * gain * 1.0 + spec)));
-                d[idx + 2] = Math.max(0, Math.min(255, Math.round(d[idx + 2] * gain * 1.03 + spec)));
-            }
-        }
-        ctx.putImageData(img, 0, 0);
-    }
-
-    function applyDigicamCcdNoise(canvas, iso) {
-        if (iso < 400) return;
-        const w = canvas.width, h = canvas.height;
-        const ctx = canvas.getContext('2d');
-        const img = ctx.getImageData(0, 0, w, h);
-        const d = img.data;
-        const lumaAmp = { 400: 3, 800: 7, 1600: 13, 3200: 21 }[iso] || 4;
-        const chromaAmp = { 400: 1, 800: 4, 1600: 9, 3200: 15 }[iso] || 2;
-        let seed = (iso * 7919 + w * 31) >>> 0;
-        const rnd = () => {
-            seed = (seed * 1664525 + 1013904223) >>> 0;
-            return (seed / 4294967296) - 0.5;
-        };
-        for (let i = 0; i < d.length; i += 4) {
-            const shadowWeight = 1.25 - ((d[i] + d[i + 1] + d[i + 2]) / 765) * 0.65;
-            const nL = rnd() * 2 * lumaAmp * shadowWeight;
-            const nC1 = rnd() * 2 * chromaAmp * shadowWeight;
-            const nC2 = rnd() * 2 * chromaAmp * shadowWeight;
-            d[i] = Math.max(0, Math.min(255, d[i] + nL + nC1));
-            d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + nL - (nC1 + nC2) * 0.35));
-            d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + nL + nC2));
-        }
-        ctx.putImageData(img, 0, 0);
-    }
-
-    function stopCameraStream() {
-        if (camStream) {
-            camStream.getTracks().forEach((t) => t.stop());
-            camStream = null;
-        }
-        const video = document.getElementById('cameraVideo');
-        if (video) video.srcObject = null;
-    }
-
-    async function startCameraStream() {
-        const video = document.getElementById('cameraVideo');
-        const badge = document.getElementById('cameraStatusBadge');
-        stopCameraStream();
-        if (badge) badge.classList.add('hidden');
-        if (video) {
-            video.classList.toggle('mirrored', camFacingMode === 'user');
-        }
-        updateCameraOpticsPreview();
-
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            if (badge) {
-                badge.textContent = 'Kamera browser tidak tersedia. Gunakan tombol NATIVE CAM di bawah.';
-                badge.classList.remove('hidden');
-            }
-            return;
-        }
-
-        try {
-            camStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: camFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-                audio: false
-            });
-            if (video) {
-                video.srcObject = camStream;
-                await video.play().catch(() => {});
-            }
-            syncHardwareCameraConstraints();
-        } catch (err) {
-            if (badge) {
-                badge.textContent = `Akses kamera ditolak / tidak ditemukan (${err.name}). Gunakan NATIVE CAM.`;
-                badge.classList.remove('hidden');
-            }
-        }
-    }
-
-    function renderCameraFilterStrip() {
-        const strip = document.getElementById('cameraFilterStrip');
-        const readout = document.getElementById('cameraActivePresetLabel');
-        if (!strip) return;
-        strip.innerHTML = '';
-
-        const featuredIds = [
-            'original',
-            'y2k_ccd', 'y2k_ixus', 'y2k_cyber', 'y2k_flash', 'x_d4', 'y2k_vga',
-            'x_ac01', 'x_ac02', 'x_ac03', 'x_ac04', 'x_ac05', 'x_ac06', 'x_ac07',
-            'x_ed12'
-        ];
-        const allPresets = window.FILM_PRESETS || [];
-        const options = [{ id: 'original', code: 'ORIGINAL', category: 'base' }];
-        featuredIds.slice(1).forEach((id) => {
-            const found = allPresets.find((p) => p.id === id);
-            if (found) options.push(found);
-        });
-
-        options.forEach((opt) => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = `camera-filter-chip ${opt.category === 'acid' ? 'acid' : ''} ${camSelectedPresetId === opt.id ? 'active' : ''}`;
-            btn.dataset.presetId = opt.id;
-            btn.textContent = opt.code;
-            btn.addEventListener('click', () => {
-                camSelectedPresetId = opt.id;
-                updateCameraOpticsPreview();
-                if (readout) readout.textContent = opt.code;
-                strip.querySelectorAll('.camera-filter-chip').forEach((el) => {
-                    el.classList.toggle('active', el.dataset.presetId === camSelectedPresetId);
-                });
-            });
-            strip.appendChild(btn);
-        });
-
-        const activeOpt = options.find((o) => o.id === camSelectedPresetId) || options[0];
-        if (readout && activeOpt) readout.textContent = activeOpt.code;
-    }
-
-    function openCameraModal() {
-        const modal = document.getElementById('cameraModal');
-        if (!modal) return;
-        const dateEl = document.getElementById('cameraDatePreview');
-        if (dateEl) {
-            dateEl.textContent = getDigicamDateStamp();
-            dateEl.classList.toggle('hidden', !camDateEnabled);
-        }
-        modal.classList.remove('hidden');
-        renderCameraDialOptions();
-        renderCameraFilterStrip();
-        updateCameraOpticsPreview();
-        startCameraStream();
-    }
-
-    function closeCameraModal() {
-        stopCameraStream();
-        const modal = document.getElementById('cameraModal');
-        if (modal) modal.classList.add('hidden');
-    }
-
-    function openCapturedCanvasInEditor(rawCanvas, title) {
-        // 1. Proses fisika sensor & flash digicam langsung pada frame tertangkap
-        applyDigicamFlashToCanvas(rawCanvas, camFlashMode);
-        applyDigicamCcdNoise(rawCanvas, camISO);
-
-        const added = addPhotoToLibrary(rawCanvas, title, false);
-        added.editState.presetId = camSelectedPresetId || 'original';
-        added.editState.watermark = camWatermarkEnabled ? 'br' : 'off';
-
-        // 2. Terapkan hasil Exposure Triangle (ISO + F-Stop + Shutter Speed + Flash) ke parameter non-destruktif
-        const evStops = getCameraEvStops();
-        const adj = added.editState.adjust;
-        adj.exposure = Math.max(-85, Math.min(85, Math.round(evStops * 16)));
-        adj.grain = { 100: 0, 200: 4, 400: 10, 800: 22, 1600: 36, 3200: 52 }[camISO] || 10;
-        adj.edgeBlur = { 1.4: 48, 2.0: 30, 2.8: 14, 4.0: 4, 5.6: 0, 8.0: 0 }[camAperture] || 0;
-        adj.dreamGlow = { 1.4: 16, 2.0: 8, 2.8: 3 }[camAperture] || 0;
-        adj.clarity = (camAperture >= 5.6 ? (camAperture >= 8.0 ? 18 : 12) : 6) + (camFlashMode === 'hard' ? 8 : 0);
-        adj.contrast = (camAperture >= 5.6 ? 6 : 0) + (camFlashMode === 'hard' ? 10 : camFlashMode === 'fill' ? 4 : 0);
-        adj.vignette = Math.max(
-            camAperture <= 2.0 ? (camAperture === 1.4 ? 18 : 10) : 0,
-            camFlashMode === 'hard' ? 24 : camFlashMode === 'fill' ? 10 : 0
-        );
-
-        if (camDateEnabled) {
-            const w = rawCanvas.width, h = rawCanvas.height;
-            const fs = Math.max(16, Math.round(Math.min(w, h) * 0.03));
-            added.editState.texts.push({
-                id: 'digicam_date_' + Date.now(),
-                text: getDigicamDateStamp(),
-                x: camWatermarkEnabled ? Math.round(w * 0.16) : Math.round(w * 0.84),
-                y: Math.round(h * 0.91),
-                font: "'VT323', 'Space Mono', monospace",
-                fontName: 'Digicam Date',
-                size: fs,
-                color: '#ff7b00',
-                opacity: 92,
-                rotate: 0,
-                bold: false,
-                italic: false,
-                shadow: true,
-                outline: false,
-                align: 'center'
-            });
-        }
-        added.isEdited = true;
-        closeCameraModal();
-        openPhotoInEditor(added.id, 'Presets');
-        if (camSelectedPresetId !== 'original') {
-            const found = (window.FILM_PRESETS || []).find((p) => p.id === camSelectedPresetId);
-            if (found && found.category) activePresetCat = found.category;
-            switchEditorMainTab('Presets');
-        }
-        pushHistory(`Shot ISO ${camISO} f/${camAperture} ${camShutter}`);
-    }
-
-    function bindCameraModalEvents() {
-        const btnClose = document.getElementById('btnCloseCamera');
-        const btnFlash = document.getElementById('btnCameraFlash');
-        const btnDate = document.getElementById('btnCameraDate');
-        const btnFlip = document.getElementById('btnCameraFlip');
-        const btnGrid = document.getElementById('btnCameraGrid');
-        const btnWm = document.getElementById('btnCameraWatermark');
-        const btnShutter = document.getElementById('btnCameraShutter');
-        const btnNative = document.getElementById('btnCameraUploadFallback');
-        const fallbackInput = document.getElementById('cameraFallbackInput');
-
-        if (!btnClose) return;
-
-        btnClose.addEventListener('click', closeCameraModal);
-
-        const toggleDial = (dialName) => {
-            camActiveDial = camActiveDial === dialName ? null : dialName;
-            renderCameraDialOptions();
-        };
-        document.getElementById('btnDialISO')?.addEventListener('click', () => toggleDial('iso'));
-        document.getElementById('btnDialAperture')?.addEventListener('click', () => toggleDial('aperture'));
-        document.getElementById('btnDialShutter')?.addEventListener('click', () => toggleDial('shutter'));
-
-        if (btnFlash) {
-            const flashOrder = ['off', 'fill', 'hard'];
-            const flashLabels = { off: '⚡ OFF', fill: '⚡ FILL', hard: '⚡ HARD' };
-            btnFlash.addEventListener('click', () => {
-                const idx = flashOrder.indexOf(camFlashMode);
-                camFlashMode = flashOrder[(idx + 1) % flashOrder.length];
-                btnFlash.textContent = flashLabels[camFlashMode];
-                btnFlash.classList.toggle('active', camFlashMode !== 'off');
-                updateCameraOpticsPreview();
-            });
-        }
-
-        if (btnDate) {
-            btnDate.addEventListener('click', () => {
-                camDateEnabled = !camDateEnabled;
-                btnDate.classList.toggle('active', camDateEnabled);
-                const dateEl = document.getElementById('cameraDatePreview');
-                if (dateEl) dateEl.classList.toggle('hidden', !camDateEnabled);
-            });
-        }
-
-        if (btnFlip) {
-            btnFlip.addEventListener('click', () => {
-                camFacingMode = camFacingMode === 'environment' ? 'user' : 'environment';
-                startCameraStream();
-            });
-        }
-
-        if (btnGrid) {
-            btnGrid.addEventListener('click', () => {
-                camGridEnabled = !camGridEnabled;
-                btnGrid.classList.toggle('active', camGridEnabled);
-                const grid = document.getElementById('cameraGridOverlay');
-                if (grid) grid.classList.toggle('hidden', !camGridEnabled);
-            });
-        }
-
-        if (btnWm) {
-            btnWm.addEventListener('click', () => {
-                camWatermarkEnabled = !camWatermarkEnabled;
-                btnWm.classList.toggle('active', camWatermarkEnabled);
-                btnWm.textContent = camWatermarkEnabled ? 'WM: ON' : 'WM: OFF';
-                const wmPreview = document.getElementById('cameraWmPreview');
-                if (wmPreview) wmPreview.classList.toggle('hidden', !camWatermarkEnabled);
-            });
-        }
-
-        if (btnShutter) {
-            btnShutter.addEventListener('click', () => {
-                const video = document.getElementById('cameraVideo');
-                if (!video || !video.videoWidth || !video.videoHeight) {
-                    if (fallbackInput) { fallbackInput.value = ''; fallbackInput.click(); }
-                    return;
-                }
-                const maxDim = 2400;
-                const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-                const cw = Math.max(1, Math.round(video.videoWidth * scale));
-                const ch = Math.max(1, Math.round(video.videoHeight * scale));
-                const cap = document.getElementById('cameraCaptureCanvas');
-                cap.width = cw;
-                cap.height = ch;
-                const cctx = cap.getContext('2d');
-                cctx.save();
-                if (camFacingMode === 'user') {
-                    cctx.translate(cw, 0);
-                    cctx.scale(-1, 1);
-                }
-                cctx.drawImage(video, 0, 0, cw, ch);
-                cctx.restore();
-                playDigicamShutterSound();
-                const flashEl = document.getElementById('cameraFlashOverlay');
-                if (flashEl) {
-                    flashEl.classList.remove('hidden');
-                    setTimeout(() => {
-                        flashEl.classList.add('hidden');
-                        openCapturedCanvasInEditor(cloneCanvas(cap), `DIGICAM_${Date.now().toString().slice(-4)}`);
-                    }, 110);
-                } else {
-                    openCapturedCanvasInEditor(cloneCanvas(cap), `DIGICAM_${Date.now().toString().slice(-4)}`);
-                }
-            });
-        }
-
-        if (btnNative && fallbackInput) {
-            btnNative.addEventListener('click', () => {
-                fallbackInput.value = '';
-                fallbackInput.click();
-            });
-            fallbackInput.addEventListener('change', (e) => {
-                const file = e.target.files && e.target.files[0];
-                if (!file) return;
-                const url = URL.createObjectURL(file);
-                const img = new Image();
-                img.onload = () => {
-                    const maxDim = 2400;
-                    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-                    const c = createBlankCanvas(Math.round(img.naturalWidth * scale), Math.round(img.naturalHeight * scale));
-                    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-                    URL.revokeObjectURL(url);
-                    openCapturedCanvasInEditor(c, file.name.replace(/\.[^.]+$/, ''));
-                };
-                img.src = url;
-            });
-        }
     }
 
     // Jembatan untuk fitur Templates
-    window.svnLens = { photos: () => libraryPhotos, showView: switchStudioView };
+    window.svnLens = {
+        photos: () => libraryPhotos, showView: switchStudioView, hydrate: hydratePhoto, open: openPhotoInEditor, toast: flashToast,
+        addToLibrary: (cv, title) => { const it = addPhotoToLibrary(cv, title, false); renderLibraryGrid(); return it; }
+    };
 
     window.addEventListener('DOMContentLoaded', init);
 })();
@@ -5174,7 +4526,7 @@ function sheet() {
   } else if (mode === 'add') {
     h = `<div class="tpl-row">${chip('add', 'p', 'Foto')}${chip('add', 't', 'Teks')}${chip('add', 'r', 'Kotak')}${chip('add', 'o', 'Lingkaran')}</div><div class="tpl-row">${chip('fill', '', 'Isi slot kosong dengan foto')}</div>`;
   } else if (mode === 'export') {
-    h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
+    h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${chip('x3', '', 'Simpan ke Library')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
   } else if (mode === 'src') {
     const ps = window.svnLens.photos();
     h = `<div class="tpl-lab"><span>Dari Library</span></div><div class="tpl-row">${ps.map(q => `<button class="tpl-lib" data-a="lib" data-v="${q.id}" aria-label="${esc(q.title || 'Foto')}"><img src="${q.editedThumbUrl || q.thumbUrl}" alt=""></button>`).join('') || '<span class="tpl-note">Library masih kosong.</span>'}</div><div class="tpl-row">${chip('dev', '', 'Dari galeri perangkat')}${chip('shut', '', 'Tutup')}</div>`;
@@ -5232,6 +4584,7 @@ function act(a, v) {
     case 'fill': pick(null); return; case 'replace': pick(sel); return;
     case 'font': case 'col': case 'tg': { const l = lay(sel); if (a === 'font') l.f = v; else if (a === 'col') l.c = v; else l[v] = !l[v]; up(el(l.id), l); commit(); break; }
     case 'lib': useLib(v); return; case 'dev': devPick(); return; case 'shut': mode = null; break;
+    case 'x3': saveToLib(); return;
     case 'x1': exportAll(false); return; case 'x2': exportAll(true); return;
   }
   sheet();
@@ -5281,6 +4634,7 @@ async function useLib(pid) {
   const slots = st.L.filter(l => l.t === 'p' && (!l.src || l.id === pend)).sort((a, b) => (b.id === pend) - (a.id === pend));
   if (!slots.length) return toast('Tidak ada slot kosong. Tambah foto lewat tombol +');
   const q = window.svnLens.photos().find(x => x.id === pid); if (!q) return;
+  try { await window.svnLens.hydrate(q); } catch (e) { return toast('Foto gagal dimuat'); }
   try { slots[0].src = await libKey(q); pend = null; if (!st.L.some(l => l.t === 'p' && !l.src)) mode = null; draw(); commit(); sheet(); }
   catch (e) { toast('Foto gagal dimuat'); }
 }
@@ -5322,6 +4676,12 @@ async function paint() {
     x.restore();
   }
   return c;
+}
+async function saveToLib() {
+  toast('Menyimpan ke Library…');
+  const c = await paint(), n = st.sl.length, h = H();
+  for (let i = 0; i < n; i++) { const d = document.createElement('canvas'); d.width = W; d.height = h; d.getContext('2d').drawImage(c, i * W, 0, W, h, 0, 0, W, h); window.svnLens.addToLibrary(d, `Template ${i + 1}/${n}`); }
+  toast(`✓ ${n} gambar tersimpan di Library`);
 }
 async function exportAll(pano) {
   toast('Menyiapkan gambar…'); const c = await paint(), n = st.sl.length, h = H(), blob = cv => new Promise(r => cv.toBlob(r, 'image/jpeg', .95)), out = [];
