@@ -11,7 +11,7 @@
     let libFilterMode = 'all'; // 'all' | 'edited'
 
     let myCubeLuts = window.createDefaultSampleLUTs();
-    let favoritePresetIds = new Set(['p400', 'fuji_chrome', 'cinestill800t']);
+    let favoritePresetIds = new Set(['ed_grad_moody', 'p400', 'fuji_chrome', 'cinestill800t']);
     const WHEEL_KEYS = ['sh', 'mid', 'hi'];
     let customFontsList = [...window.EDITORIAL_FONTS];
 
@@ -48,6 +48,97 @@
         };
     }
 
+    function createDefaultBlurCenters() {
+        return {
+            zoom: { x: 0.5, y: 0.5 },
+            spin: { x: 0.5, y: 0.5 },
+            edge: { x: 0.5, y: 0.5, r: 0.28, f: 0.38 },
+            bokeh: { x: 0.5, y: 0.48, r: 0.26, f: 0.30 },
+            tiltY: 0.5,
+            tiltBand: 0.20
+        };
+    }
+
+    const HSL_CHANNELS = [
+        { key: 'red', label: 'Merah', short: 'RED', color: '#ef4444', hue: 0 },
+        { key: 'orange', label: 'Oranye', short: 'ORG', color: '#f97316', hue: 30 },
+        { key: 'yellow', label: 'Kuning', short: 'YLW', color: '#eab308', hue: 60 },
+        { key: 'green', label: 'Hijau', short: 'GRN', color: '#22c55e', hue: 120 },
+        { key: 'aqua', label: 'Aqua', short: 'AQA', color: '#06b6d4', hue: 180 },
+        { key: 'blue', label: 'Biru', short: 'BLU', color: '#3b82f6', hue: 235 },
+        { key: 'purple', label: 'Ungu', short: 'PRP', color: '#a855f7', hue: 280 },
+        { key: 'magenta', label: 'Magenta', short: 'MAG', color: '#ec4899', hue: 325 }
+    ];
+
+    function createDefaultHSL() {
+        const obj = {};
+        HSL_CHANNELS.forEach((c) => { obj[c.key] = { h: 0, s: 0, l: 0 }; });
+        return obj;
+    }
+
+    function hslChannelActive(ch) {
+        return !!(ch && (ch.h || ch.s || ch.l));
+    }
+
+    function hslActive(st) {
+        return !!(st && st.hsl && HSL_CHANNELS.some((c) => hslChannelActive(st.hsl[c.key])));
+    }
+
+    function createDefaultLensBlur() {
+        return { amount: 0, bokeh: 35, feather: 18, invert: false, protect: 0, focusPt: null };
+    }
+
+    function lensBlurActive(st) {
+        return !!(st && st.lensBlur && (st.lensBlur.amount || 0) > 0);
+    }
+
+    function createDefaultGlitchState() {
+        return {
+            mode: 'none',
+            intensity: 55,
+            shift: 45,
+            slices: 40,
+            noise: 25,
+            angle: 0,
+            seed: 42
+        };
+    }
+
+    function isGlitchActive(st) {
+        return !!(st && st.glitch && st.glitch.mode && st.glitch.mode !== 'none' && (st.glitch.intensity || 0) > 0);
+    }
+
+    function isCanvasMaskType(type) {
+        return type === 'brush' || type === 'ai_subject' || type === 'ai_background' || type === 'ai_sky';
+    }
+
+    function ensureStateDefaults(st) {
+        const def = createDefaultEditState();
+        st.adjust = { ...def.adjust, ...(st.adjust || {}) };
+        if (!st.curves) st.curves = createIdentityCurves();
+        if (!st.masks) st.masks = [];
+        if (!st.wheels) { st.wheels = defaultWheels(); st.wheelsAmt = 100; }
+        const hslDef = createDefaultHSL();
+        const hslIn = st.hsl || {};
+        st.hsl = {};
+        HSL_CHANNELS.forEach((c) => {
+            st.hsl[c.key] = { ...hslDef[c.key], ...(hslIn[c.key] || {}) };
+        });
+        st.lensBlur = { ...createDefaultLensBlur(), ...(st.lensBlur || {}) };
+        const bcDef = createDefaultBlurCenters();
+        const bc = st.blurCenters || {};
+        st.blurCenters = {
+            zoom: { ...bcDef.zoom, ...(bc.zoom || {}) },
+            spin: { ...bcDef.spin, ...(bc.spin || {}) },
+            edge: { ...bcDef.edge, ...(bc.edge || {}) },
+            bokeh: { ...bcDef.bokeh, ...(bc.bokeh || {}) },
+            tiltY: bc.tiltY ?? bcDef.tiltY,
+            tiltBand: bc.tiltBand ?? bcDef.tiltBand
+        };
+        st.glitch = { ...createDefaultGlitchState(), ...(st.glitch || {}) };
+        if (!st.texts) st.texts = [];
+    }
+
     function createDefaultEditState() {
         return {
             presetId: 'original',
@@ -67,6 +158,10 @@
                 hue: 0,
                 sepia: 0,
                 sharpness: 0,
+                clarity: 0,
+                texture: 0,
+                dehaze: 0,
+                denoise: 0,
                 grain: 0,
                 blur: 0,
                 vignette: 0,
@@ -77,6 +172,7 @@
                 spinBlur: 0,
                 tiltShift: 0,
                 edgeBlur: 0,
+                bokeh: 0,
                 dreamGlow: 0,
                 whites: 0,
                 blacks: 0,
@@ -84,6 +180,10 @@
                 strobeAngle: 0,
                 strobeColor: 0
             },
+            hsl: createDefaultHSL(),
+            lensBlur: createDefaultLensBlur(),
+            blurCenters: createDefaultBlurCenters(),
+            glitch: createDefaultGlitchState(),
             curves: createIdentityCurves(),
             flipH: false,
             flipV: false,
@@ -112,13 +212,22 @@
     let activeEffectCat = 'leaks';
     let activeCurveChannel = 'rgb'; // 'rgb' | 'r' | 'g' | 'b'
 
-    // Slider binding mode: 'preset' | 'tool' | 'effect'
+    // Slider binding mode: 'preset' | 'tool' | 'effect' | 'mask' | 'wheels' | 'glitch' | 'focal' | 'context'
     let masterSliderMode = 'preset';
 
     // Gestures & Interactive Modes
     let isHoldingCompare = false;
     let isDraggingText = false;
     let dragTextOffset = { x: 0, y: 0 };
+
+    // Viewport Zoom & Pan (for Detailed Masking / Brush)
+    let viewZoom = 1;
+    let viewPanX = 0;
+    let viewPanY = 0;
+    let viewPanMode = false;
+    let spacePanDown = false;
+    let viewZoomEnabled = false;
+    let viewZoomBound = false;
 
     // Crop State
     let isCropping = false;
@@ -159,19 +268,25 @@
         { key: 'tint', name: 'Tint', cat: 'color', min: -100, max: 100, def: 0, icon: `<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>` },
         { key: 'saturation', name: 'Saturation', cat: 'color', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>` },
         { key: 'vibrance', name: 'Vibrance', cat: 'color', min: -100, max: 100, def: 0, icon: `<polygon points="12 2 19 21 12 17 5 21 12 2"/>` },
+        { key: 'context_hsl', name: 'Color Mixer', cat: 'color', isContext: 'hsl', icon: `<circle cx="8.5" cy="8.5" r="3"/><circle cx="15.5" cy="8.5" r="3"/><circle cx="8.5" cy="15.5" r="3"/><circle cx="15.5" cy="15.5" r="3"/>` },
         { key: 'hue', name: 'Hue Shift', cat: 'color', min: -180, max: 180, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 6"/>` },
         { key: 'sepia', name: 'Sepia', cat: 'color', min: 0, max: 100, def: 0, icon: `<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="12" cy="12" r="4"/>` },
 
         // DETAIL
         { key: 'sharpness', name: 'Sharpness', cat: 'detail', min: 0, max: 100, def: 0, icon: `<polygon points="12 3 20 20 4 20"/>` },
+        { key: 'clarity', name: 'Clarity', cat: 'detail', min: -100, max: 100, def: 0, icon: `<polygon points="12 2 20 12 12 22 4 12"/><circle cx="12" cy="12" r="2.5"/>` },
+        { key: 'texture', name: 'Texture', cat: 'detail', min: -100, max: 100, def: 0, icon: `<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>` },
+        { key: 'dehaze', name: 'Dehaze', cat: 'detail', min: -50, max: 100, def: 0, icon: `<path d="M4 9h16M2 13h20M6 17h12"/><path d="M12 3v3"/>` },
+        { key: 'denoise', name: 'Denoise', cat: 'detail', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="8"/><path d="M8 12c1.2-2 2.8-2 4 0s2.8 2 4 0"/>` },
         { key: 'grain', name: 'Film Grain', cat: 'detail', min: 0, max: 100, def: 0, icon: `<circle cx="7" cy="7" r="1.5"/><circle cx="16" cy="8" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="8" cy="17" r="1.5"/><circle cx="17" cy="16" r="1.5"/>` },
         { key: 'blur', name: 'Soft Blur', cat: 'detail', min: 0, max: 25, def: 0, icon: `<circle cx="12" cy="12" r="8" stroke-dasharray="3 2"/>` },
 
         // OPTICS
         { key: 'vignette', name: 'Vignette', cat: 'optics', min: 0, max: 100, def: 0, icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><ellipse cx="12" cy="12" rx="6" ry="6"/>` },
+        { key: 'context_lensblur', name: 'Lens Blur', cat: 'optics', isContext: 'lensblur', icon: `<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M12 3l2.5 5.5M20 9l-5.5 1.5M18 19l-4.5-4M6 19l3.5-5M4 9l5.5 1.5"/>` },
         { key: 'action_halation', name: 'Halation', cat: 'optics', isAction: true, icon: `<circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/>` },
-        { key: 'action_bokeh', name: 'Bokeh Blur', cat: 'optics', isAction: true, icon: `<circle cx="12" cy="10" r="3"/><path d="M7 20c0-2.8 2.2-5 5-5s5 2.2 5 5"/><rect x="3" y="3" width="18" height="18" rx="2"/>` },
-        { key: 'action_glitch', name: 'RGB Glitch', cat: 'optics', isAction: true, icon: `<path d="M4 8h16M4 16h16"/><rect x="5" y="5" width="14" height="14"/>` },
+        { key: 'bokeh', name: 'Bokeh Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="10" r="3"/><path d="M7 20c0-2.8 2.2-5 5-5s5 2.2 5 5"/><rect x="3" y="3" width="18" height="18" rx="2"/>` },
+        { key: 'context_glitch', name: 'Glitch', cat: 'optics', isContext: 'glitch', icon: `<path d="M3 8h14M7 12h14M3 16h14"/><rect x="5" y="4" width="14" height="16" stroke-dasharray="2 2"/>` },
 
         { key: 'motionBlur', name: 'Motion Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 8h9M3 12h18M3 16h11"/><circle cx="18" cy="8" r="2"/>` },
         { key: 'motionAngle', name: 'Motion Angle', cat: 'optics', min: -90, max: 90, def: 0, icon: `<path d="M4 18 20 6"/><path d="M13 6h7v7"/>` },
@@ -184,10 +299,10 @@
         { key: 'strobe', name: 'Strobe', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>` },
         { key: 'strobeAngle', name: 'Strobe Angle', cat: 'optics', min: -180, max: 180, def: 0, icon: `<path d="M5 19 19 5"/><path d="M12 5h7v7"/><circle cx="6" cy="18" r="1.5"/>` },
         { key: 'strobeColor', name: 'Strobe Color', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="9" cy="10" r="5"/><circle cx="15" cy="10" r="5"/><circle cx="12" cy="15" r="5"/>` },
+        { key: 'edgeBlur', name: 'Radial Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4" stroke-dasharray="2 2"/>` },
         { key: 'zoomBlur', name: 'Zoom Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="2"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>` },
         { key: 'spinBlur', name: 'Spin Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>` },
         { key: 'tiltShift', name: 'Tilt Shift', cat: 'optics', min: 0, max: 100, def: 0, icon: `<path d="M3 6h18M3 18h18"/><rect x="3" y="10" width="18" height="4" rx="1"/>` },
-        { key: 'edgeBlur', name: 'Edge Blur', cat: 'optics', min: 0, max: 100, def: 0, icon: `<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4" stroke-dasharray="2 2"/>` },
         { key: 'dreamGlow', name: 'Dream Glow', cat: 'optics', min: 0, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5"/>` },
 
         // GEO & CROP
@@ -372,7 +487,7 @@
     let lookClipboard = null, myLooks = [], toastTimer = 0, libSelectMode = false;
     const LOOK_OPT = { masks: false, texts: false };
     const libSelected = new Set();
-    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt'];
+    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'hsl', 'lensBlur', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt', 'blurCenters', 'glitch'];
 
     function flashToast(msg, ms = 1900) {
         let t = document.getElementById('saveToast');
@@ -410,7 +525,7 @@
         LOOK_KEYS.forEach((k) => { look[k] = state[k] === undefined ? null : JSON.parse(JSON.stringify(state[k])); });
         look.adjust = JSON.parse(JSON.stringify(state.adjust));
         delete look.adjust.straighten; // geometri tidak ikut disalin
-        if (opts.masks) look.masks = state.masks.filter((m) => m.type !== 'brush').map((m) => JSON.parse(JSON.stringify(m)));
+        if (opts.masks) look.masks = state.masks.filter((m) => !isCanvasMaskType(m.type)).map((m) => JSON.parse(JSON.stringify(m)));
         if (opts.texts) look.texts = JSON.parse(JSON.stringify(state.texts));
         return look;
     }
@@ -421,12 +536,12 @@
         if (state.activeCubeLutId && !myCubeLuts.find((l) => l.id === state.activeCubeLutId)) state.activeCubeLutId = null;
         state.adjust = { ...d.adjust, ...look.adjust, straighten: (state.adjust && state.adjust.straighten) || 0 };
         if (look.masks) {
-            const keep = state.masks.filter((m) => m.type === 'brush');
+            const keep = state.masks.filter((m) => isCanvasMaskType(m.type));
             state.masks = keep.concat(look.masks.map((m) => ({ ...JSON.parse(JSON.stringify(m)), id: 'mk_' + Math.random().toString(36).slice(2, 8) })));
             maskVer++;
         }
         if (look.texts) state.texts = look.texts.map((t) => ({ ...JSON.parse(JSON.stringify(t)), id: 'txt_' + Math.random().toString(36).slice(2, 8) }));
-        if (!state.curves) state.curves = createIdentityCurves();
+        ensureStateDefaults(state);
     }
 
     function applyLookInEditor(look, label = 'Paste edit') {
@@ -1108,16 +1223,17 @@
         currentPixelEdited = !!photo.pixelEdited;
         editorDirty = false;
         thumbCache.clear();
+        invalidateLensBlurCache();
+        lensBlurPreviewFocus = false;
         closeMaskUI();
+        closeFocalUI();
+        resetCanvasZoom();
         selectedMaskId = null;
         maskCanvases.clear();
         maskVer++;
         if (photo.maskCanvases) photo.maskCanvases.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
         state = JSON.parse(JSON.stringify(photo.editState));
-        state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
-        if (!state.masks) state.masks = [];
-        if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
-        if (!state.curves) state.curves = createIdentityCurves();
+        ensureStateDefaults(state);
 
         const w = photo.workingBaseCanvas.width;
         const h = photo.workingBaseCanvas.height;
@@ -1159,9 +1275,11 @@
         photo.workingBaseCanvas = cloneCanvas(basePhotoCanvas);
         photo.workingBrushCanvas = cloneCanvas(brushCanvas);
 
-        // Render thumbnail tanpa border seleksi teks
+        // Render thumbnail tanpa border seleksi teks & tanpa overlay peta fokus
         const prevSel = state.selectedTextId;
+        const prevLbPreview = lensBlurPreviewFocus;
         state.selectedTextId = null;
+        lensBlurPreviewFocus = false;
         renderEditorCanvasSync('good');
         photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
         // Salinan hasil edit (maks 2160px) agar bisa dipakai di Templates
@@ -1172,6 +1290,7 @@
         photo.maskCanvases = snapshotMasks();
         photo.pixelEdited = currentPixelEdited;
         state.selectedTextId = prevSel;
+        lensBlurPreviewFocus = prevLbPreview;
 
         // Tandai edited jika ada perubahan dari default
         const isDefault =
@@ -1181,6 +1300,9 @@
             (!state.frameId || state.frameId === 'none_frame') &&
             (!state.masks || !state.masks.length) &&
             !wheelsActive(state) &&
+            !hslActive(state) &&
+            !lensBlurActive(state) &&
+            !isGlitchActive(state) &&
             (!state.dustId || state.dustId === 'none_dust') &&
             !state.flipH && !state.flipV && !currentPixelEdited &&
             state.texts.length === 0 &&
@@ -1238,8 +1360,9 @@
             return;
         }
 
-        // 1-4. Transform, blur, color grading & vignette (mode cepat = resolusi preview ±1000px)
-        const q = fast === 'good' ? Math.min(1, 2048 / Math.max(w, h)) : fast ? Math.min(1, 1000 / Math.max(w, h)) : 1;
+        // 1-4. Transform, blur, color grading & vignette (mode cepat = resolusi preview ±1000px, naik otomatis saat di-zoom)
+        const fastDim = viewZoom > 1.25 ? Math.min(1800, Math.round(1000 * Math.min(1.8, viewZoom))) : 1000;
+        const q = fast === 'good' ? Math.min(1, 2048 / Math.max(w, h)) : fast ? Math.min(1, fastDim / Math.max(w, h)) : 1;
         const gw = Math.max(1, Math.round(w * q));
         const gh = Math.max(1, Math.round(h * q));
         let gc = gradedCanvas, gx = gradedCtx;
@@ -1288,8 +1411,9 @@
             gx.restore();
         }
 
-        // Blur tambahan: zoom, spin, tilt-shift, edge/focus blur
-        const bj = state.adjust, mxb = Math.max(gw, gh);
+        // Blur tambahan dengan titik pusat/fokus yang bisa digeser: zoom, spin, tilt-shift, radial/edge blur, bokeh
+        const bj = state.adjust, mxb = Math.max(gw, gh), mnb = Math.min(gw, gh);
+        const bc = state.blurCenters || createDefaultBlurCenters();
         const sizeTmp = () => { if (tmpCanvas.width !== gw || tmpCanvas.height !== gh) { tmpCanvas.width = gw; tmpCanvas.height = gh; } };
         const sampled = (n, draw) => { // rata-rata n salinan yang ditransformasi (alpha 1/(i+2))
             sizeTmp();
@@ -1300,10 +1424,35 @@
             gx.restore();
         };
         if (bj.zoomBlur > 0) {
-            sampled(fast ? 8 : 12, (t) => { const s = 1 + t * (bj.zoomBlur / 100) * 0.16; gx.save(); gx.translate(gw / 2, gh / 2); gx.scale(s, s); gx.drawImage(tmpCanvas, -gw / 2, -gh / 2); gx.restore(); });
+            const zc = bc.zoom || { x: 0.5, y: 0.5 };
+            const cx = zc.x * gw, cy = zc.y * gh;
+            const nSteps = fast ? 10 : 16;
+            const maxZoom = (bj.zoomBlur / 100) * 0.24;
+            sizeTmp();
+            tmpCtx.clearRect(0, 0, gw, gh);
+            tmpCtx.drawImage(gx.canvas, 0, 0);
+            gx.save();
+            for (let i = 1; i <= nSteps; i++) {
+                const s = 1 + (i / nSteps) * maxZoom;
+                gx.globalAlpha = 1 / (i + 1.6);
+                gx.save();
+                gx.translate(cx, cy);
+                gx.scale(s, s);
+                gx.drawImage(tmpCanvas, -cx, -cy);
+                gx.restore();
+            }
+            gx.restore();
         }
         if (bj.spinBlur > 0) {
-            sampled(fast ? 8 : 12, (t) => { gx.save(); gx.translate(gw / 2, gh / 2); gx.rotate(t * (bj.spinBlur / 100) * 0.14); gx.drawImage(tmpCanvas, -gw / 2, -gh / 2); gx.restore(); });
+            const sc = bc.spin || { x: 0.5, y: 0.5 };
+            const cx = sc.x * gw, cy = sc.y * gh;
+            sampled(fast ? 10 : 16, (t) => {
+                gx.save();
+                gx.translate(cx, cy);
+                gx.rotate(t * (bj.spinBlur / 100) * 0.18);
+                gx.drawImage(tmpCanvas, -cx, -cy);
+                gx.restore();
+            });
         }
         const maskBlur = (radius, makeGrad) => {
             sizeTmp();
@@ -1318,16 +1467,42 @@
             gx.drawImage(tmpCanvas, 0, 0);
         };
         if (bj.tiltShift > 0) {
-            maskBlur((bj.tiltShift / 100) * 0.012 * mxb + 1, (t) => {
+            const ty = Math.max(0.05, Math.min(0.95, bc.tiltY ?? 0.5));
+            const halfBand = Math.max(0.05, Math.min(0.42, bc.tiltBand ?? 0.20));
+            const feather = 0.22;
+            const p0 = Math.max(0, ty - halfBand - feather);
+            const p1 = Math.max(p0, ty - halfBand);
+            const p2 = Math.min(1, ty + halfBand);
+            const p3 = Math.min(1, ty + halfBand + feather);
+            maskBlur((bj.tiltShift / 100) * 0.015 * mxb + 1, (t) => {
                 const g = t.createLinearGradient(0, 0, 0, gh);
-                g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.3, 'rgba(0,0,0,0)');
-                g.addColorStop(0.7, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+                g.addColorStop(0, 'rgba(0,0,0,1)');
+                if (p0 > 0) g.addColorStop(p0, 'rgba(0,0,0,1)');
+                g.addColorStop(p1, 'rgba(0,0,0,0)');
+                g.addColorStop(p2, 'rgba(0,0,0,0)');
+                if (p3 < 1) g.addColorStop(p3, 'rgba(0,0,0,1)');
+                g.addColorStop(1, 'rgba(0,0,0,1)');
                 return g;
             });
         }
         if (bj.edgeBlur > 0) {
-            maskBlur((bj.edgeBlur / 100) * 0.014 * mxb + 1, (t) => {
-                const g = t.createRadialGradient(gw / 2, gh / 2, Math.min(gw, gh) * 0.22, gw / 2, gh / 2, mxb * 0.62);
+            const ec = bc.edge || { x: 0.5, y: 0.5, r: 0.28, f: 0.38 };
+            const cx = ec.x * gw, cy = ec.y * gh;
+            const innerR = Math.max(4, (ec.r ?? 0.28) * mnb);
+            const outerR = innerR + Math.max(12, (ec.f ?? 0.38) * mxb);
+            maskBlur((bj.edgeBlur / 100) * 0.018 * mxb + 1, (t) => {
+                const g = t.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
+                g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+                return g;
+            });
+        }
+        if (bj.bokeh > 0) {
+            const kc = bc.bokeh || { x: 0.5, y: 0.48, r: 0.26, f: 0.30 };
+            const cx = kc.x * gw, cy = kc.y * gh;
+            const innerR = Math.max(4, (kc.r ?? 0.26) * mnb);
+            const outerR = innerR + Math.max(12, (kc.f ?? 0.30) * mxb);
+            maskBlur((bj.bokeh / 100) * 0.024 * mxb + 1.5, (t) => {
+                const g = t.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
                 g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,1)');
                 return g;
             });
@@ -1351,8 +1526,71 @@
 
         const imgData = gx.getImageData(0, 0, gw, gh);
         applyColorPipelineToImageData(imgData, gw, gh, state);
-        if (state.masks && state.masks.length) applyMasks(imgData, gw, gh);
+        if (state.masks && state.masks.length) {
+            let clarityData = null;
+            if (state.masks.some((m) => m.clarity)) {
+                sizeTmp();
+                tmpCtx.clearRect(0, 0, gw, gh);
+                tmpCtx.putImageData(imgData, 0, 0);
+                // Blur copy into maskTmp for true midtone local contrast (Clarity)
+                maskTmp.width = gw; maskTmp.height = gh;
+                maskTmpCtx.clearRect(0, 0, gw, gh);
+                maskTmpCtx.filter = `blur(${Math.max(3, Math.round(mnb * 0.016))}px)`;
+                maskTmpCtx.drawImage(tmpCanvas, 0, 0);
+                maskTmpCtx.filter = 'none';
+                clarityData = maskTmpCtx.getImageData(0, 0, gw, gh).data;
+            }
+            applyMasks(imgData, gw, gh, clarityData);
+        }
         gx.putImageData(imgData, 0, 0);
+
+        // Optical Mask Blur (contoh: Auto Background + Blur = efek lensa bokeh DSLR instan)
+        if (state.masks && state.masks.some((m) => (m.blur || 0) > 0)) {
+            state.masks.forEach((m) => {
+                if (!(m.blur > 0)) return;
+                const A = computeMaskAlpha(m, gw, gh);
+                sizeTmp();
+                tmpCtx.clearRect(0, 0, gw, gh);
+                tmpCtx.filter = `blur(${(m.blur / 100) * 0.022 * mxb + 1}px)`;
+                tmpCtx.drawImage(gx.canvas, 0, 0);
+                tmpCtx.filter = 'none';
+                const blurredData = tmpCtx.getImageData(0, 0, gw, gh);
+                const bd = blurredData.data;
+                for (let p = 0, i = 0; p < A.length; p++, i += 4) bd[i + 3] = Math.round((bd[i + 3] * A[p]) / 255);
+                tmpCtx.putImageData(blurredData, 0, 0);
+                gx.drawImage(tmpCanvas, 0, 0);
+            });
+        }
+
+        // Global Detail Engine (Edge-Preserving Denoise, Clarity, Texture, Real Unsharp Mask Sharpness)
+        const activePreset = !state.activeCubeLutId && window.FILM_PRESETS.find((p) => p.id === state.presetId);
+        const pParams = (activePreset && activePreset.params) || {};
+        const pStrength = (state.presetStrength ?? 100) / 100;
+        const detSharp = bj.sharpness || 0;
+        const detClarity = Math.max(-100, Math.min(100, (bj.clarity || 0) + (pParams.clarity || 0) * pStrength));
+        const detTexture = bj.texture || 0;
+        const detDenoise = bj.denoise || 0;
+        if ((detSharp || detClarity || detTexture || detDenoise) && window.AITools && window.AITools.applyDetailEnhancements) {
+            window.AITools.applyDetailEnhancements(gc, {
+                sharpness: detSharp,
+                clarity: detClarity,
+                texture: detTexture,
+                denoise: detDenoise
+            });
+        }
+
+        // Smart Portrait Lens Blur (AI Subject-Aware DSLR Bokeh — dijalankan setelah Detail agar bokeh latar tetap halus)
+        const showLensPreview = lensBlurPreviewFocus && activeToolKey === 'context_lensblur';
+        if ((lensBlurActive(state) || showLensPreview) && window.AITools && window.AITools.applySmartLensBlur) {
+            const subjMask = getLensBlurSubjectMask();
+            if (subjMask) {
+                window.AITools.applySmartLensBlur(gc, subjMask, {
+                    ...(state.lensBlur || createDefaultLensBlur()),
+                    previewFocus: showLensPreview
+                });
+            }
+        }
+
         if (bj.dreamGlow > 0) { // glow lembut (pro-mist)
             sizeTmp();
             tmpCtx.clearRect(0, 0, gw, gh);
@@ -1365,11 +1603,18 @@
             gx.restore();
         }
 
-        if (state.adjust.vignette > 0) {
-            const vStr = state.adjust.vignette / 100;
-            const g = gx.createRadialGradient(gw / 2, gh / 2, Math.min(gw, gh) * 0.25, gw / 2, gh / 2, Math.max(gw, gh) * 0.72);
+        // Multi-mode Non-Destructive Glitch Studio
+        if (isGlitchActive(state) && window.AITools && window.AITools.applyGlitch) {
+            window.AITools.applyGlitch(gc, state.glitch);
+        }
+
+        const presetVig = pParams.vignette ? pParams.vignette * pStrength : 0;
+        const totalVignette = Math.min(100, (state.adjust.vignette || 0) + presetVig);
+        if (totalVignette > 0) {
+            const vStr = totalVignette / 100;
+            const g = gx.createRadialGradient(gw / 2, gh / 2, Math.min(gw, gh) * 0.24, gw / 2, gh / 2, Math.max(gw, gh) * 0.72);
             g.addColorStop(0, 'rgba(0,0,0,0)');
-            g.addColorStop(1, `rgba(0,0,0,${(vStr * 0.85).toFixed(2)})`);
+            g.addColorStop(1, `rgba(0,0,0,${(vStr * 0.88).toFixed(2)})`);
             gx.save();
             gx.globalCompositeOperation = 'source-atop';
             gx.fillStyle = g;
@@ -1400,7 +1645,7 @@
         // 7. Layer Brush / Doodle
         ctx.drawImage(brushCanvas, 0, 0);
 
-        // 8. Layer Teks & Stiker ("Rearrange the light" dengan dashed selection box)
+        // 8. Layer Teks & Stiker (mendukung multi-baris untuk kredit editorial)
         state.texts.forEach((t) => {
             ctx.save();
             ctx.translate(t.x, t.y);
@@ -1415,26 +1660,38 @@
             ctx.textAlign = t.align || 'center';
             ctx.textBaseline = 'middle';
 
+            const lines = String(t.text || '').split('\n');
+            const lineH = t.size * (t.lineHeight || 1.28);
+            const totalH = lineH * lines.length;
+
             if (t.shadow) {
                 ctx.shadowColor = 'rgba(0,0,0,0.45)';
-                ctx.shadowBlur = Math.max(4, t.size * 0.12);
+                ctx.shadowBlur = Math.max(4, t.size * 0.14);
                 ctx.shadowOffsetY = 2;
             }
 
             if (t.outline) {
                 ctx.lineWidth = Math.max(2, t.size * 0.06);
                 ctx.strokeStyle = '#1c1917';
-                ctx.strokeText(t.text, 0, 0);
+                lines.forEach((ln, idx) => {
+                    const ly = (idx - (lines.length - 1) / 2) * lineH;
+                    ctx.strokeText(ln, 0, ly);
+                });
             }
 
             ctx.fillStyle = t.color || '#ffffff';
-            ctx.fillText(t.text, 0, 0);
+            let maxW = 0;
+            lines.forEach((ln, idx) => {
+                const ly = (idx - (lines.length - 1) / 2) * lineH;
+                ctx.fillText(ln, 0, ly);
+                const mw = ctx.measureText(ln).width;
+                if (mw > maxW) maxW = mw;
+            });
 
-            // Dashed white selection rectangle persis seperti Screenshot 2 & 4
+            // Dashed white selection rectangle
             if (t.id === state.selectedTextId) {
-                const metrics = ctx.measureText(t.text);
-                const bw = Math.max(60, metrics.width + 28);
-                const bh = t.size * 1.32;
+                const bw = Math.max(60, maxW + 28);
+                const bh = Math.max(t.size * 1.32, totalH + 12);
                 let boxX = -bw / 2;
                 if (t.align === 'left') boxX = -14;
                 if (t.align === 'right') boxX = -bw + 14;
@@ -1478,6 +1735,44 @@
         });
     }
 
+    function buildCombinedHslLuts(presetHsl, presetStrength, userHsl) {
+        const keys = ['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'];
+        const centers = [0, 30, 60, 120, 180, 235, 280, 325, 360];
+        const H = new Float32Array(9);
+        const S = new Float32Array(9);
+        const L = new Float32Array(9);
+        let any = false;
+        for (let i = 0; i < 8; i++) {
+            const k = keys[i];
+            const pc = presetHsl && presetStrength > 0 ? presetHsl[k] : null;
+            const uc = userHsl ? userHsl[k] : null;
+            const hv = (pc ? (pc.h || 0) * presetStrength : 0) + (uc ? (uc.h || 0) : 0);
+            const sv = (pc ? (pc.s || 0) * presetStrength : 0) + (uc ? (uc.s || 0) : 0);
+            const lv = (pc ? (pc.l || 0) * presetStrength : 0) + (uc ? (uc.l || 0) : 0);
+            if (hv || sv || lv) any = true;
+            H[i] = Math.max(-100, Math.min(100, hv));
+            S[i] = Math.max(-100, Math.min(100, sv));
+            L[i] = Math.max(-100, Math.min(100, lv));
+        }
+        if (!any) return null;
+        H[8] = H[0]; S[8] = S[0]; L[8] = L[0];
+
+        const dH = new Float32Array(360);
+        const dS = new Float32Array(360);
+        const dL = new Float32Array(360);
+        let seg = 0;
+        for (let deg = 0; deg < 360; deg++) {
+            while (seg < 7 && deg >= centers[seg + 1]) seg++;
+            const t = (deg - centers[seg]) / (centers[seg + 1] - centers[seg]);
+            const w = t * t * (3 - 2 * t);
+            const w0 = 1 - w;
+            dH[deg] = (H[seg] * w0 + H[seg + 1] * w) * 0.45;
+            dS[deg] = (S[seg] * w0 + S[seg + 1] * w) / 100;
+            dL[deg] = (L[seg] * w0 + L[seg + 1] * w) / 100;
+        }
+        return { dH, dS, dL };
+    }
+
     function applyColorPipelineToImageData(imgData, w, h, currentState) {
         const adj = currentState.adjust;
         const preset = window.FILM_PRESETS.find((p) => p.id === currentState.presetId) || window.FILM_PRESETS[0];
@@ -1498,19 +1793,21 @@
         const vibrance = adj.vibrance + (p.vibrance || 0) * pStr;
         const whites = (adj.whites || 0) + (p.whites || 0) * pStr;
         const blacks = (adj.blacks || 0) + (p.blacks || 0) * pStr;
+        const dehaze = Math.max(-50, Math.min(100, (adj.dehaze || 0) + (p.dehaze || 0) * pStr));
         const wc = wheelConsts(currentState);
         const hueDeg = adj.hue;
         const sepiaAmt = adj.sepia / 100;
         const grainAmt = adj.grain + (p.grain || 0) * pStr;
+        const hslLuts = buildCombinedHslLuts(p.hsl, pStr, currentState.hsl);
         const curveLuts = buildCombinedCurveLuts(p.curve, pStr, currentState.curves);
 
         const isNeutral =
             exposure === 0 && brightness === 0 && contrast === 0 &&
             highlights === 0 && shadows === 0 && fade === 0 &&
-            whites === 0 && blacks === 0 && !wc &&
+            whites === 0 && blacks === 0 && dehaze === 0 && !wc &&
             warmth === 0 && tint === 0 && saturation === 0 &&
             vibrance === 0 && hueDeg === 0 && sepiaAmt === 0 &&
-            grainAmt === 0 && adj.sharpness === 0 &&
+            grainAmt === 0 && !hslLuts &&
             !curveLuts && !p.splitStrength && !currentState.activeCubeLutId;
 
         if (isNeutral) return;
@@ -1574,6 +1871,36 @@
                 b = (b - 128) * contrastFactor + 128;
             }
 
+            // Global Dehaze (positif = hilangkan kabut & tambah kedalaman; negatif = kabut lembut atmospheric)
+            if (dehaze !== 0) {
+                const dh = dehaze / 100;
+                if (dh > 0) {
+                    const minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
+                    const haze = Math.max(0, minC - 14) * dh * 0.46;
+                    const gain = 1 + dh * 0.26;
+                    r = (r - haze) * gain;
+                    g = (g - haze) * gain;
+                    b = (b - haze) * gain;
+                    const nl = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const ds = 1 + dh * 0.22;
+                    r = nl + (r - nl) * ds;
+                    g = nl + (g - nl) * ds;
+                    b = nl + (b - nl) * ds;
+                } else {
+                    const mist = -dh;
+                    const lift = mist * 58;
+                    const scale = 1 - mist * 0.24;
+                    r = r * scale + lift;
+                    g = g * scale + lift;
+                    b = b * scale + lift * 1.04;
+                    const nl = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const ds = 1 - mist * 0.28;
+                    r = nl + (r - nl) * ds;
+                    g = nl + (g - nl) * ds;
+                    b = nl + (b - nl) * ds;
+                }
+            }
+
             // Matte Fade
             if (fadeLift > 0) {
                 r = fadeLift + r * ((255 - fadeLift) / 255);
@@ -1629,6 +1956,58 @@
                 r = gray + (r - gray) * s;
                 g = gray + (g - gray) * s;
                 b = gray + (b - gray) * s;
+            }
+
+            // Selective 8-Channel HSL Color Mixer (Lightroom-style Hue / Saturation / Luminance)
+            if (hslLuts) {
+                const cr = r < 0 ? 0 : r > 255 ? 255 : r;
+                const cg = g < 0 ? 0 : g > 255 ? 255 : g;
+                const cb = b < 0 ? 0 : b > 255 ? 255 : b;
+                const maxC = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
+                const minC = cr < cg ? (cr < cb ? cr : cb) : (cg < cb ? cg : cb);
+                const delta = maxC - minC;
+                if (delta > 2) {
+                    let hDeg;
+                    if (maxC === cr) hDeg = ((cg - cb) / delta) * 60;
+                    else if (maxC === cg) hDeg = ((cb - cr) / delta + 2) * 60;
+                    else hDeg = ((cr - cg) / delta + 4) * 60;
+                    if (hDeg < 0) hDeg += 360;
+                    const idx = (hDeg | 0) % 360;
+                    const dh = hslLuts.dH[idx];
+                    const ds = hslLuts.dS[idx];
+                    const dl = hslLuts.dL[idx];
+                    if (dh || ds || dl) {
+                        const mx = maxC / 255, mn = minC / 255, dd = delta / 255;
+                        let l = (mx + mn) * 0.5;
+                        let s = l > 0.5 ? dd / (2 - mx - mn) : dd / (mx + mn);
+                        let nh = hDeg + dh;
+                        if (nh < 0) nh += 360; else if (nh >= 360) nh -= 360;
+                        if (ds < 0) s *= (1 + ds);
+                        else if (ds > 0) s = Math.min(1, s + (1 - s) * ds * 0.72 + s * ds * 0.25);
+                        const cw = Math.min(1, dd * 4.2);
+                        if (dl > 0) l += (1 - l) * l * dl * 1.15 * cw;
+                        else if (dl < 0) l += l * (1 - l * 0.35) * dl * 0.85 * cw;
+                        l = l < 0 ? 0 : l > 1 ? 1 : l;
+                        if (s <= 0.0001) {
+                            r = g = b = l * 255;
+                        } else {
+                            const c = (1 - Math.abs(2 * l - 1)) * s;
+                            const hp = nh / 60;
+                            const x = c * (1 - Math.abs((hp % 2) - 1));
+                            const m = l - c * 0.5;
+                            let r1 = 0, g1 = 0, b1 = 0;
+                            if (hp < 1) { r1 = c; g1 = x; }
+                            else if (hp < 2) { r1 = x; g1 = c; }
+                            else if (hp < 3) { g1 = c; b1 = x; }
+                            else if (hp < 4) { g1 = x; b1 = c; }
+                            else if (hp < 5) { r1 = x; b1 = c; }
+                            else { r1 = c; b1 = x; }
+                            r = (r1 + m) * 255;
+                            g = (g1 + m) * 255;
+                            b = (b1 + m) * 255;
+                        }
+                    }
+                }
             }
 
             // Hue Shift
@@ -2048,10 +2427,13 @@
         const masterSliderBlock = document.getElementById('masterSliderBlock');
         const gestureHint = document.getElementById('gestureHintText');
 
-        // Matikan crop / brush jika pindah tab utama
+        // Matikan crop / brush / mask / focal overlay jika pindah tab utama
         if (tabName !== 'Tools') {
             closeCropOverlay();
             closeMaskUI();
+            closeFocalUI();
+            if (lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
+            resetCanvasZoom();
             wbPickActive = false;
             document.getElementById('wheelsEditor').classList.add('hidden');
             magicWandActive = false;
@@ -2100,6 +2482,14 @@
                 dummyState.presetStrength = 100;
                 applyColorPipelineToImageData(idata, 76, 76, dummyState);
                 cCtx.putImageData(idata, 0, 0);
+                if (preset.params && preset.params.vignette) {
+                    const vs = preset.params.vignette / 100;
+                    const vg = cCtx.createRadialGradient(38, 38, 18, 38, 38, 54);
+                    vg.addColorStop(0, 'rgba(0,0,0,0)');
+                    vg.addColorStop(1, `rgba(0,0,0,${(vs * 0.85).toFixed(2)})`);
+                    cCtx.fillStyle = vg;
+                    cCtx.fillRect(0, 0, 76, 76);
+                }
             }
             thumbCache.set(key, c);
         }
@@ -2292,7 +2682,13 @@
     function refreshToolDot() {
         const btn = document.querySelector('#toolsStrip .tool-icon-card.active');
         if (!btn) return;
-        const mod = (state.adjust[activeToolKey] ?? 0) !== 0;
+        let mod = (state.adjust[activeToolKey] ?? 0) !== 0;
+        if (activeToolKey === 'context_glitch') mod = isGlitchActive(state);
+        else if (activeToolKey === 'context_hsl') mod = hslActive(state);
+        else if (activeToolKey === 'context_lensblur') mod = lensBlurActive(state);
+        else if (activeToolKey === 'context_mask') mod = !!(state.masks && state.masks.length);
+        else if (activeToolKey === 'context_wheels') mod = wheelsActive(state);
+        else if (activeToolKey === 'context_curves') mod = !isCurvesIdentity(state.curves);
         let dot = btn.querySelector('.tool-modified-dot');
         if (mod && !dot) { dot = document.createElement('span'); dot.className = 'tool-modified-dot'; btn.prepend(dot); }
         else if (!mod && dot) dot.remove();
@@ -2309,7 +2705,17 @@
             const isSelected = activeToolKey === tool.key;
             const isModified = tool.isContext === 'curves'
                 ? !isCurvesIdentity(state.curves)
-                : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
+                : tool.isContext === 'wheels'
+                    ? wheelsActive(state)
+                    : tool.isContext === 'hsl'
+                        ? hslActive(state)
+                        : tool.isContext === 'lensblur'
+                            ? lensBlurActive(state)
+                            : tool.isContext === 'mask'
+                                ? !!(state.masks && state.masks.length)
+                                : tool.isContext === 'glitch'
+                                    ? isGlitchActive(state)
+                                    : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
 
             const btn = document.createElement('button');
             btn.className = `tool-icon-card ${isSelected ? 'active' : ''}`;
@@ -2333,6 +2739,9 @@
         // Matikan mode khusus jika memilih tool lain
         if (tool.isContext !== 'crop') closeCropOverlay();
         if (tool.isContext !== 'mask') closeMaskUI();
+        if (!FOCAL_BLUR_TOOLS.has(tool.key)) closeFocalUI();
+        if (tool.isContext !== 'lensblur' && lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
+        if (tool.isContext !== 'mask' && tool.isContext !== 'brush') resetCanvasZoom();
         if (tool.isContext !== 'wb') wbPickActive = false;
         if (tool.isContext !== 'wheels') document.getElementById('wheelsEditor').classList.add('hidden');
         if (tool.isContext !== 'wand') magicWandActive = false;
@@ -2340,7 +2749,7 @@
         if (tool.isContext !== 'curves') document.getElementById('curvesEditor').classList.add('hidden');
         mainCanvas.style.cursor = 'default';
 
-        // Jika tool merupakan aksi instan (Rotate, Flip, AI Enhance, Bokeh, Glitch, Halation, Auto Hapus BG)
+        // Jika tool merupakan aksi instan (Rotate, Flip, AI Enhance, Halation, Auto Hapus BG)
         if (tool.isAction) {
             activeToolKey = tool.key;
             masterSliderMode = 'context';
@@ -2353,7 +2762,7 @@
             return;
         }
 
-        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush)
+        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush, Mask, Glitch, Wheels, Curves, WB)
         if (tool.isContext) {
             activeToolKey = tool.key;
             renderToolsStrip();
@@ -2361,29 +2770,41 @@
             return;
         }
 
-        // Tool berbasis slider normal
-        document.getElementById('toolContextExtras').classList.add('hidden');
+        // Tool berbasis slider normal (atau Focal Blur yang juga menampilkan overlay titik tengah!)
         selectToolKey(tool.key);
     }
 
     function selectToolKey(key) {
         let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
 
-        // Tone Curve tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
-        if (tool.isContext === 'curves') {
+        // Context panel tertentu tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
+        if (tool.isContext === 'curves' || tool.isContext === 'glitch' || tool.isContext === 'mask' || tool.isContext === 'hsl' || tool.isContext === 'lensblur') {
             activeToolKey = tool.key;
             renderToolsStrip();
-            openToolContextBar('curves', tool.name);
+            openToolContextBar(tool.isContext, tool.name);
             return;
         }
+        if (lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
         // Tool non-slider lain tidak bisa diikat ke slider utama
         if (tool.isContext || tool.isAction) tool = TOOLS_CONFIG[0];
 
         activeToolKey = tool.key;
-        masterSliderMode = 'tool';
-        document.getElementById('masterSlider').disabled = false;
         document.getElementById('curvesEditor').classList.add('hidden');
         document.getElementById('wheelsEditor').classList.add('hidden');
+
+        if (FOCAL_BLUR_TOOLS.has(tool.key)) {
+            focalSubParam = 'amount';
+            openFocalUI(tool.key);
+            renderFocalContextBar(tool.key);
+            syncMasterSliderForFocal(tool.key);
+            renderToolsStrip();
+            return;
+        }
+
+        closeFocalUI();
+        document.getElementById('toolContextExtras').classList.add('hidden');
+        masterSliderMode = 'tool';
+        document.getElementById('masterSlider').disabled = false;
 
         const val = state.adjust[tool.key] ?? 0;
         const slider = document.getElementById('masterSlider');
@@ -2394,6 +2815,7 @@
         document.getElementById('activeParamCategory').textContent = 'ADJUST';
         document.getElementById('activeParamTitle').textContent = tool.name;
         document.getElementById('activeParamValue').textContent = val;
+        document.getElementById('gestureHintText').textContent = 'HOLD TO COMPARE · DOUBLE-CLICK SLIDER TO RESET';
 
         renderToolsStrip();
     }
@@ -2406,9 +2828,11 @@
         } else if (actionKey === 'action_flip_h') {
             state.flipH = !state.flipH;
             clearMasks();
+            invalidateLensBlurCache();
         } else if (actionKey === 'action_flip_v') {
             state.flipV = !state.flipV;
             clearMasks();
+            invalidateLensBlurCache();
         } else if (actionKey === 'action_ai_enhance') {
             state.adjust.exposure = 6;
             state.adjust.contrast = 15;
@@ -2419,6 +2843,7 @@
             selectToolKey('exposure');
         } else if (actionKey === 'action_auto_bg') {
             window.AITools.autoRemoveBackground(basePhotoCanvas, 34, 16);
+            invalidateLensBlurCache();
         } else if (actionKey === 'action_halation') {
             window.AITools.applyFilmHalation(basePhotoCanvas);
         } else if (actionKey === 'action_bokeh') {
@@ -2541,47 +2966,18 @@
                 });
                 bar.appendChild(chip);
             });
+        } else if (contextType === 'glitch') {
+            renderGlitchContextBar(bar);
+            return;
+        } else if (contextType === 'hsl') {
+            renderHslContextBar(bar);
+            return;
+        } else if (contextType === 'lensblur') {
+            renderLensBlurContextBar(bar);
+            return;
         } else if (contextType === 'mask') {
-            openMaskUI();
-            const panel = document.createElement('div');
-            panel.className = 'mask-panel';
-            const row = () => { const r = document.createElement('div'); r.className = 'mask-row'; panel.appendChild(r); return r; };
-            const mk = (r, label, fn, active) => {
-                const b = document.createElement('button');
-                b.className = `dark-chip ${active ? 'active' : ''}`;
-                b.textContent = label;
-                b.addEventListener('click', fn);
-                r.appendChild(b);
-            };
-            const r1 = row();
-            mk(r1, '+ LINEAR', () => addMask('linear'));
-            mk(r1, '+ RADIAL', () => addMask('radial'));
-            mk(r1, '+ BRUSH', () => addMask('brush'));
-            MASK_QUICK.forEach((q) => mk(r1, q.label, () => addMask(q.type, q.over)));
-            if (state.masks.length) {
-                const r2 = row();
-                state.masks.forEach((m, i) => mk(r2, `${i + 1}·${m.type.toUpperCase()}`, () => selectMask(m.id), m.id === selectedMaskId));
-                const sm = selectedMask();
-                if (sm) {
-                    mk(r2, sm.invert ? 'INVERT ✓' : 'INVERT', () => { sm.invert = !sm.invert; maskVer++; renderEditorCanvas(); pushHistory('Invert mask', true); refreshMaskBar(); }, sm.invert);
-                    mk(r2, maskShow ? 'SHOW MASK ✓' : 'SHOW MASK', () => { maskShow = !maskShow; drawMaskOverlay(); refreshMaskBar(); }, maskShow);
-                    if (sm.type === 'brush') {
-                        mk(r2, maskErase ? 'ERASER ✓' : 'ERASER', () => { maskErase = !maskErase; refreshMaskBar(); }, maskErase);
-                        mk(r2, 'ISI SEMUA', () => { const mc = maskCanvases.get(sm.id); if (mc) { const c = mc.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Fill mask', true); } });
-                        mk(r2, 'KOSONGKAN', () => { const mc = maskCanvases.get(sm.id); if (mc) { mc.getContext('2d').clearRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Clear mask', true); } });
-                    }
-                    mk(r2, '✕ HAPUS MASK', () => deleteMask(sm.id));
-                    const r3 = row();
-                    MASK_ATTRS.forEach(([k, label]) => {
-                        if (k === 'size' && sm.type !== 'brush') return;
-                        const v = sm[k] ?? (MASK_DEFAULTS[k] ?? 0);
-                        const txt = k === 'feather' || k === 'size' ? `${v}` : `${v > 0 ? '+' : ''}${v}`;
-                        mk(r3, `${label} ${txt}`, () => { maskAttr = k; syncMasterSliderForMask(); refreshMaskBar(); }, maskAttr === k);
-                    });
-                }
-            }
-            bar.appendChild(panel);
-            syncMasterSliderForMask();
+            renderMaskStudio(bar);
+            return;
         } else if (contextType === 'wb') {
             wbPickActive = false;
             const mk = (label, fn, active) => {
@@ -2597,8 +2993,9 @@
             document.getElementById('gestureHintText').textContent = 'AUTO WB MENYEIMBANGKAN WARNA OTOMATIS · PIPET UNTUK MEMILIH TITIK NETRAL';
         } else if (contextType === 'brush') {
             brushModeActive = true;
+            enableCanvasZoom(true);
             mainCanvas.style.cursor = 'crosshair';
-            document.getElementById('gestureHintText').textContent = 'CORET LANGSUNG DI ATAS FOTO UNTUK MENGGAMBAR';
+            document.getElementById('gestureHintText').textContent = 'CORET DI FOTO · GUNAKAN +/- ATAU CUBIT 2 JARI UNTUK ZOOM DETAIL';
 
             [
                 { id: 'solid', label: 'SOLID PEN' },
@@ -2940,6 +3337,7 @@
             const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
             const mono = "'Space Mono', monospace";
             const stamps = [
+                { label: 'GRAD CREDITS', text: 'GRADUATION\nCREDITS', font: "'Inter', sans-serif", color: '#ffffff', isGradCredits: true },
                 { label: "'98 DATE", text: "'98 11 14", font: mono, color: '#ff7b00' },
                 { label: 'TODAY', text: today, font: mono, color: '#ff7b00' },
                 { label: 'KODAK 400', text: '→ 24A  KODAK PORTRA 400', font: mono, color: '#f59e0b' },
@@ -2975,6 +3373,10 @@
                     <span class="thumb-label">${s.label}</span>
                 `;
                 card.addEventListener('click', () => {
+                    if (s.isGradCredits) {
+                        addGradCreditsOverlay();
+                        return;
+                    }
                     const px = s.sticker ? basePhotoCanvas.width * (0.25 + Math.random() * 0.5) : basePhotoCanvas.width * 0.72;
                     const py = s.sticker ? basePhotoCanvas.height * (0.2 + Math.random() * 0.5) : basePhotoCanvas.height * 0.88;
                     addTextLayerToPhoto(s.text, s.font, s.label, s.color, px, py);
@@ -3098,7 +3500,8 @@
         delBtn.classList.remove('hidden');
 
         document.getElementById('activeFontLabel').textContent = activeText.fontName || 'EDITORIAL FONT';
-        document.getElementById('activeTextHeading').textContent = activeText.text || 'Text';
+        const firstLn = String(activeText.text || 'Text').split('\n')[0];
+        document.getElementById('activeTextHeading').textContent = firstLn.length > 26 ? firstLn.slice(0, 26) + '…' : firstLn;
         document.getElementById('textLiveInput').value = activeText.text;
 
         document.getElementById('sliderTextSize').value = activeText.size;
@@ -3179,7 +3582,7 @@
         });
     }
 
-    function addTextLayerToPhoto(textStr, fontFamily, fontName, color = '#ffffff', customX = null, customY = null) {
+    function addTextLayerToPhoto(textStr, fontFamily, fontName, color = '#ffffff', customX = null, customY = null, extra = {}) {
         const newLayer = {
             id: 'txt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
             text: textStr,
@@ -3195,13 +3598,60 @@
             italic: false,
             shadow: true,
             outline: false,
-            align: 'center'
+            align: 'center',
+            ...extra
         };
         state.texts.push(newLayer);
         state.selectedTextId = newLayer.id;
         if (activeEditorMainTab === 'Text') renderTextTabUI();
         renderEditorCanvas();
         pushHistory(`Text: ${textStr.slice(0, 12)}`, true);
+        return newLayer;
+    }
+
+    function addGradCreditsOverlay() {
+        const w = basePhotoCanvas.width;
+        const h = basePhotoCanvas.height;
+        const sz = Math.max(12, Math.round(w * 0.0155));
+        ctx.save();
+        ctx.font = `400 ${sz}px 'Inter', sans-serif`;
+        const lblW = ctx.measureText('PHOTOGRAPHY BY').width;
+        const valW = ctx.measureText('UNIVERSITAS PENDIDIKAN').width;
+        ctx.restore();
+        const gutter = Math.max(sz * 2.2, w * 0.032);
+        const rightPad = w * 0.045;
+        const totalW = lblW + gutter + valW;
+        const xLbl = Math.max(w * 0.06, w - rightPad - totalW);
+        const xVal = xLbl + lblW + gutter;
+        const yTop = h * 0.14;
+        const common = {
+            size: sz,
+            align: 'left',
+            opacity: 94,
+            shadow: true,
+            lineHeight: 1.42
+        };
+
+        addTextLayerToPhoto(
+            'GRADUATION FOR\nLOCATION\n\nPHOTOGRAPHY BY',
+            "'Inter', sans-serif",
+            'INTER CLEAN',
+            '#f4f1ea',
+            xLbl,
+            yTop,
+            common
+        );
+        addTextLayerToPhoto(
+            'NAMA WISUDAWAN\nUNIVERSITAS PENDIDIKAN\nINDONESIA\n@STUDIO.ANDA',
+            "'Inter', sans-serif",
+            'INTER CLEAN',
+            '#ffffff',
+            xVal,
+            yTop,
+            common
+        );
+        switchEditorMainTab('Text');
+        flashToast('✓ Kredit Editorial Wisuda ditambahkan — edit nama & lokasi di panel Teks', 2800);
     }
 
     // ==========================================
@@ -3210,6 +3660,9 @@
     function bindEditorEvents() {
         // Back to Library
         document.getElementById('btnBackToLibrary').addEventListener('click', () => {
+            closeMaskUI();
+            closeFocalUI();
+            resetCanvasZoom();
             saveCurrentPhotoBackToLibrary();
             flashToast('✓ Tersimpan di Library');
             switchStudioView('viewLibrary');
@@ -3257,18 +3710,54 @@
         const masterSlider = document.getElementById('masterSlider');
         masterSlider.addEventListener('input', () => {
             const val = parseInt(masterSlider.value, 10);
-            document.getElementById('activeParamValue').textContent = val;
+            document.getElementById('activeParamValue').textContent =
+                masterSliderMode === 'glitch' && glitchAttr === 'angle' ? `${val}°`
+                    : masterSliderMode === 'mask' ? formatMaskVal(maskAttr, val)
+                        : masterSliderMode === 'hsl' ? `${val > 0 ? '+' : ''}${val}`
+                            : masterSliderMode === 'lensblur' && lensBlurAttr === 'protect' ? `${val > 0 ? '+' : ''}${val}`
+                                : val;
 
             if (masterSliderMode === 'preset') {
                 state.presetStrength = val;
             } else if (masterSliderMode === 'tool') {
                 state.adjust[activeToolKey] = val;
                 refreshToolDot();
+            } else if (masterSliderMode === 'focal') {
+                applyFocalSliderValue(activeToolKey, val);
+                refreshToolDot();
+                drawFocalOverlay();
+            } else if (masterSliderMode === 'glitch') {
+                if (!state.glitch) state.glitch = createDefaultGlitchState();
+                state.glitch[glitchAttr] = val;
+                updateGlitchChipLabel(glitchAttr, val);
+                refreshToolDot();
+            } else if (masterSliderMode === 'hsl') {
+                if (!state.hsl) state.hsl = createDefaultHSL();
+                if (!state.hsl[activeHslChannel]) state.hsl[activeHslChannel] = { h: 0, s: 0, l: 0 };
+                state.hsl[activeHslChannel][activeHslParam] = val;
+                updateHslLiveUI(activeHslChannel, activeHslParam, val);
+                refreshToolDot();
+            } else if (masterSliderMode === 'lensblur') {
+                if (!state.lensBlur) state.lensBlur = createDefaultLensBlur();
+                state.lensBlur[lensBlurAttr] = val;
+                updateLensBlurChipLabel(lensBlurAttr, val);
+                refreshToolDot();
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) mk[maskAttr] = val;
+                if (mk) {
+                    mk[maskAttr] = val;
+                    // Saat geser slider cahaya/warna/blur, otomatis sembunyikan overlay merah agar hasil edit langsung terlihat (ala Lightroom)
+                    if (maskAttr !== 'feather' && maskAttr !== 'size' && maskShow) {
+                        maskShow = false;
+                        drawMaskOverlay();
+                        syncMaskQuickHud();
+                    } else if (maskAttr === 'feather' || maskAttr === 'size') {
+                        scheduleMaskOverlay();
+                    }
+                    updateMaskAttrChipLabel(maskAttr, val);
+                }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'dust') state.dustStrength = val;
                 else if (activeEffectCat === 'frames') state.frameStrength = val;
@@ -3278,7 +3767,8 @@
         });
 
         masterSlider.addEventListener('change', () => {
-            if (masterSliderMode === 'tool') renderToolsStrip();
+            if (masterSliderMode === 'tool' || masterSliderMode === 'focal' || masterSliderMode === 'glitch' || masterSliderMode === 'hsl' || masterSliderMode === 'lensblur') renderToolsStrip();
+            if (masterSliderMode === 'mask') refreshMaskBar();
             pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`, true);
         });
 
@@ -3290,18 +3780,53 @@
                 state.adjust[activeToolKey] = 0;
                 masterSlider.value = 0;
                 renderToolsStrip();
+            } else if (masterSliderMode === 'focal') {
+                const defVal = resetFocalSubParam(activeToolKey);
+                masterSlider.value = defVal;
+                drawFocalOverlay();
+                renderFocalContextBar(activeToolKey);
+                renderToolsStrip();
+            } else if (masterSliderMode === 'glitch') {
+                const ga = GLITCH_ATTRS.find((a) => a.key === glitchAttr);
+                const defVal = ga ? ga.def : 0;
+                state.glitch[glitchAttr] = defVal;
+                masterSlider.value = defVal;
+                updateGlitchChipLabel(glitchAttr, defVal);
+                renderToolsStrip();
+            } else if (masterSliderMode === 'hsl') {
+                if (!state.hsl) state.hsl = createDefaultHSL();
+                state.hsl[activeHslChannel][activeHslParam] = 0;
+                masterSlider.value = 0;
+                updateHslLiveUI(activeHslChannel, activeHslParam, 0);
+                renderToolsStrip();
+            } else if (masterSliderMode === 'lensblur') {
+                const la = LENSBLUR_ATTRS.find((a) => a.key === lensBlurAttr);
+                const defVal = la ? la.def : 0;
+                if (!state.lensBlur) state.lensBlur = createDefaultLensBlur();
+                state.lensBlur[lensBlurAttr] = defVal;
+                masterSlider.value = defVal;
+                updateLensBlurChipLabel(lensBlurAttr, defVal);
+                renderToolsStrip();
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = 100;
                 masterSlider.value = 100;
             } else if (masterSliderMode === 'mask') {
                 const mk = selectedMask();
-                if (mk) { mk[maskAttr] = MASK_DEFAULTS[maskAttr] ?? 0; masterSlider.value = mk[maskAttr]; }
+                if (mk) {
+                    const meta = MASK_ATTRS.find((x) => x[0] === maskAttr);
+                    const defVal = maskAttr === 'feather' ? (mk.type.startsWith('ai_') ? 12 : 50) : (meta ? meta[4] : 0);
+                    mk[maskAttr] = defVal;
+                    masterSlider.value = defVal;
+                    updateMaskAttrChipLabel(maskAttr, defVal);
+                    scheduleMaskOverlay();
+                }
             } else if (masterSliderMode === 'effect') {
                 if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
                 masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
             }
-            document.getElementById('activeParamValue').textContent = masterSlider.value;
+            document.getElementById('activeParamValue').textContent = masterSliderMode === 'glitch' && glitchAttr === 'angle' ? `${masterSlider.value}°` : masterSlider.value;
             renderEditorCanvas();
+            pushHistory(`Reset ${document.getElementById('activeParamTitle').textContent}`, true);
         });
 
         // Text Editor Controls
@@ -3410,6 +3935,8 @@
             renderEditorCanvas();
         });
 
+        document.getElementById('btnAddGradCredits')?.addEventListener('click', addGradCreditsOverlay);
+
         document.getElementById('btnAdd90sDate').addEventListener('click', () => {
             addTextLayerToPhoto("'98 11 14", "'Space Mono', monospace", 'SPACE MONO', '#ff7b00', basePhotoCanvas.width * 0.78, basePhotoCanvas.height * 0.9);
         });
@@ -3449,6 +3976,7 @@
 
         // Canvas Pointer Interaction (Drag Text, Magic Wand, Brush, or Hold Photo to Compare)
         bindCanvasGestures();
+        bindCanvasZoomControls();
 
         // Crop Box Dragging
         bindCropDragEvents();
@@ -3466,7 +3994,11 @@
             maskCanvases.clear();
             maskVer++;
             selectedMaskId = null;
+            invalidateLensBlurCache();
+            lensBlurPreviewFocus = false;
             closeMaskUI();
+            closeFocalUI();
+            resetCanvasZoom();
             state = createDefaultEditState();
             switchEditorMainTab(activeEditorMainTab);
             renderEditorCanvas();
@@ -3490,6 +4022,7 @@
     function bindCanvasGestures() {
         const startPointer = (e) => {
             if (isCropping) return;
+            if (viewZoomEnabled && (viewPanMode || spacePanDown || (e.touches && e.touches.length > 1) || e.button === 1)) return;
             const pt = getCanvasPt(e);
 
             if (wbPickActive) {
@@ -3499,9 +4032,27 @@
                 return;
             }
 
+            // 0. Tap-to-Focus pada Smart Portrait Lens Blur
+            if (activeEditorMainTab === 'Tools' && activeToolKey === 'context_lensblur') {
+                if (!state.lensBlur) state.lensBlur = createDefaultLensBlur();
+                state.lensBlur.focusPt = {
+                    x: Math.min(0.98, Math.max(0.02, pt.x / Math.max(1, mainCanvas.width))),
+                    y: Math.min(0.98, Math.max(0.02, pt.y / Math.max(1, mainCanvas.height)))
+                };
+                if ((state.lensBlur.amount || 0) === 0) state.lensBlur.amount = 45;
+                invalidateLensBlurCache();
+                openToolContextBar('lensblur', 'Lens Blur');
+                renderEditorCanvas();
+                renderToolsStrip();
+                pushHistory('Lens Blur Focus Point', true);
+                flashToast('◎ Fokus Lens Blur dikunci pada subjek pilihan', 2200);
+                return;
+            }
+
             // 1. Magic Wand BG Removal
             if (magicWandActive) {
                 window.AITools.removeBackgroundAtPoint(basePhotoCanvas, pt.x, pt.y, 34, 16, true);
+                invalidateLensBlurCache();
                 renderEditorCanvas();
                 pushHistory('Magic Wand BG');
                 return;
@@ -3516,15 +4067,21 @@
                 return;
             }
 
-            // 3. Cek apakah mengklik layer Teks di atas foto
+            // 3. Cek apakah mengklik layer Teks di atas foto (mendukung multi-baris & align kiri/tengah/kanan)
             for (let i = state.texts.length - 1; i >= 0; i--) {
                 const t = state.texts[i];
-                ctx.font = `${t.bold ? '700' : '400'} ${t.size}px ${t.font}`;
-                const tw = Math.max(80, ctx.measureText(t.text).width + 36);
-                const th = t.size * 1.45;
+                ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? '700' : '400'} ${t.size}px ${t.font}`;
+                const lines = String(t.text || '').split('\n');
+                let maxW = 0;
+                lines.forEach((ln) => { const w = ctx.measureText(ln).width; if (w > maxW) maxW = w; });
+                const tw = Math.max(80, maxW + 36);
+                const th = Math.max(t.size * 1.45, lines.length * t.size * (t.lineHeight || 1.28) + 20);
+                let leftX = t.x - tw / 2;
+                if (t.align === 'left') leftX = t.x - 16;
+                else if (t.align === 'right') leftX = t.x - tw + 16;
                 if (
-                    pt.x >= t.x - tw / 2 &&
-                    pt.x <= t.x + tw / 2 &&
+                    pt.x >= leftX &&
+                    pt.x <= leftX + tw &&
                     pt.y >= t.y - th / 2 &&
                     pt.y <= t.y + th / 2
                 ) {
@@ -3730,6 +4287,7 @@
             });
         }
         clearMasks();
+        invalidateLensBlurCache();
         closeCropOverlay();
         document.getElementById('toolContextExtras').classList.add('hidden');
         renderEditorCanvas();
@@ -3738,6 +4296,7 @@
 
     function rotateBaseCanvas(dir) {
         clearMasks();
+        invalidateLensBlurCache();
         const ow = basePhotoCanvas.width;
         const oh = basePhotoCanvas.height;
         const nw = oh;
@@ -3765,29 +4324,1439 @@
     }
 
     // ==========================================
-    // 11. HISTORY (UNDO / REDO) & EXPORT
+    // VIEWPORT ZOOM & PAN (Untuk Masking & Brush Detail)
     // ==========================================
+    const vpPointers = new Map();
+    let vpPanDrag = null;
+    let vpPinch = null;
+    let vpZoomIdleTimer = 0;
+
+    function clampViewPan() {
+        const cw = mainCanvas.clientWidth || 1;
+        const ch = mainCanvas.clientHeight || 1;
+        if (viewZoom <= 1.005) {
+            viewPanX = 0;
+            viewPanY = 0;
+            return;
+        }
+        const maxX = cw * viewZoom * 0.48;
+        const maxY = ch * viewZoom * 0.48;
+        viewPanX = Math.max(-maxX, Math.min(maxX, viewPanX));
+        viewPanY = Math.max(-maxY, Math.min(maxY, viewPanY));
+    }
+
+    function applyCanvasZoomTransform() {
+        const wrap = document.getElementById('canvasWrapper');
+        const vp = document.getElementById('stageViewport');
+        const pctBtn = document.getElementById('btnZoomReset');
+        const panBtn = document.getElementById('btnZoomPan');
+        viewZoom = Math.max(1, Math.min(5, viewZoom));
+        if (viewZoom <= 1.005) {
+            viewZoom = 1;
+            viewPanX = 0;
+            viewPanY = 0;
+        } else {
+            clampViewPan();
+        }
+        if (wrap) {
+            wrap.style.transform = viewZoom === 1
+                ? ''
+                : `translate(${viewPanX.toFixed(1)}px, ${viewPanY.toFixed(1)}px) scale(${viewZoom.toFixed(3)})`;
+        }
+        if (pctBtn) pctBtn.textContent = `${Math.round(viewZoom * 100)}%`;
+        const panOn = viewZoomEnabled && (viewPanMode || spacePanDown);
+        if (panBtn) panBtn.classList.toggle('active', viewPanMode);
+        if (vp) vp.classList.toggle('pan-mode', panOn);
+        if (maskUiActive) scheduleMaskOverlay();
+    }
+
+    function setViewZoom(nextZoom, anchorX, anchorY) {
+        const vp = document.getElementById('stageViewport');
+        const oldZoom = viewZoom;
+        const clamped = Math.max(1, Math.min(5, nextZoom));
+        if (vp && anchorX !== undefined && anchorY !== undefined && oldZoom > 0) {
+            const vr = vp.getBoundingClientRect();
+            const vcx = vr.left + vr.width / 2;
+            const vcy = vr.top + vr.height / 2;
+            const ratio = clamped / oldZoom;
+            viewPanX = (anchorX - vcx) * (1 - ratio) + viewPanX * ratio;
+            viewPanY = (anchorY - vcy) * (1 - ratio) + viewPanY * ratio;
+        }
+        viewZoom = clamped;
+        applyCanvasZoomTransform();
+        clearTimeout(vpZoomIdleTimer);
+        if (viewZoom > 1.2) {
+            vpZoomIdleTimer = setTimeout(() => renderEditorCanvasNow('good'), 180);
+        }
+    }
+
+    function enableCanvasZoom(enabled) {
+        viewZoomEnabled = !!enabled;
+        const hud = document.getElementById('canvasZoomHud');
+        if (hud) hud.classList.toggle('hidden', !viewZoomEnabled);
+        if (!viewZoomEnabled) {
+            viewZoom = 1;
+            viewPanX = 0;
+            viewPanY = 0;
+            viewPanMode = false;
+            spacePanDown = false;
+            vpPointers.clear();
+            vpPanDrag = null;
+            vpPinch = null;
+        }
+        applyCanvasZoomTransform();
+    }
+
+    function resetCanvasZoom() {
+        enableCanvasZoom(false);
+    }
+
+    function bindCanvasZoomControls() {
+        if (viewZoomBound) return;
+        viewZoomBound = true;
+        const vp = document.getElementById('stageViewport');
+        const btnOut = document.getElementById('btnZoomOut');
+        const btnIn = document.getElementById('btnZoomIn');
+        const btnReset = document.getElementById('btnZoomReset');
+        const btnPan = document.getElementById('btnZoomPan');
+        if (!vp) return;
+
+        if (btnIn) btnIn.addEventListener('click', (e) => { e.stopPropagation(); setViewZoom(viewZoom * 1.45); });
+        if (btnOut) btnOut.addEventListener('click', (e) => { e.stopPropagation(); setViewZoom(viewZoom / 1.45); });
+        if (btnReset) {
+            btnReset.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (viewZoom > 1.05) setViewZoom(1);
+                else setViewZoom(2.2);
+            });
+        }
+        if (btnPan) {
+            btnPan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                viewPanMode = !viewPanMode;
+                applyCanvasZoomTransform();
+                if (maskUiActive) { drawMaskOverlay(); syncMaskQuickHud(); }
+            });
+        }
+
+        // Mouse wheel zoom anchored to cursor while in Masking or Brush mode
+        vp.addEventListener('wheel', (e) => {
+            if (!viewZoomEnabled) return;
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+            setViewZoom(viewZoom * factor, e.clientX, e.clientY);
+        }, { passive: false });
+
+        // Capture-phase pointer tracking for 2-finger pinch-zoom & pan mode
+        vp.addEventListener('pointerdown', (e) => {
+            if (!viewZoomEnabled) return;
+            if (e.target.closest('#canvasZoomHud, #maskQuickHud')) return;
+            vpPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+            if (vpPointers.size === 2) {
+                // Batalkan goresan brush/mask yang baru saja dimulai agar pinch tidak meninggalkan titik nyasar
+                cancelAccidentalStrokeForPinch();
+                const pts = [...vpPointers.values()];
+                const d0 = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+                const mx = (pts[0].x + pts[1].x) / 2;
+                const my = (pts[0].y + pts[1].y) / 2;
+                vpPanDrag = null;
+                vpPinch = { d0, z0: viewZoom, px0: viewPanX, py0: viewPanY, mx0: mx, my0: my };
+                return;
+            }
+
+            if (vpPointers.size === 1 && (viewPanMode || spacePanDown || e.button === 1)) {
+                e.preventDefault();
+                vpPanDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, px0: viewPanX, py0: viewPanY };
+                vp.classList.add('pan-dragging');
+                try { vp.setPointerCapture(e.pointerId); } catch (_) {}
+            }
+        }, true);
+
+        vp.addEventListener('pointermove', (e) => {
+            if (!viewZoomEnabled) return;
+            if (vpPointers.has(e.pointerId)) {
+                vpPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            }
+            if (vpPinch && vpPointers.size >= 2) {
+                e.preventDefault();
+                const pts = [...vpPointers.values()];
+                const d = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+                const mx = (pts[0].x + pts[1].x) / 2;
+                const my = (pts[0].y + pts[1].y) / 2;
+                const nextZ = Math.max(1, Math.min(5, vpPinch.z0 * (d / vpPinch.d0)));
+                const vr = vp.getBoundingClientRect();
+                const vcx = vr.left + vr.width / 2;
+                const vcy = vr.top + vr.height / 2;
+                const ratio = nextZ / vpPinch.z0;
+                viewZoom = nextZ;
+                viewPanX = (mx - vcx) - (vpPinch.mx0 - vcx) * ratio + vpPinch.px0 * ratio;
+                viewPanY = (my - vcy) - (vpPinch.my0 - vcy) * ratio + vpPinch.py0 * ratio;
+                applyCanvasZoomTransform();
+                return;
+            }
+            if (vpPanDrag && vpPanDrag.id === e.pointerId) {
+                e.preventDefault();
+                viewPanX = vpPanDrag.px0 + (e.clientX - vpPanDrag.sx);
+                viewPanY = vpPanDrag.py0 + (e.clientY - vpPanDrag.sy);
+                applyCanvasZoomTransform();
+            }
+        }, true);
+
+        const endVp = (e) => {
+            vpPointers.delete(e.pointerId);
+            if (vpPointers.size < 2 && vpPinch) {
+                vpPinch = null;
+                if (viewZoom > 1.2) renderEditorCanvasNow('good');
+            }
+            if (vpPanDrag && vpPanDrag.id === e.pointerId) {
+                vpPanDrag = null;
+                vp.classList.remove('pan-dragging');
+            }
+        };
+        vp.addEventListener('pointerup', endVp, true);
+        vp.addEventListener('pointercancel', endVp, true);
+
+        // Spacebar temporary pan (desktop)
+        window.addEventListener('keydown', (e) => {
+            if (!viewZoomEnabled || e.code !== 'Space' || spacePanDown) return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            e.preventDefault();
+            spacePanDown = true;
+            applyCanvasZoomTransform();
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' && spacePanDown) {
+                spacePanDown = false;
+                vpPanDrag = null;
+                vp.classList.remove('pan-dragging');
+                applyCanvasZoomTransform();
+            }
+        });
+    }
+
+    function cancelAccidentalStrokeForPinch() {
+        if (maskDrag && maskDrag.mode === 'paint' && maskDrag.preSnap) {
+            const mc = maskCanvases.get(maskDrag.m.id);
+            if (mc) {
+                const c = mc.getContext('2d');
+                c.clearRect(0, 0, mc.width, mc.height);
+                c.drawImage(maskDrag.preSnap, 0, 0);
+                maskVer++;
+                renderEditorCanvas();
+                scheduleMaskOverlay();
+            }
+            maskDrag = null;
+        }
+        if (brushDrawing) brushDrawing = false;
+    }
+
     // ==========================================
-    // LOCAL ADJUSTMENT MASKS (Linear / Radial / Brush) — pengaturan cahaya per area
+    // INTERACTIVE FOCAL POINT OVERLAY (Radial / Zoom / Spin / Bokeh / Tilt-Shift Blur)
     // ==========================================
+    const FOCAL_BLUR_TOOLS = new Set(['edgeBlur', 'zoomBlur', 'spinBlur', 'bokeh', 'tiltShift']);
+    let focalUiActive = false, focalShowGuide = true, focalBound = false, focalRO = null, focalDrag = null, focalSubParam = 'amount';
+
+    function getFocalConfig(toolKey) {
+        if (!state.blurCenters) state.blurCenters = createDefaultBlurCenters();
+        const bc = state.blurCenters;
+        if (toolKey === 'zoomBlur') return { kind: 'point', obj: bc.zoom, def: { x: 0.5, y: 0.5 }, label: 'Zoom Blur' };
+        if (toolKey === 'spinBlur') return { kind: 'point', obj: bc.spin, def: { x: 0.5, y: 0.5 }, label: 'Spin Blur' };
+        if (toolKey === 'bokeh') return { kind: 'circle', obj: bc.bokeh, def: { x: 0.5, y: 0.48, r: 0.26, f: 0.30 }, label: 'Bokeh Blur' };
+        if (toolKey === 'tiltShift') return { kind: 'tilt', obj: bc, def: { tiltY: 0.5, tiltBand: 0.20 }, label: 'Tilt Shift' };
+        return { kind: 'circle', obj: bc.edge, def: { x: 0.5, y: 0.5, r: 0.28, f: 0.38 }, label: 'Radial Blur' };
+    }
+
+    function openFocalUI(toolKey) {
+        focalUiActive = true;
+        bindFocalEvents();
+        const ov = document.getElementById('focalOverlay');
+        if (ov) ov.classList.remove('hidden');
+        drawFocalOverlay();
+        if (!focalRO && window.ResizeObserver) {
+            focalRO = new ResizeObserver(() => { if (focalUiActive) drawFocalOverlay(); });
+            focalRO.observe(mainCanvas);
+        }
+    }
+
+    function closeFocalUI() {
+        focalUiActive = false;
+        focalDrag = null;
+        const ov = document.getElementById('focalOverlay');
+        if (ov) ov.classList.add('hidden');
+    }
+
+    function renderFocalContextBar(toolKey) {
+        const bar = document.getElementById('toolContextExtras');
+        bar.classList.remove('hidden');
+        bar.innerHTML = '';
+        const cfg = getFocalConfig(toolKey);
+        const mk = (label, fn, active, paramKey = '') => {
+            const b = document.createElement('button');
+            b.className = `dark-chip ${active ? 'active' : ''}`;
+            b.textContent = label;
+            if (paramKey) b.dataset.focalParam = paramKey;
+            b.addEventListener('click', fn);
+            bar.appendChild(b);
+            return b;
+        };
+
+        mk(`BLUR ${state.adjust[toolKey] || 0}`, () => {
+            focalSubParam = 'amount';
+            syncMasterSliderForFocal(toolKey);
+            renderFocalContextBar(toolKey);
+        }, focalSubParam === 'amount', 'amount');
+
+        if (cfg.kind === 'circle') {
+            const rPct = Math.round((cfg.obj.r ?? cfg.def.r) * 100);
+            const fPct = Math.round((cfg.obj.f ?? cfg.def.f) * 100);
+            mk(`RADIUS ${rPct}%`, () => {
+                focalSubParam = 'radius';
+                syncMasterSliderForFocal(toolKey);
+                renderFocalContextBar(toolKey);
+            }, focalSubParam === 'radius', 'radius');
+            mk(`FEATHER ${fPct}%`, () => {
+                focalSubParam = 'feather';
+                syncMasterSliderForFocal(toolKey);
+                renderFocalContextBar(toolKey);
+            }, focalSubParam === 'feather', 'feather');
+        } else if (cfg.kind === 'tilt') {
+            const bPct = Math.round((cfg.obj.tiltBand ?? 0.20) * 100);
+            mk(`AREA FOKUS ${bPct}%`, () => {
+                focalSubParam = 'band';
+                syncMasterSliderForFocal(toolKey);
+                renderFocalContextBar(toolKey);
+            }, focalSubParam === 'band', 'band');
+        }
+
+        mk('◎ RESET TENGAH', () => {
+            if (cfg.kind === 'tilt') {
+                cfg.obj.tiltY = cfg.def.tiltY;
+                cfg.obj.tiltBand = cfg.def.tiltBand;
+            } else {
+                Object.assign(cfg.obj, cfg.def);
+            }
+            syncMasterSliderForFocal(toolKey);
+            renderFocalContextBar(toolKey);
+            drawFocalOverlay();
+            renderEditorCanvas();
+            pushHistory(`Reset ${cfg.label} center`, true);
+        });
+
+        mk(focalShowGuide ? '👁 PANDUAN ✓' : '👁 PANDUAN', () => {
+            focalShowGuide = !focalShowGuide;
+            drawFocalOverlay();
+            renderFocalContextBar(toolKey);
+        }, focalShowGuide);
+    }
+
+    function syncMasterSliderForFocal(toolKey) {
+        const cfg = getFocalConfig(toolKey);
+        const slider = document.getElementById('masterSlider');
+        masterSliderMode = 'focal';
+        slider.disabled = false;
+
+        if (focalSubParam === 'radius' && cfg.kind === 'circle') {
+            slider.min = 5; slider.max = 75;
+            slider.value = Math.round((cfg.obj.r ?? cfg.def.r) * 100);
+            document.getElementById('activeParamCategory').textContent = `${cfg.label.toUpperCase()} · FOKUS`;
+            document.getElementById('activeParamTitle').textContent = 'Radius Fokus';
+            document.getElementById('activeParamValue').textContent = slider.value;
+        } else if (focalSubParam === 'feather' && cfg.kind === 'circle') {
+            slider.min = 5; slider.max = 80;
+            slider.value = Math.round((cfg.obj.f ?? cfg.def.f) * 100);
+            document.getElementById('activeParamCategory').textContent = `${cfg.label.toUpperCase()} · TRANSISI`;
+            document.getElementById('activeParamTitle').textContent = 'Feather';
+            document.getElementById('activeParamValue').textContent = slider.value;
+        } else if (focalSubParam === 'band' && cfg.kind === 'tilt') {
+            slider.min = 5; slider.max = 42;
+            slider.value = Math.round((cfg.obj.tiltBand ?? 0.20) * 100);
+            document.getElementById('activeParamCategory').textContent = 'TILT SHIFT · FOKUS';
+            document.getElementById('activeParamTitle').textContent = 'Lebar Fokus';
+            document.getElementById('activeParamValue').textContent = slider.value;
+        } else {
+            slider.min = 0; slider.max = 100;
+            slider.value = state.adjust[toolKey] ?? 0;
+            document.getElementById('activeParamCategory').textContent = 'OPTICS · GESER TITIK DI FOTO';
+            document.getElementById('activeParamTitle').textContent = cfg.label;
+            document.getElementById('activeParamValue').textContent = slider.value;
+        }
+
+        const hint = cfg.kind === 'circle'
+            ? 'GESER TITIK TENGAH DI FOTO UNTUK PINDAH FOKUS · TARIK TITIK TEPI = ATUR RADIUS'
+            : cfg.kind === 'tilt'
+                ? 'GESER GARIS KUNING ATAS/BAWAH UNTUK PINDAH AREA FOKUS TILT-SHIFT'
+                : 'GESER TITIK KUNING DI FOTO UNTUK MEMINDAHKAN PUSAT RADIAL BLUR';
+        document.getElementById('gestureHintText').textContent = hint;
+    }
+
+    function applyFocalSliderValue(toolKey, val) {
+        const cfg = getFocalConfig(toolKey);
+        let txt = `BLUR ${val}`;
+        if (focalSubParam === 'radius' && cfg.kind === 'circle') {
+            cfg.obj.r = val / 100;
+            txt = `RADIUS ${val}%`;
+        } else if (focalSubParam === 'feather' && cfg.kind === 'circle') {
+            cfg.obj.f = val / 100;
+            txt = `FEATHER ${val}%`;
+        } else if (focalSubParam === 'band' && cfg.kind === 'tilt') {
+            cfg.obj.tiltBand = val / 100;
+            txt = `AREA FOKUS ${val}%`;
+        } else {
+            state.adjust[toolKey] = val;
+        }
+        const chip = document.querySelector(`#toolContextExtras [data-focal-param="${focalSubParam}"]`);
+        if (chip) chip.textContent = txt;
+    }
+
+    function resetFocalSubParam(toolKey) {
+        const cfg = getFocalConfig(toolKey);
+        if (focalSubParam === 'radius' && cfg.kind === 'circle') {
+            cfg.obj.r = cfg.def.r; return Math.round(cfg.def.r * 100);
+        }
+        if (focalSubParam === 'feather' && cfg.kind === 'circle') {
+            cfg.obj.f = cfg.def.f; return Math.round(cfg.def.f * 100);
+        }
+        if (focalSubParam === 'band' && cfg.kind === 'tilt') {
+            cfg.obj.tiltBand = cfg.def.tiltBand; return Math.round(cfg.def.tiltBand * 100);
+        }
+        state.adjust[toolKey] = 0;
+        return 0;
+    }
+
+    function drawFocalOverlay() {
+        if (!focalUiActive || !FOCAL_BLUR_TOOLS.has(activeToolKey)) return;
+        const ov = document.getElementById('focalOverlay');
+        if (!ov) return;
+        const cw = Math.max(1, mainCanvas.clientWidth);
+        const ch = Math.max(1, mainCanvas.clientHeight);
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
+        if (ov.width !== pw || ov.height !== ph) { ov.width = pw; ov.height = ph; }
+
+        const c = ov.getContext('2d');
+        c.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.clearRect(0, 0, cw, ch);
+        if (!focalShowGuide) return;
+
+        const cfg = getFocalConfig(activeToolKey);
+        const drawHandle = (px, py, r = 9, fill = '#ffb547') => {
+            c.save();
+            c.setLineDash([]);
+            c.shadowColor = 'rgba(0,0,0,0.6)';
+            c.shadowBlur = 8;
+            c.fillStyle = fill;
+            c.strokeStyle = '#211d1a';
+            c.lineWidth = 2.5;
+            c.beginPath();
+            c.arc(px, py, r, 0, Math.PI * 2);
+            c.fill();
+            c.stroke();
+            c.restore();
+        };
+
+        if (cfg.kind === 'tilt') {
+            const cy = (cfg.obj.tiltY ?? 0.5) * ch;
+            const halfH = (cfg.obj.tiltBand ?? 0.20) * ch;
+            c.save();
+            c.strokeStyle = 'rgba(255, 181, 71, 0.9)';
+            c.lineWidth = 1.6;
+            c.setLineDash([7, 5]);
+            c.beginPath(); c.moveTo(0, cy - halfH); c.lineTo(cw, cy - halfH); c.stroke();
+            c.beginPath(); c.moveTo(0, cy + halfH); c.lineTo(cw, cy + halfH); c.stroke();
+            c.setLineDash([]);
+            c.strokeStyle = 'rgba(255, 181, 71, 0.35)';
+            c.beginPath(); c.moveTo(0, cy); c.lineTo(cw, cy); c.stroke();
+            c.restore();
+            drawHandle(cw * 0.5, cy, 10, '#ffb547');
+            drawHandle(cw * 0.5, Math.max(12, cy - halfH), 7, '#f4f1ea');
+            return;
+        }
+
+        const cx = (cfg.obj.x ?? 0.5) * cw;
+        const cy = (cfg.obj.y ?? 0.5) * ch;
+        const minS = Math.min(cw, ch);
+        const maxS = Math.max(cw, ch);
+
+        c.save();
+        if (cfg.kind === 'circle') {
+            const innerR = Math.max(10, (cfg.obj.r ?? cfg.def.r) * minS);
+            const outerR = innerR + Math.max(14, (cfg.obj.f ?? cfg.def.f) * maxS);
+            // Outer feather ring (samar)
+            c.strokeStyle = 'rgba(244, 241, 234, 0.35)';
+            c.lineWidth = 1.2;
+            c.setLineDash([4, 6]);
+            c.beginPath(); c.arc(cx, cy, outerR, 0, Math.PI * 2); c.stroke();
+            // Inner sharp focus ring
+            c.strokeStyle = '#ffb547';
+            c.lineWidth = 1.8;
+            c.setLineDash([8, 5]);
+            c.beginPath(); c.arc(cx, cy, innerR, 0, Math.PI * 2); c.stroke();
+            // Crosshair
+            c.setLineDash([]);
+            c.strokeStyle = 'rgba(255, 181, 71, 0.75)';
+            c.lineWidth = 1.4;
+            c.beginPath(); c.moveTo(cx - 16, cy); c.lineTo(cx + 16, cy); c.moveTo(cx, cy - 16); c.lineTo(cx, cy + 16); c.stroke();
+            c.restore();
+            drawHandle(cx, cy, 8, '#ffb547');
+            // Radius rim handle (clamp inside view if needed)
+            const rx = Math.min(cw - 10, cx + innerR);
+            drawHandle(rx, cy, 8, '#f4f1ea');
+        } else {
+            // Zoom Blur or Spin Blur focal point reticle
+            c.strokeStyle = 'rgba(255, 181, 71, 0.85)';
+            c.lineWidth = 1.6;
+            if (activeToolKey === 'zoomBlur') {
+                for (let i = 0; i < 8; i++) {
+                    const a = (i * Math.PI) / 4;
+                    c.beginPath();
+                    c.moveTo(cx + Math.cos(a) * 16, cy + Math.sin(a) * 16);
+                    c.lineTo(cx + Math.cos(a) * 34, cy + Math.sin(a) * 34);
+                    c.stroke();
+                }
+            } else {
+                c.setLineDash([10, 7]);
+                c.beginPath(); c.arc(cx, cy, 28, 0, Math.PI * 2); c.stroke();
+                c.beginPath(); c.arc(cx, cy, 48, 0, Math.PI * 2); c.stroke();
+            }
+            c.setLineDash([]);
+            c.strokeStyle = 'rgba(244, 241, 234, 0.6)';
+            c.beginPath(); c.moveTo(cx - 12, cy); c.lineTo(cx + 12, cy); c.moveTo(cx, cy - 12); c.lineTo(cx, cy + 12); c.stroke();
+            c.restore();
+            drawHandle(cx, cy, 9, '#ffb547');
+        }
+
+        // Koordinat tipis saat menggeser
+        if (focalDrag) {
+            c.save();
+            const txt = `${Math.round((cfg.obj.x ?? 0.5) * 100)}% · ${Math.round((cfg.obj.y ?? 0.5) * 100)}%`;
+            c.font = '600 11px Inter, sans-serif';
+            const tw = c.measureText(txt).width + 14;
+            const bx = Math.min(cw - tw - 6, Math.max(6, cx - tw / 2));
+            const by = Math.max(8, cy - 38);
+            c.fillStyle = 'rgba(28, 25, 23, 0.85)';
+            c.beginPath(); c.roundRect(bx, by, tw, 22, 99); c.fill();
+            c.fillStyle = '#f4f1ea';
+            c.textAlign = 'center'; c.textBaseline = 'middle';
+            c.fillText(txt, bx + tw / 2, by + 11);
+            c.restore();
+        }
+    }
+
+    function bindFocalEvents() {
+        if (focalBound) return;
+        focalBound = true;
+        const ov = document.getElementById('focalOverlay');
+        if (!ov) return;
+
+        const norm = (e) => {
+            const r = ov.getBoundingClientRect();
+            return {
+                x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+                y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+                w: r.width,
+                h: r.height
+            };
+        };
+
+        ov.addEventListener('pointerdown', (e) => {
+            if (!focalUiActive || !FOCAL_BLUR_TOOLS.has(activeToolKey)) return;
+            e.preventDefault();
+            try { ov.setPointerCapture(e.pointerId); } catch (_) {}
+            const p = norm(e);
+            const cfg = getFocalConfig(activeToolKey);
+
+            // Jika nilai blur masih 0 saat mulai geser titik tengah, naikkan otomatis ke 35 agar perubahan langsung terlihat!
+            if ((state.adjust[activeToolKey] || 0) === 0) {
+                state.adjust[activeToolKey] = 35;
+                syncMasterSliderForFocal(activeToolKey);
+                renderFocalContextBar(activeToolKey);
+                refreshToolDot();
+            }
+
+            let mode = 'center';
+            if (cfg.kind === 'circle') {
+                const minS = Math.min(p.w, p.h);
+                const innerR = Math.max(10, (cfg.obj.r ?? cfg.def.r) * minS);
+                const hx = Math.min(p.w - 10, (cfg.obj.x ?? 0.5) * p.w + innerR);
+                const hy = (cfg.obj.y ?? 0.5) * p.h;
+                if (Math.hypot(p.x * p.w - hx, p.y * p.h - hy) < 28) {
+                    mode = 'radius';
+                } else {
+                    cfg.obj.x = p.x;
+                    cfg.obj.y = p.y;
+                }
+            } else if (cfg.kind === 'tilt') {
+                const cy = (cfg.obj.tiltY ?? 0.5) * p.h;
+                const topY = Math.max(12, cy - (cfg.obj.tiltBand ?? 0.20) * p.h);
+                if (Math.hypot(p.x * p.w - p.w * 0.5, p.y * p.h - topY) < 28) {
+                    mode = 'band';
+                } else {
+                    cfg.obj.tiltY = Math.max(0.05, Math.min(0.95, p.y));
+                }
+            } else {
+                cfg.obj.x = p.x;
+                cfg.obj.y = p.y;
+            }
+
+            focalDrag = { mode, cfg, toolKey: activeToolKey };
+            drawFocalOverlay();
+            renderEditorCanvas();
+        });
+
+        ov.addEventListener('pointermove', (e) => {
+            if (!focalDrag) return;
+            const p = norm(e);
+            const { mode, cfg, toolKey } = focalDrag;
+            if (mode === 'radius') {
+                const minS = Math.min(p.w, p.h);
+                const d = Math.hypot((p.x - cfg.obj.x) * p.w, (p.y - cfg.obj.y) * p.h);
+                cfg.obj.r = Math.max(0.05, Math.min(0.75, d / minS));
+                if (focalSubParam === 'radius') syncMasterSliderForFocal(toolKey);
+            } else if (mode === 'band') {
+                cfg.obj.tiltBand = Math.max(0.05, Math.min(0.42, Math.abs(p.y - cfg.obj.tiltY)));
+                if (focalSubParam === 'band') syncMasterSliderForFocal(toolKey);
+            } else if (cfg.kind === 'tilt') {
+                cfg.obj.tiltY = Math.max(0.05, Math.min(0.95, p.y));
+            } else {
+                cfg.obj.x = p.x;
+                cfg.obj.y = p.y;
+            }
+            drawFocalOverlay();
+            renderEditorCanvas();
+        });
+
+        const endFocal = () => {
+            if (!focalDrag) return;
+            const { cfg, toolKey } = focalDrag;
+            focalDrag = null;
+            renderFocalContextBar(toolKey);
+            drawFocalOverlay();
+            renderEditorCanvas();
+            pushHistory(`Move ${cfg.label} focus`, true);
+        };
+        ov.addEventListener('pointerup', endFocal);
+        ov.addEventListener('pointercancel', endFocal);
+    }
+
+    // ==========================================
+    // GLITCH STUDIO UI (8 Modes + Adjustable Sliders)
+    // ==========================================
+    const GLITCH_MODES = [
+        { id: 'none', label: 'OFF' },
+        { id: 'rgb_split', label: 'RGB SPLIT' },
+        { id: 'vhs', label: 'VHS TAPE' },
+        { id: 'slice', label: 'SLICE SHIFT' },
+        { id: 'pixel_block', label: 'BLOCK MOSH' },
+        { id: 'wave', label: 'CRT WAVE' },
+        { id: 'prism', label: 'PRISM' },
+        { id: 'pixel_sort', label: 'PIXEL MELT' },
+        { id: 'cyber', label: 'CYBERPUNK' }
+    ];
+    const GLITCH_ATTRS = [
+        { key: 'intensity', label: 'INTENSITY', min: 0, max: 100, def: 55 },
+        { key: 'shift', label: 'RGB SHIFT', min: 0, max: 100, def: 45 },
+        { key: 'slices', label: 'DISTORT', min: 0, max: 100, def: 40 },
+        { key: 'noise', label: 'SCAN / NOISE', min: 0, max: 100, def: 25 },
+        { key: 'angle', label: 'ANGLE', min: -180, max: 180, def: 0 }
+    ];
+    let glitchAttr = 'intensity';
+
+    function renderGlitchContextBar(bar) {
+        if (!state.glitch) state.glitch = createDefaultGlitchState();
+        const g = state.glitch;
+        const panel = document.createElement('div');
+        panel.className = 'glitch-panel';
+        const row = () => { const r = document.createElement('div'); r.className = 'glitch-row'; panel.appendChild(r); return r; };
+
+        // Row 1: Glitch Mode Selector
+        const r1 = row();
+        GLITCH_MODES.forEach((m) => {
+            const b = document.createElement('button');
+            b.className = `dark-chip ${g.mode === m.id ? 'active' : ''}`;
+            b.textContent = m.label;
+            b.addEventListener('click', () => {
+                g.mode = m.id;
+                if (m.id !== 'none' && !g.intensity) g.intensity = 55;
+                openToolContextBar('glitch', 'Glitch');
+                renderEditorCanvas();
+                renderToolsStrip();
+                pushHistory(`Glitch ${m.label}`, true);
+            });
+            r1.appendChild(b);
+        });
+
+        // Row 2: Parameter Sliders + Randomize Seed + Reset
+        if (g.mode !== 'none') {
+            const r2 = row();
+            GLITCH_ATTRS.forEach((a) => {
+                const val = g[a.key] ?? a.def;
+                const b = document.createElement('button');
+                b.className = `dark-chip ${glitchAttr === a.key ? 'active' : ''}`;
+                b.dataset.glitchAttr = a.key;
+                b.textContent = a.key === 'angle' ? `${a.label} ${val}°` : `${a.label} ${val}`;
+                b.addEventListener('click', () => {
+                    glitchAttr = a.key;
+                    openToolContextBar('glitch', 'Glitch');
+                });
+                r2.appendChild(b);
+            });
+
+            const seedBtn = document.createElement('button');
+            seedBtn.className = 'dark-chip chip-ai';
+            seedBtn.textContent = '🎲 ACAK POLA';
+            seedBtn.addEventListener('click', () => {
+                g.seed = ((g.seed || 42) + 17 + Math.floor(Math.random() * 500)) % 99999;
+                renderEditorCanvas();
+                pushHistory('Randomize Glitch', true);
+            });
+            r2.appendChild(seedBtn);
+
+            const resetBtn = document.createElement('button');
+            resetBtn.className = 'dark-chip';
+            resetBtn.textContent = 'RESET';
+            resetBtn.addEventListener('click', () => {
+                state.glitch = createDefaultGlitchState();
+                openToolContextBar('glitch', 'Glitch');
+                renderEditorCanvas();
+                renderToolsStrip();
+                pushHistory('Reset Glitch', true);
+            });
+            r2.appendChild(resetBtn);
+        }
+
+        bar.appendChild(panel);
+        syncMasterSliderForGlitch();
+    }
+
+    function updateGlitchChipLabel(attrKey, val) {
+        const btn = document.querySelector(`#toolContextExtras [data-glitch-attr="${attrKey}"]`);
+        const meta = GLITCH_ATTRS.find((a) => a.key === attrKey);
+        if (btn && meta) {
+            btn.textContent = attrKey === 'angle' ? `${meta.label} ${val}°` : `${meta.label} ${val}`;
+        }
+    }
+
+    function syncMasterSliderForGlitch() {
+        const slider = document.getElementById('masterSlider');
+        const g = state.glitch || createDefaultGlitchState();
+        if (g.mode === 'none') {
+            masterSliderMode = 'context';
+            slider.disabled = true;
+            document.getElementById('activeParamCategory').textContent = 'GLITCH STUDIO';
+            document.getElementById('activeParamTitle').textContent = 'Pilih Efek Glitch';
+            document.getElementById('activeParamValue').textContent = 'OFF';
+            document.getElementById('gestureHintText').textContent = 'PILIH SALAH SATU MODE GLITCH DI BAWAH UNTUK MENGATUR SLIDER';
+            return;
+        }
+        const meta = GLITCH_ATTRS.find((a) => a.key === glitchAttr) || GLITCH_ATTRS[0];
+        const modeObj = GLITCH_MODES.find((m) => m.id === g.mode);
+        glitchAttr = meta.key;
+        masterSliderMode = 'glitch';
+        slider.disabled = false;
+        slider.min = meta.min;
+        slider.max = meta.max;
+        slider.value = g[meta.key] ?? meta.def;
+        document.getElementById('activeParamCategory').textContent = `GLITCH · ${modeObj ? modeObj.label : g.mode.toUpperCase()}`;
+        document.getElementById('activeParamTitle').textContent = meta.label;
+        document.getElementById('activeParamValue').textContent = meta.key === 'angle' ? `${slider.value}°` : slider.value;
+        document.getElementById('gestureHintText').textContent = 'PILIH PARAMETER (INTENSITY / RGB SHIFT / DISTORT / NOISE / ANGLE) · DOUBLE-CLICK SLIDER = RESET';
+    }
+
+    // ==========================================
+    // HSL COLOR MIXER UI (8-Channel Selective Hue / Saturation / Luminance)
+    // ==========================================
+    const HSL_PARAMS = [
+        { key: 'h', label: 'HUE', title: 'Hue' },
+        { key: 's', label: 'SATURATION', title: 'Saturation' },
+        { key: 'l', label: 'LUMINANCE', title: 'Luminance' }
+    ];
+    let activeHslChannel = 'red';
+    let activeHslParam = 's';
+
+    function formatSignedVal(v) {
+        return v > 0 ? `+${v}` : `${v}`;
+    }
+
+    function renderHslContextBar(bar) {
+        if (!state.hsl) state.hsl = createDefaultHSL();
+        const chObj = HSL_CHANNELS.find((c) => c.key === activeHslChannel) || HSL_CHANNELS[0];
+        activeHslChannel = chObj.key;
+        const chState = state.hsl[activeHslChannel] || (state.hsl[activeHslChannel] = { h: 0, s: 0, l: 0 });
+
+        const panel = document.createElement('div');
+        panel.className = 'hsl-panel';
+
+        // Row 1: 8 Color Swatches
+        const swRow = document.createElement('div');
+        swRow.className = 'hsl-swatch-row';
+        HSL_CHANNELS.forEach((ch) => {
+            const isSel = ch.key === activeHslChannel;
+            const isMod = hslChannelActive(state.hsl[ch.key]);
+            const btn = document.createElement('button');
+            btn.className = `hsl-swatch-btn ${isSel ? 'active' : ''} ${isMod ? 'modified' : ''}`.trim();
+            btn.dataset.hslCh = ch.key;
+            btn.title = ch.label;
+            btn.setAttribute('aria-label', ch.label);
+            btn.innerHTML = `<span class="hsl-swatch-dot" style="background:${ch.color}"></span><span class="hsl-swatch-mod"></span>`;
+            btn.addEventListener('click', () => {
+                activeHslChannel = ch.key;
+                openToolContextBar('hsl', 'Color Mixer');
+            });
+            swRow.appendChild(btn);
+        });
+        panel.appendChild(swRow);
+
+        // Row 2: Hue / Saturation / Luminance + Reset Warna + Reset Semua
+        const pRow = document.createElement('div');
+        pRow.className = 'hsl-param-row';
+        HSL_PARAMS.forEach((pm) => {
+            const val = chState[pm.key] || 0;
+            const btn = document.createElement('button');
+            btn.className = `dark-chip ${activeHslParam === pm.key ? 'active' : ''}`;
+            btn.dataset.hslParam = pm.key;
+            btn.textContent = val !== 0 ? `${pm.label} ${formatSignedVal(val)}` : pm.label;
+            btn.addEventListener('click', () => {
+                activeHslParam = pm.key;
+                openToolContextBar('hsl', 'Color Mixer');
+            });
+            pRow.appendChild(btn);
+        });
+
+        const resetChBtn = document.createElement('button');
+        resetChBtn.className = 'dark-chip';
+        resetChBtn.textContent = `RESET ${chObj.short}`;
+        resetChBtn.addEventListener('click', () => {
+            state.hsl[activeHslChannel] = { h: 0, s: 0, l: 0 };
+            openToolContextBar('hsl', 'Color Mixer');
+            renderEditorCanvas();
+            renderToolsStrip();
+            pushHistory(`Reset HSL ${chObj.label}`, true);
+        });
+        pRow.appendChild(resetChBtn);
+
+        const resetAllBtn = document.createElement('button');
+        resetAllBtn.className = 'dark-chip';
+        resetAllBtn.textContent = 'RESET SEMUA';
+        resetAllBtn.addEventListener('click', () => {
+            state.hsl = createDefaultHSL();
+            openToolContextBar('hsl', 'Color Mixer');
+            renderEditorCanvas();
+            renderToolsStrip();
+            pushHistory('Reset All HSL', true);
+        });
+        pRow.appendChild(resetAllBtn);
+
+        panel.appendChild(pRow);
+        bar.appendChild(panel);
+        syncMasterSliderForHsl();
+    }
+
+    function updateHslLiveUI(chKey, paramKey, val) {
+        const pBtn = document.querySelector(`#toolContextExtras [data-hsl-param="${paramKey}"]`);
+        const meta = HSL_PARAMS.find((p) => p.key === paramKey);
+        if (pBtn && meta) {
+            pBtn.textContent = val !== 0 ? `${meta.label} ${formatSignedVal(val)}` : meta.label;
+        }
+        const sBtn = document.querySelector(`#toolContextExtras [data-hsl-ch="${chKey}"]`);
+        if (sBtn && state.hsl && state.hsl[chKey]) {
+            sBtn.classList.toggle('modified', hslChannelActive(state.hsl[chKey]));
+        }
+    }
+
+    function syncMasterSliderForHsl() {
+        const slider = document.getElementById('masterSlider');
+        if (!state.hsl) state.hsl = createDefaultHSL();
+        const chObj = HSL_CHANNELS.find((c) => c.key === activeHslChannel) || HSL_CHANNELS[0];
+        const pObj = HSL_PARAMS.find((p) => p.key === activeHslParam) || HSL_PARAMS[1];
+        const val = (state.hsl[chObj.key] && state.hsl[chObj.key][pObj.key]) || 0;
+        masterSliderMode = 'hsl';
+        slider.disabled = false;
+        slider.min = -100;
+        slider.max = 100;
+        slider.value = val;
+        document.getElementById('activeParamCategory').textContent = `COLOR MIXER · ${chObj.label.toUpperCase()}`;
+        document.getElementById('activeParamTitle').textContent = pObj.title;
+        document.getElementById('activeParamValue').textContent = formatSignedVal(val);
+        document.getElementById('gestureHintText').textContent = 'PILIH WARNA · GESER HUE / SATURATION / LUMINANCE · DOUBLE-CLICK SLIDER = RESET';
+    }
+
+    // ==========================================
+    // SMART PORTRAIT LENS BLUR (AI Subject-Aware DSLR Bokeh)
+    // ==========================================
+    const LENSBLUR_ATTRS = [
+        { key: 'amount', label: 'BLUR', title: 'Blur Latar', min: 0, max: 100, def: 0 },
+        { key: 'bokeh', label: 'BOKEH BLOOM', title: 'Bokeh Bloom', min: 0, max: 100, def: 35 },
+        { key: 'protect', label: 'AREA FOKUS', title: 'Area Fokus', min: -40, max: 40, def: 0 },
+        { key: 'feather', label: 'TRANSISI', title: 'Transisi Tepi', min: 0, max: 100, def: 18 }
+    ];
+    let lensBlurAttr = 'amount';
+    let lensBlurSubjectCache = { key: null, canvas: null };
+    let lensBlurVer = 0;
+    let lensBlurPreviewFocus = false;
+    let lensBlurWarming = false;
+
+    function invalidateLensBlurCache() {
+        lensBlurSubjectCache = { key: null, canvas: null };
+        lensBlurVer++;
+    }
+
+    function getLensBlurCacheKey() {
+        const fp = state.lensBlur && state.lensBlur.focusPt;
+        return [
+            currentPhotoId || '',
+            basePhotoCanvas.width,
+            basePhotoCanvas.height,
+            state.adjust.straighten || 0,
+            state.flipH ? 1 : 0,
+            state.flipV ? 1 : 0,
+            fp ? `${fp.x.toFixed(3)},${fp.y.toFixed(3)}` : 'auto',
+            lensBlurVer
+        ].join('|');
+    }
+
+    function getLensBlurSubjectMask(forceRedetect = false) {
+        if (!window.AITools || !window.AITools.detectSubjectMask || !basePhotoCanvas.width) return null;
+        const key = getLensBlurCacheKey();
+        if (!forceRedetect && lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas) {
+            return lensBlurSubjectCache.canvas;
+        }
+        const src = renderAlignedSourceForAI();
+        const sc = Math.min(1, 768 / Math.max(src.width, src.height));
+        const mw = Math.max(16, Math.round(src.width * sc));
+        const mh = Math.max(16, Math.round(src.height * sc));
+        const fp = (state.lensBlur && state.lensBlur.focusPt) || null;
+        const maskCv = window.AITools.detectSubjectMask(src, mw, mh, fp);
+        lensBlurSubjectCache = { key, canvas: maskCv };
+        return maskCv;
+    }
+
+    function warmLensBlurSubjectMask(force = false) {
+        if (lensBlurWarming || !window.AITools || !window.AITools.detectSubjectMask) return;
+        const key = getLensBlurCacheKey();
+        if (!force && lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas) return;
+        lensBlurWarming = true;
+        const loading = document.getElementById('loadingToast');
+        const loadingTxt = document.getElementById('loadingToastText');
+        if (loading && loadingTxt) {
+            loadingTxt.textContent = 'Mendeteksi subjek untuk Lens Blur...';
+            loading.classList.remove('hidden');
+        }
+        requestAnimationFrame(() => setTimeout(() => {
+            try {
+                getLensBlurSubjectMask(force);
+                if (activeToolKey === 'context_lensblur') {
+                    if (lensBlurActive(state) || lensBlurPreviewFocus) renderEditorCanvas();
+                    flashToast(force ? '↻ Deteksi subjek Lens Blur diperbarui' : '✓ Subjek terdeteksi — geser BLUR untuk bokeh DSLR', 2400);
+                }
+            } catch (err) {
+                console.warn('Lens blur subject detection error', err);
+            } finally {
+                lensBlurWarming = false;
+                if (loading) loading.classList.add('hidden');
+            }
+        }, 16));
+    }
+
+    function renderLensBlurContextBar(bar) {
+        if (!state.lensBlur) state.lensBlur = createDefaultLensBlur();
+        const lb = state.lensBlur;
+        mainCanvas.style.cursor = 'crosshair';
+
+        const panel = document.createElement('div');
+        panel.className = 'lensblur-panel';
+
+        // Row 1: Parameter Sliders
+        const r1 = document.createElement('div');
+        r1.className = 'lensblur-row';
+        LENSBLUR_ATTRS.forEach((a) => {
+            const val = lb[a.key] ?? a.def;
+            const b = document.createElement('button');
+            b.className = `dark-chip ${lensBlurAttr === a.key ? 'active' : ''}`;
+            b.dataset.lbAttr = a.key;
+            b.textContent = a.key === 'protect' ? `${a.label} ${formatSignedVal(val)}` : `${a.label} ${val}`;
+            b.addEventListener('click', () => {
+                lensBlurAttr = a.key;
+                openToolContextBar('lensblur', 'Lens Blur');
+            });
+            r1.appendChild(b);
+        });
+        panel.appendChild(r1);
+
+        // Row 2: Toggles & Actions
+        const r2 = document.createElement('div');
+        r2.className = 'lensblur-row';
+
+        const invBtn = document.createElement('button');
+        invBtn.className = `dark-chip ${lb.invert ? 'active' : ''}`;
+        invBtn.textContent = lb.invert ? '⇄ BALIK FOKUS ✓' : '⇄ BALIK FOKUS';
+        invBtn.addEventListener('click', () => {
+            lb.invert = !lb.invert;
+            openToolContextBar('lensblur', 'Lens Blur');
+            renderEditorCanvas();
+            pushHistory('Lens Blur Invert Focus', true);
+        });
+        r2.appendChild(invBtn);
+
+        const prevBtn = document.createElement('button');
+        prevBtn.className = `dark-chip chip-ai ${lensBlurPreviewFocus ? 'active' : ''}`;
+        prevBtn.textContent = lensBlurPreviewFocus ? '👁 CEK FOKUS ✓' : '👁 CEK FOKUS';
+        prevBtn.addEventListener('click', () => {
+            lensBlurPreviewFocus = !lensBlurPreviewFocus;
+            openToolContextBar('lensblur', 'Lens Blur');
+            renderEditorCanvas();
+        });
+        r2.appendChild(prevBtn);
+
+        const redetectBtn = document.createElement('button');
+        redetectBtn.className = 'dark-chip';
+        redetectBtn.textContent = lb.focusPt ? '◎ AUTO SUBJEK' : '↻ DETEKSI ULANG';
+        redetectBtn.addEventListener('click', () => {
+            lb.focusPt = null;
+            invalidateLensBlurCache();
+            openToolContextBar('lensblur', 'Lens Blur');
+            warmLensBlurSubjectMask(true);
+        });
+        r2.appendChild(redetectBtn);
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'dark-chip';
+        resetBtn.textContent = 'RESET';
+        resetBtn.addEventListener('click', () => {
+            state.lensBlur = createDefaultLensBlur();
+            lensBlurPreviewFocus = false;
+            invalidateLensBlurCache();
+            openToolContextBar('lensblur', 'Lens Blur');
+            renderEditorCanvas();
+            renderToolsStrip();
+            pushHistory('Reset Lens Blur', true);
+        });
+        r2.appendChild(resetBtn);
+
+        panel.appendChild(r2);
+        bar.appendChild(panel);
+        syncMasterSliderForLensBlur();
+        warmLensBlurSubjectMask(false);
+    }
+
+    function updateLensBlurChipLabel(attrKey, val) {
+        const btn = document.querySelector(`#toolContextExtras [data-lb-attr="${attrKey}"]`);
+        const meta = LENSBLUR_ATTRS.find((a) => a.key === attrKey);
+        if (btn && meta) {
+            btn.textContent = attrKey === 'protect' ? `${meta.label} ${formatSignedVal(val)}` : `${meta.label} ${val}`;
+        }
+    }
+
+    function syncMasterSliderForLensBlur() {
+        const slider = document.getElementById('masterSlider');
+        if (!state.lensBlur) state.lensBlur = createDefaultLensBlur();
+        const meta = LENSBLUR_ATTRS.find((a) => a.key === lensBlurAttr) || LENSBLUR_ATTRS[0];
+        lensBlurAttr = meta.key;
+        const val = state.lensBlur[meta.key] ?? meta.def;
+        masterSliderMode = 'lensblur';
+        slider.disabled = false;
+        slider.min = meta.min;
+        slider.max = meta.max;
+        slider.value = val;
+        document.getElementById('activeParamCategory').textContent = state.lensBlur.focusPt ? 'AI LENS BLUR · FOKUS PILIHAN' : 'AI LENS BLUR · SUBJEK OTOMATIS';
+        document.getElementById('activeParamTitle').textContent = meta.title;
+        document.getElementById('activeParamValue').textContent = meta.key === 'protect' ? formatSignedVal(val) : val;
+        document.getElementById('gestureHintText').textContent = 'TAP SUBJEK DI FOTO UNTUK KUNCI FOKUS · TAP 👁 CEK FOKUS UNTUK MELIHAT AREA TAJAM VS BLUR';
+    }
+
+    // ==========================================
+    // 11. LOCAL ADJUSTMENT MASKS (Lightroom-Style AI Auto Subjek/BG/Langit + Brush/Radial/Linear)
+    // ==========================================
+    // Format: [key, label, min, max, default, group]
     const MASK_ATTRS = [
-        ['exposure', 'EXPOSURE'], ['contrast', 'CONTRAST'], ['highlights', 'HIGHLIGHTS'], ['shadows', 'SHADOWS'],
-        ['saturation', 'SATURATION'], ['warmth', 'WARMTH'], ['feather', 'FEATHER'], ['size', 'BRUSH SIZE']
+        ['exposure', 'Exposure', -100, 100, 0, 'light'],
+        ['contrast', 'Contrast', -100, 100, 0, 'light'],
+        ['highlights', 'Highlights', -100, 100, 0, 'light'],
+        ['shadows', 'Shadows', -100, 100, 0, 'light'],
+        ['whites', 'Whites', -100, 100, 0, 'light'],
+        ['blacks', 'Blacks', -100, 100, 0, 'light'],
+        ['warmth', 'Warmth', -100, 100, 0, 'color'],
+        ['tint', 'Tint', -100, 100, 0, 'color'],
+        ['saturation', 'Saturation', -100, 100, 0, 'color'],
+        ['clarity', 'Clarity', -100, 100, 0, 'effects'],
+        ['dehaze', 'Dehaze', 0, 100, 0, 'effects'],
+        ['blur', 'Blur', 0, 100, 0, 'effects'],
+        ['feather', 'Feather', 0, 100, 50, 'effects'],
+        ['size', 'Ukuran Kuas', 1, 40, 8, 'manage']
+    ];
+    const MASK_GROUPS = [
+        { id: 'light', label: 'CAHAYA', keys: ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks'] },
+        { id: 'color', label: 'WARNA', keys: ['warmth', 'tint', 'saturation'] },
+        { id: 'effects', label: 'EFEK', keys: ['clarity', 'dehaze', 'blur', 'feather'] },
+        { id: 'manage', label: 'ATUR MASK', keys: ['size', 'feather'] }
     ];
     const MASK_DEFAULTS = { feather: 50, size: 8 };
-    const maskCanvases = new Map(); // id mask brush -> canvas alpha (≤1024px)
+    const maskCanvases = new Map(); // id mask brush/ai -> canvas alpha (≤1024px)
     const maskTmp = document.createElement('canvas');
     const maskTmpCtx = maskTmp.getContext('2d', { willReadFrequently: true });
-    let maskUiActive = false, maskBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
+    let maskUiActive = false, maskBound = false, maskQuickHudBound = false, maskRO = null, selectedMaskId = null, maskAttr = 'exposure', maskShow = true, maskErase = false, maskDrag = null;
+    let maskPickerOpen = false, maskGroupTab = 'light';
     let activeFontCat = 'all';
     let maskVer = 0, maskSnapCache = { ver: -1, map: null }, maskHover = null, maskOvRaf = 0, wbPickActive = false;
     const MASK_QUICK = [
-        { label: '☁ LANGIT', type: 'linear', over: { x1: 0.5, y1: 0.02, x2: 0.5, y2: 0.5, exposure: -45, highlights: -35, saturation: 10, feather: 60 } },
-        { label: '◉ SUBJEK', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.28, exposure: 30, shadows: 20, contrast: 10, feather: 70 } },
-        { label: '☀ WAJAH', type: 'radial', over: { cx: 0.5, cy: 0.38, r: 0.18, exposure: 35, shadows: 25, warmth: 8, feather: 85 } },
-        { label: '◌ VIGNET', type: 'radial', over: { cx: 0.5, cy: 0.5, r: 0.45, exposure: -45, invert: true, feather: 85 } },
-        { label: '▁ BAWAH GELAP', type: 'linear', over: { x1: 0.5, y1: 0.98, x2: 0.5, y2: 0.55, exposure: -35, feather: 60 } }
+        { label: '☀ Wajah', type: 'radial', over: { label: 'Wajah', cx: 0.5, cy: 0.38, r: 0.18, exposure: 30, shadows: 20, warmth: 8, feather: 85 } },
+        { label: '◌ Vignet', type: 'radial', over: { label: 'Vignet', cx: 0.5, cy: 0.5, r: 0.45, exposure: -45, invert: true, feather: 85 } },
+        { label: '▁ Bawah Gelap', type: 'linear', over: { label: 'Bawah', x1: 0.5, y1: 0.98, x2: 0.5, y2: 0.55, exposure: -35, feather: 60 } }
     ];
+
+    function maskTypeShortLabel(type) {
+        if (type === 'ai_subject') return 'Subjek';
+        if (type === 'ai_background') return 'Background';
+        if (type === 'ai_sky') return 'Langit';
+        if (type === 'brush') return 'Kuas';
+        if (type === 'radial') return 'Radial';
+        if (type === 'linear') return 'Linear';
+        return String(type || 'Mask');
+    }
+
+    function maskAttrDefault(m, k) {
+        if (k === 'feather') return m && m.type && m.type.startsWith('ai_') ? 12 : 50;
+        const meta = MASK_ATTRS.find((x) => x[0] === k);
+        return meta ? meta[4] : 0;
+    }
+
+    function formatMaskVal(k, val) {
+        if (k === 'feather' || k === 'size' || k === 'dehaze' || k === 'blur') return `${val}`;
+        return `${val > 0 ? '+' : ''}${val}`;
+    }
+
+    function bindMaskQuickHud() {
+        if (maskQuickHudBound) return;
+        maskQuickHudBound = true;
+        const bBrush = document.getElementById('btnMaskQuickBrush');
+        const bErase = document.getElementById('btnMaskQuickErase');
+        const bOverlay = document.getElementById('btnMaskQuickOverlay');
+        const bInvert = document.getElementById('btnMaskQuickInvert');
+        if (bBrush) bBrush.addEventListener('click', (e) => {
+            e.stopPropagation();
+            maskErase = false;
+            viewPanMode = false;
+            applyCanvasZoomTransform();
+            drawMaskOverlay();
+            syncMaskQuickHud();
+        });
+        if (bErase) bErase.addEventListener('click', (e) => {
+            e.stopPropagation();
+            maskErase = true;
+            viewPanMode = false;
+            applyCanvasZoomTransform();
+            drawMaskOverlay();
+            syncMaskQuickHud();
+        });
+        if (bOverlay) bOverlay.addEventListener('click', (e) => {
+            e.stopPropagation();
+            maskShow = !maskShow;
+            drawMaskOverlay();
+            syncMaskQuickHud();
+        });
+        if (bInvert) bInvert.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sm = selectedMask();
+            if (!sm) return;
+            sm.invert = !sm.invert;
+            maskVer++;
+            renderEditorCanvas();
+            drawMaskOverlay();
+            syncMaskQuickHud();
+            refreshMaskBar();
+            pushHistory('Invert mask', true);
+        });
+    }
+
+    function syncMaskQuickHud() {
+        const hud = document.getElementById('maskQuickHud');
+        if (!hud) return;
+        const sm = selectedMask();
+        const show = maskUiActive && !maskPickerOpen && !!sm;
+        hud.classList.toggle('hidden', !show);
+        if (!show) return;
+
+        const isPaint = isCanvasMaskType(sm.type);
+        const bBrush = document.getElementById('btnMaskQuickBrush');
+        const bErase = document.getElementById('btnMaskQuickErase');
+        const sep = document.getElementById('maskQuickBrushSep');
+        const bOverlay = document.getElementById('btnMaskQuickOverlay');
+        const bInvert = document.getElementById('btnMaskQuickInvert');
+
+        if (bBrush) {
+            bBrush.classList.toggle('hidden', !isPaint);
+            bBrush.classList.toggle('active', isPaint && !maskErase && !viewPanMode);
+        }
+        if (bErase) {
+            bErase.classList.toggle('hidden', !isPaint);
+            bErase.classList.toggle('active-erase', isPaint && maskErase && !viewPanMode);
+        }
+        if (sep) sep.classList.toggle('hidden', !isPaint);
+        if (bOverlay) bOverlay.classList.toggle('active-overlay', maskShow);
+        if (bInvert) bInvert.classList.toggle('active-invert', !!sm.invert);
+    }
+
+    function exitMaskMode() {
+        maskPickerOpen = false;
+        closeMaskUI();
+        resetCanvasZoom();
+        document.getElementById('toolContextExtras').classList.add('hidden');
+        selectToolKey('exposure');
+    }
+
+    function renderMaskStudio(bar) {
+        openMaskUI();
+        bar.innerHTML = '';
+
+        const studio = document.createElement('div');
+        studio.className = 'mask-studio';
+        const showPicker = !state.masks.length || maskPickerOpen;
+        const sliderBlock = document.getElementById('masterSliderBlock');
+        if (sliderBlock) sliderBlock.classList.toggle('hidden', showPicker);
+
+        // --- Top Bar: Layer Pills (or Picker Title) + Selesai/Kembali ---
+        const topbar = document.createElement('div');
+        topbar.className = 'mask-topbar';
+
+        if (showPicker) {
+            const titleEl = document.createElement('span');
+            titleEl.className = 'mask-topbar-title';
+            titleEl.textContent = state.masks.length ? 'TAMBAH MASK BARU' : 'LIGHTROOM MASKING';
+            topbar.appendChild(titleEl);
+
+            const rightBtn = document.createElement('button');
+            if (state.masks.length) {
+                rightBtn.className = 'mask-done-btn secondary';
+                rightBtn.textContent = '← KEMBALI';
+                rightBtn.addEventListener('click', () => {
+                    maskPickerOpen = false;
+                    refreshMaskBar();
+                });
+            } else {
+                rightBtn.className = 'mask-done-btn';
+                rightBtn.textContent = '✓ SELESAI';
+                rightBtn.addEventListener('click', exitMaskMode);
+            }
+            topbar.appendChild(rightBtn);
+            studio.appendChild(topbar);
+
+            // --- Picker Body: 3 AI Auto Cards + Manual Pill Row ---
+            const picker = document.createElement('div');
+            picker.className = 'mask-picker';
+
+            const aiLabel = document.createElement('div');
+            aiLabel.className = 'mask-picker-label';
+            aiLabel.textContent = 'DETEKSI OTOMATIS (AI)';
+            picker.appendChild(aiLabel);
+
+            const aiGrid = document.createElement('div');
+            aiGrid.className = 'mask-ai-grid';
+            const aiCards = [
+                {
+                    kind: 'ai_subject', title: 'Subjek', sub: 'Objek utama',
+                    svg: '<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>'
+                },
+                {
+                    kind: 'ai_background', title: 'Background', sub: 'Latar belakang',
+                    svg: '<rect x="3" y="3" width="18" height="18" rx="2.5" stroke-dasharray="3 2"/><circle cx="12" cy="10" r="2.5"/><path d="M8 18c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5"/>'
+                },
+                {
+                    kind: 'ai_sky', title: 'Langit', sub: 'Area langit',
+                    svg: '<path d="M17.5 17H7a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17.2 7.5 3.5 3.5 0 0 1 17.5 17Z"/>'
+                }
+            ];
+            aiCards.forEach((item) => {
+                const card = document.createElement('button');
+                card.className = 'mask-ai-card';
+                card.innerHTML = `
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${item.svg}</svg>
+                    <strong>${item.title}</strong>
+                    <span>${item.sub}</span>
+                `;
+                card.addEventListener('click', () => addAutoMask(item.kind));
+                aiGrid.appendChild(card);
+            });
+            picker.appendChild(aiGrid);
+
+            const manLabel = document.createElement('div');
+            manLabel.className = 'mask-picker-label';
+            manLabel.textContent = 'MANUAL & BENTUK';
+            picker.appendChild(manLabel);
+
+            const manRow = document.createElement('div');
+            manRow.className = 'mask-manual-row';
+            [
+                { label: '✎ Kuas', fn: () => addMask('brush') },
+                { label: '◎ Radial', fn: () => addMask('radial') },
+                { label: '▤ Linear', fn: () => addMask('linear') }
+            ].forEach((mItem) => {
+                const b = document.createElement('button');
+                b.className = 'mask-pill-btn';
+                b.textContent = mItem.label;
+                b.addEventListener('click', mItem.fn);
+                manRow.appendChild(b);
+            });
+            MASK_QUICK.forEach((q) => {
+                const b = document.createElement('button');
+                b.className = 'mask-pill-btn';
+                b.textContent = q.label;
+                b.addEventListener('click', () => addMask(q.type, q.over));
+                manRow.appendChild(b);
+            });
+            picker.appendChild(manRow);
+
+            studio.appendChild(picker);
+            bar.appendChild(studio);
+            syncMaskQuickHud();
+            syncMasterSliderForMask();
+            drawMaskOverlay();
+            return;
+        }
+
+        // --- Mask Editing Mode ---
+        const layers = document.createElement('div');
+        layers.className = 'mask-layers-scroll';
+
+        const addPill = document.createElement('button');
+        addPill.className = 'mask-layer-pill add-btn';
+        addPill.textContent = '+ Baru';
+        addPill.addEventListener('click', () => {
+            maskPickerOpen = true;
+            refreshMaskBar();
+        });
+        layers.appendChild(addPill);
+
+        state.masks.forEach((m, i) => {
+            const p = document.createElement('button');
+            p.className = `mask-layer-pill ${m.id === selectedMaskId ? 'active' : ''}`;
+            const tag = m.label || maskTypeShortLabel(m.type);
+            const dot = m.type && m.type.startsWith('ai_') ? '<span class="mask-layer-dot"></span>' : '';
+            p.innerHTML = `${dot}<span>${i + 1} · ${tag}</span>`;
+            p.addEventListener('click', () => selectMask(m.id));
+            layers.appendChild(p);
+        });
+        topbar.appendChild(layers);
+
+        const doneBtn = document.createElement('button');
+        doneBtn.className = 'mask-done-btn';
+        doneBtn.textContent = '✓ SELESAI';
+        doneBtn.addEventListener('click', exitMaskMode);
+        topbar.appendChild(doneBtn);
+        studio.appendChild(topbar);
+
+        const sm = selectedMask();
+        if (sm) {
+            // Grouped Category Tabs (CAHAYA | WARNA | EFEK | ATUR MASK)
+            const tabs = document.createElement('div');
+            tabs.className = 'mask-group-tabs';
+            MASK_GROUPS.forEach((grp) => {
+                const hasMod = grp.id !== 'manage' && grp.keys.some((k) => {
+                    const defV = maskAttrDefault(sm, k);
+                    return (sm[k] ?? defV) !== defV;
+                });
+                const tb = document.createElement('button');
+                tb.className = `mask-gtab ${maskGroupTab === grp.id ? 'active' : ''}`;
+                tb.innerHTML = `<span>${grp.label}</span>${hasMod ? '<span class="mask-gtab-dot"></span>' : ''}`;
+                tb.addEventListener('click', () => {
+                    maskGroupTab = grp.id;
+                    // Otomatis pilih parameter pertama di grup baru agar slider langsung nyambung
+                    const validKeys = grp.keys.filter((k) => !(k === 'size' && !isCanvasMaskType(sm.type)));
+                    if (validKeys.length && !validKeys.includes(maskAttr)) maskAttr = validKeys[0];
+                    refreshMaskBar();
+                });
+                tabs.appendChild(tb);
+            });
+            studio.appendChild(tabs);
+
+            const curGrp = MASK_GROUPS.find((g) => g.id === maskGroupTab) || MASK_GROUPS[0];
+            if (curGrp.id === 'manage') {
+                const mRow = document.createElement('div');
+                mRow.className = 'mask-manage-row';
+
+                if (isCanvasMaskType(sm.type)) {
+                    const sz = sm.size ?? 8;
+                    const bSize = document.createElement('button');
+                    bSize.className = `mask-param-pill ${maskAttr === 'size' ? 'active' : ''}`;
+                    bSize.dataset.maskAttr = 'size';
+                    bSize.innerHTML = `<span>Ukuran Kuas</span><span class="mask-param-val">${sz}</span>`;
+                    bSize.addEventListener('click', () => { maskAttr = 'size'; syncMasterSliderForMask(); refreshMaskBar(); });
+                    mRow.appendChild(bSize);
+                }
+
+                const fv = sm.feather ?? maskAttrDefault(sm, 'feather');
+                const bFeath = document.createElement('button');
+                bFeath.className = `mask-param-pill ${maskAttr === 'feather' ? 'active' : ''}`;
+                bFeath.dataset.maskAttr = 'feather';
+                bFeath.innerHTML = `<span>Feather</span><span class="mask-param-val">${fv}</span>`;
+                bFeath.addEventListener('click', () => { maskAttr = 'feather'; syncMasterSliderForMask(); refreshMaskBar(); });
+                mRow.appendChild(bFeath);
+
+                const addAct = (label, fn, extra = '') => {
+                    const b = document.createElement('button');
+                    b.className = `mask-pill-btn ${extra}`.trim();
+                    b.textContent = label;
+                    b.addEventListener('click', fn);
+                    mRow.appendChild(b);
+                };
+
+                if (sm.type === 'ai_subject' || sm.type === 'ai_background' || sm.type === 'ai_sky') {
+                    addAct('↻ Deteksi Ulang', () => redetectAutoMask(sm));
+                }
+                if (sm.type === 'brush') {
+                    addAct('Isi Semua', () => { const mc = maskCanvases.get(sm.id); if (mc) { const c = mc.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Fill mask', true); } });
+                    addAct('Kosongkan', () => { const mc = maskCanvases.get(sm.id); if (mc) { mc.getContext('2d').clearRect(0, 0, mc.width, mc.height); maskVer++; renderEditorCanvas(); drawMaskOverlay(); pushHistory('Clear mask', true); } });
+                }
+                addAct(sm.invert ? '⇄ Balik ✓' : '⇄ Balik', () => {
+                    sm.invert = !sm.invert;
+                    maskVer++;
+                    renderEditorCanvas();
+                    drawMaskOverlay();
+                    syncMaskQuickHud();
+                    pushHistory('Invert mask', true);
+                    refreshMaskBar();
+                }, sm.invert ? 'active' : '');
+                addAct('Hapus', () => deleteMask(sm.id), 'danger');
+
+                studio.appendChild(mRow);
+            } else {
+                const pRow = document.createElement('div');
+                pRow.className = 'mask-params-row';
+                curGrp.keys.forEach((k) => {
+                    const meta = MASK_ATTRS.find((x) => x[0] === k);
+                    if (!meta) return;
+                    const defV = maskAttrDefault(sm, k);
+                    const v = sm[k] ?? defV;
+                    const isMod = v !== defV;
+                    const isSel = maskAttr === k;
+                    const b = document.createElement('button');
+                    b.className = `mask-param-pill ${isMod ? 'modified' : ''} ${isSel ? 'active' : ''}`.trim();
+                    b.dataset.maskAttr = k;
+                    const showVal = isMod || isSel;
+                    b.innerHTML = `${isMod ? '<span class="mask-param-dot"></span>' : ''}<span>${meta[1]}</span>${showVal ? `<span class="mask-param-val">${formatMaskVal(k, v)}</span>` : ''}`;
+                    b.addEventListener('click', () => {
+                        maskAttr = k;
+                        syncMasterSliderForMask();
+                        refreshMaskBar();
+                    });
+                    pRow.appendChild(b);
+                });
+                studio.appendChild(pRow);
+            }
+        }
+
+        bar.appendChild(studio);
+        syncMaskQuickHud();
+        syncMasterSliderForMask();
+        drawMaskOverlay();
+    }
+
+    // Kurva non-linear ukuran kuas agar size 1-5 sangat presisi saat zoom 400%-500%
+    function getMaskBrushDiameter(sizeVal, minDim) {
+        const s = Math.max(1, Math.min(40, sizeVal ?? 8));
+        const frac = Math.pow(s / 40, 1.32) * 0.38;
+        return Math.max(2, frac * minDim);
+    }
 
     const selectedMask = () => (state.masks || []).find((m) => m.id === selectedMaskId) || null;
 
@@ -3817,7 +5786,8 @@
     // Hitung alpha mask pada grid kecil (≤384px) — jauh lebih cepat, lalu diskalakan ke ukuran render
     function maskAlphaSmall(m, sw, sh) {
         const A = new Uint8ClampedArray(sw * sh);
-        const f = (m.feather ?? 50) / 100;
+        const defFeather = m.type && m.type.startsWith('ai_') ? 12 : 50;
+        const f = (m.feather ?? defFeather) / 100;
         const ss = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
         if (m.type === 'linear') {
             const X1 = m.x1 * sw, Y1 = m.y1 * sh, dx = m.x2 * sw - X1, dy = m.y2 * sh - Y1, L2 = dx * dx + dy * dy || 1, hw = 0.12 + 0.38 * f;
@@ -3835,7 +5805,8 @@
                 maskSmallCanvas.width = sw;
                 maskSmallCanvas.height = sh;
                 maskSmallCtx.clearRect(0, 0, sw, sh);
-                maskSmallCtx.filter = f > 0.02 ? `blur(${f * 0.02 * Math.max(sw, sh)}px)` : 'none';
+                const blurFactor = m.type && m.type.startsWith('ai_') ? 0.012 : 0.02;
+                maskSmallCtx.filter = f > 0.02 ? `blur(${f * blurFactor * Math.max(sw, sh)}px)` : 'none';
                 maskSmallCtx.drawImage(mc, 0, 0, sw, sh);
                 maskSmallCtx.filter = 'none';
                 const d = maskSmallCtx.getImageData(0, 0, sw, sh).data;
@@ -3850,7 +5821,8 @@
         const key = [m.id, m.type, m.x1, m.y1, m.x2, m.y2, m.cx, m.cy, m.r, m.feather, m.invert ? 1 : 0, maskVer, gw, gh].join('|');
         const hit = maskAlphaCache.get(key);
         if (hit) return hit;
-        const sc = Math.min(1, 384 / Math.max(gw, gh));
+        const maxGrid = isCanvasMaskType(m.type) ? 440 : 384;
+        const sc = Math.min(1, maxGrid / Math.max(gw, gh));
         const sw = Math.max(2, Math.round(gw * sc)), sh = Math.max(2, Math.round(gh * sc));
         const small = maskAlphaSmall(m, sw, sh);
         let A = small;
@@ -3868,40 +5840,180 @@
             A = new Uint8ClampedArray(gw * gh);
             for (let p = 0; p < A.length; p++) A[p] = d[p * 4 + 3];
         }
-        if (maskAlphaCache.size > 10) maskAlphaCache.clear();
+        if (maskAlphaCache.size > 12) maskAlphaCache.clear();
         maskAlphaCache.set(key, A);
         return A;
     }
 
-    function applyMasks(imgData, gw, gh) {
+    function applyMasks(imgData, gw, gh, clarityData) {
         const d = imgData.data;
         state.masks.forEach((m) => {
             const ex = (m.exposure || 0) / 100, ct = (m.contrast || 0) / 100, hl = (m.highlights || 0) / 100;
-            const sh = (m.shadows || 0) / 100, sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100;
-            if (!ex && !ct && !hl && !sh && !sa && !wm) return;
+            const sh = (m.shadows || 0) / 100, wh = (m.whites || 0) / 100, bl = (m.blacks || 0) / 100;
+            const sa = (m.saturation || 0) / 100, wm = (m.warmth || 0) / 100, tn = (m.tint || 0) / 100;
+            const cl = (m.clarity || 0) / 100, dh = (m.dehaze || 0) / 100;
+            if (!ex && !ct && !hl && !sh && !wh && !bl && !sa && !wm && !tn && !cl && !dh) return;
             const A = computeMaskAlpha(m, gw, gh);
             for (let p = 0, i = 0; p < A.length; p++, i += 4) {
                 if (A[p] < 2) continue;
                 const k = A[p] / 255;
                 let r = d[i], g = d[i + 1], b = d[i + 2];
-                if (ex) { const f = 1 + ex * k * (ex > 0 ? 1.1 : 0.9); r *= f; g *= f; b *= f; }
-                if (ct) { const c = 1 + ct * k * 0.8; r = (r - 128) * c + 128; g = (g - 128) * c + 128; b = (b - 128) * c + 128; }
+                if (ex) { const f = Math.pow(2, ex * k * 1.35); r *= f; g *= f; b *= f; }
+                if (ct) { const c = 1 + ct * k * 0.85; r = (r - 128) * c + 128; g = (g - 128) * c + 128; b = (b - 128) * c + 128; }
                 const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                if (hl) { const v = hl * k * Math.max(0, (lum - 110) / 145) * 70; r += v; g += v; b += v; }
-                if (sh) { const v = sh * k * Math.max(0, (150 - lum) / 150) * 80; r += v; g += v; b += v; }
-                if (sa) { const s = 1 + sa * k; r = lum + (r - lum) * s; g = lum + (g - lum) * s; b = lum + (b - lum) * s; }
-                if (wm) { const v = wm * k * 30; r += v; b -= v; }
-                d[i] = r; d[i + 1] = g; d[i + 2] = b; // Uint8ClampedArray membatasi 0-255
+                const lw = Math.min(1, Math.max(0, lum / 255));
+                if (hl) { const v = hl * k * Math.max(0, (lum - 105) / 150) * 75; r += v; g += v; b += v; }
+                if (sh) { const v = sh * k * Math.max(0, (155 - lum) / 155) * 85; r += v; g += v; b += v; }
+                if (wh) { const t = lw * lw; const v = t * t * wh * k * 85; r += v; g += v; b += v; }
+                if (bl) { const t = 1 - lw; const t2 = t * t; const v = t2 * t2 * bl * k * 85; r += v; g += v; b += v; }
+                if (dh) {
+                    const minC = Math.min(r, g, b);
+                    const haze = Math.max(0, minC - 16) * dh * 0.45 * k;
+                    const gain = 1 + dh * 0.28 * k;
+                    r = (r - haze) * gain; g = (g - haze) * gain; b = (b - haze) * gain;
+                    const nl = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const ds = 1 + dh * 0.22 * k;
+                    r = nl + (r - nl) * ds; g = nl + (g - nl) * ds; b = nl + (b - nl) * ds;
+                }
+                if (cl && clarityData) {
+                    const midW = Math.max(0.15, 1 - Math.abs(lw - 0.5) * 1.7);
+                    const cAmt = cl * k * midW * 1.15;
+                    r += (r - clarityData[i]) * cAmt;
+                    g += (g - clarityData[i + 1]) * cAmt;
+                    b += (b - clarityData[i + 2]) * cAmt;
+                }
+                if (sa) { const l2 = 0.299 * r + 0.587 * g + 0.114 * b; const s = 1 + sa * k; r = l2 + (r - l2) * s; g = l2 + (g - l2) * s; b = l2 + (b - l2) * s; }
+                if (wm) { const v = wm * k * 34; r += v; g += v * 0.12; b -= v; }
+                if (tn) { const v = tn * k * 28; g -= v; r += v * 0.45; b += v * 0.45; }
+                d[i] = r; d[i + 1] = g; d[i + 2] = b;
             }
         });
     }
 
-    function addMask(type, over) {
-        if (state.masks.length >= 6) {
-            document.getElementById('gestureHintText').textContent = 'MAKSIMAL 6 MASK';
+    function renderAlignedSourceForAI() {
+        const w = basePhotoCanvas.width, h = basePhotoCanvas.height;
+        const c = createBlankCanvas(w, h);
+        const x = c.getContext('2d');
+        x.save();
+        x.translate(w / 2, h / 2);
+        if (state.adjust.straighten !== 0) {
+            const rad = (state.adjust.straighten * Math.PI) / 180;
+            const zoomComp = 1 + Math.abs(Math.sin(rad)) * 0.3;
+            x.rotate(rad);
+            x.scale(zoomComp, zoomComp);
+        }
+        x.scale(state.flipH ? -1 : 1, state.flipV ? -1 : 1);
+        x.drawImage(basePhotoCanvas, -w / 2, -h / 2, w, h);
+        x.restore();
+        return c;
+    }
+
+    function runAutoMaskDetection(kind) {
+        const src = renderAlignedSourceForAI();
+        const sc = Math.min(1, 1024 / Math.max(src.width, src.height));
+        const mw = Math.max(16, Math.round(src.width * sc));
+        const mh = Math.max(16, Math.round(src.height * sc));
+        if (kind === 'ai_subject') return window.AITools.detectSubjectMask(src, mw, mh);
+        if (kind === 'ai_background') return window.AITools.detectBackgroundMask(src, mw, mh);
+        return window.AITools.detectSkyMask(src, mw, mh);
+    }
+
+    function addAutoMask(kind) {
+        if (state.masks.length >= 8) {
+            flashToast('Maksimal 8 mask per foto');
             return;
         }
-        const m = { id: 'mk_' + Date.now().toString(36), type, feather: 50, invert: false, exposure: 25, contrast: 0, highlights: 0, shadows: 0, saturation: 0, warmth: 0, size: 8 };
+        if (!window.AITools) return;
+        const label = maskTypeShortLabel(kind);
+        const loading = document.getElementById('loadingToast');
+        const loadingTxt = document.getElementById('loadingToastText');
+        if (loading && loadingTxt) {
+            loadingTxt.textContent = `Mendeteksi ${label.toLowerCase()}...`;
+            loading.classList.remove('hidden');
+        }
+        requestAnimationFrame(() => setTimeout(() => {
+            try {
+                const autoCanvas = runAutoMaskDetection(kind);
+                const m = {
+                    id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
+                    type: kind,
+                    label,
+                    feather: 12,
+                    invert: false,
+                    exposure: 0,
+                    contrast: 0,
+                    highlights: 0,
+                    shadows: 0,
+                    whites: 0,
+                    blacks: 0,
+                    saturation: 0,
+                    warmth: 0,
+                    tint: 0,
+                    clarity: 0,
+                    dehaze: 0,
+                    blur: 0,
+                    size: 8
+                };
+                maskCanvases.set(m.id, autoCanvas);
+                maskVer++;
+                state.masks.push(m);
+                selectedMaskId = m.id;
+                maskPickerOpen = false;
+                maskGroupTab = kind === 'ai_background' ? 'effects' : 'light';
+                maskAttr = kind === 'ai_background' ? 'blur' : 'exposure';
+                maskErase = false;
+                maskShow = true;
+                refreshMaskBar();
+                drawMaskOverlay();
+                renderEditorCanvas();
+                renderToolsStrip();
+                pushHistory(`Auto Mask ${label}`, true);
+                flashToast(`✓ Auto Mask ${label} siap — atur slider atau kuas untuk perhalus`, 2600);
+            } catch (err) {
+                console.warn('Auto mask error', err);
+                flashToast('Gagal mendeteksi area otomatis');
+            } finally {
+                if (loading) loading.classList.add('hidden');
+            }
+        }, 16));
+    }
+
+    function redetectAutoMask(m) {
+        if (!m || !m.type || !m.type.startsWith('ai_')) return;
+        const autoCanvas = runAutoMaskDetection(m.type);
+        maskCanvases.set(m.id, autoCanvas);
+        maskVer++;
+        maskShow = true;
+        drawMaskOverlay();
+        renderEditorCanvas();
+        pushHistory(`Redetect ${m.label || maskTypeShortLabel(m.type)}`, true);
+        flashToast(`↻ Mask ${m.label || maskTypeShortLabel(m.type)} dideteksi ulang`);
+    }
+
+    function addMask(type, over) {
+        if (state.masks.length >= 8) {
+            document.getElementById('gestureHintText').textContent = 'MAKSIMAL 8 MASK';
+            return;
+        }
+        const m = {
+            id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 4),
+            type,
+            feather: 50,
+            invert: false,
+            exposure: type === 'brush' ? 0 : 25,
+            contrast: 0,
+            highlights: 0,
+            shadows: 0,
+            whites: 0,
+            blacks: 0,
+            saturation: 0,
+            warmth: 0,
+            tint: 0,
+            clarity: 0,
+            dehaze: 0,
+            blur: 0,
+            size: 8
+        };
         if (type === 'linear') Object.assign(m, { x1: 0.5, y1: 0.12, x2: 0.5, y2: 0.55 });
         else if (type === 'radial') Object.assign(m, { cx: 0.5, cy: 0.5, r: 0.3 });
         else {
@@ -3912,17 +6024,24 @@
         if (over) Object.assign(m, over);
         state.masks.push(m);
         selectedMaskId = m.id;
+        maskPickerOpen = false;
+        maskGroupTab = 'light';
         maskAttr = 'exposure';
+        maskErase = false;
         maskShow = type === 'brush';
         refreshMaskBar();
         renderEditorCanvas();
+        renderToolsStrip();
         pushHistory(`Add ${type} mask`, true);
     }
 
     function selectMask(id) {
         selectedMaskId = id;
+        maskPickerOpen = false;
+        maskGroupTab = 'light';
         maskAttr = 'exposure';
         refreshMaskBar();
+        drawMaskOverlay();
     }
 
     function deleteMask(id) {
@@ -3930,54 +6049,79 @@
         maskCanvases.delete(id);
         maskVer++;
         selectedMaskId = state.masks[0]?.id || null;
+        if (!selectedMaskId) maskPickerOpen = true;
         refreshMaskBar();
+        drawMaskOverlay();
         renderEditorCanvas();
+        renderToolsStrip();
         pushHistory('Delete mask', true);
     }
 
     function refreshMaskBar() {
         const b = document.getElementById('toolContextExtras');
-        const sl = b.scrollLeft;
+        const sels = ['.mask-layers-scroll', '.mask-params-row', '.mask-manage-row'];
+        const keep = b ? sels.map((s) => b.querySelector(s)?.scrollLeft || 0) : [];
         openToolContextBar('mask', 'Masking');
-        b.scrollLeft = sl;
+        if (b && keep.length) {
+            sels.forEach((s, i) => { const el = b.querySelector(s); if (el && keep[i]) el.scrollLeft = keep[i]; });
+        }
+    }
+
+    function updateMaskAttrChipLabel(k, val) {
+        const sm = selectedMask();
+        const btn = document.querySelector(`#toolContextExtras [data-mask-attr="${k}"]`);
+        const meta = MASK_ATTRS.find((x) => x[0] === k);
+        if (btn && meta && sm) {
+            const defV = maskAttrDefault(sm, k);
+            const isMod = val !== defV;
+            btn.classList.toggle('modified', isMod);
+            btn.innerHTML = `${isMod ? '<span class="mask-param-dot"></span>' : ''}<span>${meta[1]}</span><span class="mask-param-val">${formatMaskVal(k, val)}</span>`;
+        }
     }
 
     function syncMasterSliderForMask() {
         const slider = document.getElementById('masterSlider'), m = selectedMask();
-        if (!m) {
+        if (!m || maskPickerOpen) {
             masterSliderMode = 'context';
             slider.disabled = true;
-            document.getElementById('activeParamCategory').textContent = 'MASKING';
-            document.getElementById('activeParamTitle').textContent = 'Tambah mask';
+            document.getElementById('activeParamCategory').textContent = 'LIGHTROOM MASKING';
+            document.getElementById('activeParamTitle').textContent = 'Pilih Auto / Manual Mask';
             document.getElementById('activeParamValue').textContent = '';
             return;
         }
-        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && m.type !== 'brush'));
+        let ai = MASK_ATTRS.findIndex((x) => x[0] === maskAttr && !(x[0] === 'size' && !isCanvasMaskType(m.type)));
         if (ai < 0) ai = 0;
-        maskAttr = MASK_ATTRS[ai][0];
-        const isFeather = maskAttr === 'feather', isSize = maskAttr === 'size';
+        const [key, label, minV, maxV] = MASK_ATTRS[ai];
+        maskAttr = key;
+        const effectiveDef = maskAttrDefault(m, key);
         masterSliderMode = 'mask';
         slider.disabled = false;
-        slider.min = isSize ? 1 : isFeather ? 0 : -100;
-        slider.max = isSize ? 40 : 100;
-        slider.value = m[maskAttr] ?? (MASK_DEFAULTS[maskAttr] ?? 0);
-        document.getElementById('activeParamCategory').textContent = `MASK ${state.masks.indexOf(m) + 1} · ${m.type.toUpperCase()}`;
-        document.getElementById('activeParamTitle').textContent = MASK_ATTRS[ai][1];
-        document.getElementById('activeParamValue').textContent = slider.value;
+        slider.min = minV;
+        slider.max = maxV;
+        slider.value = m[maskAttr] ?? effectiveDef;
+        document.getElementById('activeParamCategory').textContent = `MASK ${state.masks.indexOf(m) + 1} · ${(m.label || maskTypeShortLabel(m.type)).toUpperCase()}`;
+        document.getElementById('activeParamTitle').textContent = label;
+        document.getElementById('activeParamValue').textContent = formatMaskVal(key, parseInt(slider.value, 10));
     }
 
     function sizeMaskOverlay() {
         const ov = document.getElementById('maskOverlay');
-        ov.width = Math.max(1, mainCanvas.clientWidth);
-        ov.height = Math.max(1, mainCanvas.clientHeight);
+        const cw = Math.max(1, mainCanvas.clientWidth);
+        const ch = Math.max(1, mainCanvas.clientHeight);
+        const dpr = Math.min(3, (window.devicePixelRatio || 1) * Math.max(1, Math.min(2, viewZoom)));
+        ov.width = Math.round(cw * dpr);
+        ov.height = Math.round(ch * dpr);
     }
 
     function maskHintText() {
+        if (viewPanMode || spacePanDown) return 'MODE GESER AKTIF · TARIK FOTO UNTUK MENGGESER · TAP ✋ LAGI UNTUK KUAS';
         const m = selectedMask();
-        if (!m) return 'PILIH BENTUK MASK DI BAWAH, ATAU COBA TEMPLATE CEPAT (LANGIT, SUBJEK, WAJAH, VIGNET)';
-        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GESER GARIS = PINDAH · TARIK DI AREA LAIN = BUAT ULANG';
-        if (m.type === 'radial') return 'GESER LINGKARAN = PINDAH · TITIK KANAN = UBAH UKURAN · FEATHER = KELEMBUTAN TEPI';
-        return maskErase ? 'HAPUS AREA MASK DENGAN KUAS (MODE ERASER)' : 'KUAS AREA YANG INGIN DIATUR · SHOW MASK UNTUK MELIHAT AREA';
+        if (!m || maskPickerOpen) return 'PILIH DETEKSI OTOMATIS (SUBJEK · BACKGROUND · LANGIT) ATAU MASK MANUAL DI BAWAH';
+        if (m.type === 'linear') return 'GESER TITIK KUNING UNTUK ATUR GARIS · GUNAKAN +/- UNTUK ZOOM DETAIL';
+        if (m.type === 'radial') return 'GESER LINGKARAN = PINDAH · TITIK KANAN = UBAH UKURAN';
+        return maskErase
+            ? 'HAPUS AREA MASK (−) · GUNAKAN +/- ATAU CUBIT 2 JARI UNTUK ZOOM DETAIL'
+            : 'KUAS (+) UNTUK TAMBAH AREA · GUNAKAN +/- ATAU CUBIT 2 JARI UNTUK ZOOM DETAIL';
     }
 
     function scheduleMaskOverlay() {
@@ -3988,31 +6132,43 @@
     function drawMaskOverlay() {
         if (!maskUiActive) return;
         const ov = document.getElementById('maskOverlay');
-        if (ov.width !== mainCanvas.clientWidth || ov.height !== mainCanvas.clientHeight) sizeMaskOverlay();
-        const c = ov.getContext('2d'), W = ov.width, Hh = ov.height;
+        const W = Math.max(1, mainCanvas.clientWidth);
+        const Hh = Math.max(1, mainCanvas.clientHeight);
+        const dpr = Math.min(3, (window.devicePixelRatio || 1) * Math.max(1, Math.min(2, viewZoom)));
+        const pw = Math.round(W * dpr), ph = Math.round(Hh * dpr);
+        if (ov.width !== pw || ov.height !== ph) { ov.width = pw; ov.height = ph; }
+
+        const c = ov.getContext('2d');
+        c.setTransform(pw / W, 0, 0, ph / Hh, 0, 0);
         c.clearRect(0, 0, W, Hh);
         document.getElementById('gestureHintText').textContent = maskHintText();
         const m = selectedMask();
         if (!m) return;
+
         if (maskShow || (maskDrag && maskDrag.mode === 'paint')) {
-            const sw = Math.max(8, Math.round(W / 4)), sh = Math.max(8, Math.round(Hh / 4)), A = computeMaskAlpha(m, sw, sh);
+            const ovRes = Math.min(384, Math.max(48, Math.round(Math.max(W, Hh) * Math.min(1, 0.45 * viewZoom))));
+            const sc = Math.min(1, ovRes / Math.max(W, Hh));
+            const sw = Math.max(8, Math.round(W * sc)), sh = Math.max(8, Math.round(Hh * sc));
+            const A = computeMaskAlpha(m, sw, sh);
             maskTmp.width = sw;
             maskTmp.height = sh;
             const id = maskTmpCtx.createImageData(sw, sh);
-            for (let p = 0; p < A.length; p++) { id.data[p * 4] = 255; id.data[p * 4 + 1] = 60; id.data[p * 4 + 2] = 70; id.data[p * 4 + 3] = A[p] * 0.5; }
+            for (let p = 0; p < A.length; p++) { id.data[p * 4] = 255; id.data[p * 4 + 1] = 56; id.data[p * 4 + 2] = 74; id.data[p * 4 + 3] = A[p] * 0.48; }
             maskTmpCtx.putImageData(id, 0, 0);
             c.drawImage(maskTmp, 0, 0, W, Hh);
         }
+
+        const iz = 1 / Math.max(1, viewZoom);
         const handle = (px, py, r) => {
             c.setLineDash([]);
             c.fillStyle = '#ffb547';
             c.strokeStyle = '#211d1a';
-            c.lineWidth = 3;
-            c.beginPath(); c.arc(px, py, r, 0, 6.28); c.fill(); c.stroke();
+            c.lineWidth = 3 * iz;
+            c.beginPath(); c.arc(px, py, r * iz, 0, 6.28); c.fill(); c.stroke();
         };
-        c.lineWidth = 2;
+        c.lineWidth = 2 * iz;
         c.strokeStyle = '#ffb547';
-        c.setLineDash([8, 6]);
+        c.setLineDash([8 * iz, 6 * iz]);
         if (m.type === 'linear') {
             const x1 = m.x1 * W, y1 = m.y1 * Hh, x2 = m.x2 * W, y2 = m.y2 * Hh, len = Math.hypot(x2 - x1, y2 - y1) || 1;
             const nx = (-(y2 - y1) / len) * W * 2, ny = ((x2 - x1) / len) * W * 2;
@@ -4023,19 +6179,29 @@
             const cx = m.cx * W, cy = m.cy * Hh, R = m.r * Math.max(W, Hh);
             c.beginPath(); c.arc(cx, cy, R, 0, 6.28); c.stroke();
             handle(cx, cy, 8); handle(cx + R, cy, 11);
-        } else if (maskHover) {
+        } else if (maskHover && !viewPanMode && !spacePanDown) {
             c.setLineDash([]);
-            c.strokeStyle = '#ffffff';
-            c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, (((m.size ?? 8) / 100) * Math.min(W, Hh)) / 2, 0, 6.28); c.stroke();
+            const rad = getMaskBrushDiameter(m.size ?? 8, Math.min(W, Hh)) / 2;
+            c.lineWidth = 1.6 * iz;
+            c.strokeStyle = maskErase ? '#ff6b6b' : '#ffffff';
+            c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, rad, 0, 6.28); c.stroke();
+            c.strokeStyle = 'rgba(0,0,0,0.45)';
+            c.lineWidth = 1 * iz;
+            c.beginPath(); c.arc(maskHover.x * W, maskHover.y * Hh, Math.max(1, rad + 1.2 * iz), 0, 6.28); c.stroke();
         }
         c.setLineDash([]);
     }
 
     function openMaskUI() {
         maskUiActive = true;
+        const shell = document.getElementById('editorShell');
+        if (shell) shell.classList.add('mask-focus-mode');
+        enableCanvasZoom(true);
         bindMaskEvents();
+        bindMaskQuickHud();
         if (!selectedMask() && state.masks.length) selectedMaskId = state.masks[0].id;
         document.getElementById('maskOverlay').classList.remove('hidden');
+        syncMaskQuickHud();
         sizeMaskOverlay();
         drawMaskOverlay();
         if (!maskRO && window.ResizeObserver) {
@@ -4046,6 +6212,14 @@
 
     function closeMaskUI() {
         maskUiActive = false;
+        maskPickerOpen = false;
+        maskDrag = null;
+        const shell = document.getElementById('editorShell');
+        if (shell) shell.classList.remove('mask-focus-mode');
+        const sliderBlock = document.getElementById('masterSliderBlock');
+        if (sliderBlock && activeEditorMainTab !== 'Text') sliderBlock.classList.remove('hidden');
+        const qhud = document.getElementById('maskQuickHud');
+        if (qhud) qhud.classList.add('hidden');
         const ov = document.getElementById('maskOverlay');
         if (ov) ov.classList.add('hidden');
     }
@@ -4058,7 +6232,7 @@
         c.save();
         c.lineCap = 'round';
         c.lineJoin = 'round';
-        c.lineWidth = Math.max(2, ((m.size ?? 8) / 100) * Math.min(mc.width, mc.height));
+        c.lineWidth = getMaskBrushDiameter(m.size ?? 8, Math.min(mc.width, mc.height));
         c.globalCompositeOperation = maskErase ? 'destination-out' : 'source-over';
         c.strokeStyle = '#ffffff';
         c.beginPath();
@@ -4076,16 +6250,20 @@
             const r = ov.getBoundingClientRect();
             return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
         };
-        const dist = (a, b) => Math.hypot((a.x - b.x) * ov.width, (a.y - b.y) * ov.height);
+        const screenW = () => Math.max(1, mainCanvas.clientWidth * viewZoom);
+        const screenH = () => Math.max(1, mainCanvas.clientHeight * viewZoom);
+        const dist = (a, b) => Math.hypot((a.x - b.x) * screenW(), (a.y - b.y) * screenH());
         const segDist = (p, a, b) => {
-            const px = p.x * ov.width, py = p.y * ov.height, ax = a.x * ov.width, ay = a.y * ov.height;
-            const dx = b.x * ov.width - ax, dy = b.y * ov.height - ay, L2 = dx * dx + dy * dy || 1;
+            const W = screenW(), H = screenH();
+            const px = p.x * W, py = p.y * H, ax = a.x * W, ay = a.y * H;
+            const dx = b.x * W - ax, dy = b.y * H - ay, L2 = dx * dx + dy * dy || 1;
             const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
             return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
         };
         const HIT = 30;
 
         ov.addEventListener('pointerdown', (e) => {
+            if (viewPanMode || spacePanDown || e.button === 1 || vpPinch || vpPointers.size >= 2) return;
             const m = selectedMask();
             if (!m) return;
             e.preventDefault();
@@ -4098,11 +6276,17 @@
                 else if (dist(p, b) < HIT) mode = 'p2';
                 else if (segDist(p, a, b) < HIT * 0.8) mode = 'move';
             } else if (m.type === 'radial') {
-                const mxs = Math.max(ov.width, ov.height), R = m.r * mxs;
-                if (dist(p, { x: m.cx + R / ov.width, y: m.cy }) < HIT) mode = 'radius';
+                const W = screenW(), H = screenH(), mxs = Math.max(W, H), R = m.r * mxs;
+                if (dist(p, { x: m.cx + R / W, y: m.cy }) < HIT) mode = 'radius';
                 else if (dist(p, { x: m.cx, y: m.cy }) < Math.max(R, HIT)) mode = 'move';
             } else mode = 'paint';
-            maskDrag = { m, mode, last: p, start: p, orig: { ...m }, moved: mode === 'paint', fresh: false };
+
+            let preSnap = null;
+            if (mode === 'paint') {
+                const mc = maskCanvases.get(m.id);
+                if (mc) preSnap = cloneCanvas(mc);
+            }
+            maskDrag = { m, mode, last: p, start: p, orig: { ...m }, moved: mode === 'paint', fresh: false, preSnap };
             if (mode === 'new') {
                 maskDrag.fresh = true;
                 if (m.type === 'linear') { m.x1 = p.x; m.y1 = p.y; m.x2 = p.x; m.y2 = p.y + 0.001; maskDrag.mode = 'p2'; }
@@ -4117,15 +6301,16 @@
 
         ov.addEventListener('pointermove', (e) => {
             const p = norm(e);
+            if (vpPinch || vpPanDrag) return;
             if (!maskDrag) {
                 if (e.pointerType === 'mouse') { maskHover = p; scheduleMaskOverlay(); }
                 return;
             }
-            const d = maskDrag, m = d.m, mxs = Math.max(ov.width, ov.height);
+            const d = maskDrag, m = d.m, W = screenW(), H = screenH(), mxs = Math.max(W, H);
             if (d.mode === 'paint') { maskPaint(m, d.last, p); d.last = p; maskHover = p; }
             else if (d.mode === 'p1') { m.x1 = p.x; m.y1 = p.y; }
             else if (d.mode === 'p2') { m.x2 = p.x; m.y2 = p.y; }
-            else if (d.mode === 'radius') m.r = Math.max(0.02, Math.hypot((p.x - m.cx) * ov.width, (p.y - m.cy) * ov.height) / mxs);
+            else if (d.mode === 'radius') m.r = Math.max(0.02, Math.hypot((p.x - m.cx) * W, (p.y - m.cy) * H) / mxs);
             else if (d.mode === 'move') {
                 const dx = p.x - d.start.x, dy = p.y - d.start.y;
                 if (m.type === 'linear') { m.x1 = d.orig.x1 + dx; m.y1 = d.orig.y1 + dy; m.x2 = d.orig.x2 + dx; m.y2 = d.orig.y2 + dy; }
@@ -4140,7 +6325,7 @@
             if (!maskDrag) return;
             const d = maskDrag, m = d.m;
             maskDrag = null;
-            if (d.fresh && m.type === 'linear' && Math.hypot((m.x2 - m.x1) * ov.width, (m.y2 - m.y1) * ov.height) < 24) {
+            if (d.fresh && m.type === 'linear' && Math.hypot((m.x2 - m.x1) * screenW(), (m.y2 - m.y1) * screenH()) < 24) {
                 m.x2 = m.x1;
                 m.y2 = Math.min(1, m.y1 + 0.3);
                 if (m.y2 - m.y1 < 0.05) { m.y2 = m.y1; m.y1 = Math.max(0, m.y1 - 0.3); }
@@ -4148,7 +6333,7 @@
             if (d.fresh && m.type === 'radial' && m.r < 0.03) m.r = 0.25;
             renderEditorCanvas();
             scheduleMaskOverlay();
-            if (d.moved || d.fresh) pushHistory(`Mask ${m.type}`, true);
+            if (d.moved || d.fresh) pushHistory(`Mask ${m.label || maskTypeShortLabel(m.type)}`, true);
         };
         ov.addEventListener('pointerup', end);
         ov.addEventListener('pointercancel', end);
@@ -4287,9 +6472,7 @@
         historyIndex = idx;
         const snap = historyStack[historyIndex];
         state = JSON.parse(JSON.stringify(snap.stateSnap));
-        state.adjust = { ...createDefaultEditState().adjust, ...state.adjust };
-        if (!state.masks) state.masks = [];
-        if (!state.wheels) { state.wheels = defaultWheels(); state.wheelsAmt = 100; }
+        ensureStateDefaults(state);
 
         basePhotoCanvas.width = snap.w;
         basePhotoCanvas.height = snap.h;
@@ -4304,7 +6487,9 @@
         maskCanvases.clear();
         if (snap.maskSnap) snap.maskSnap.forEach((c, k) => maskCanvases.set(k, cloneCanvas(c)));
         maskVer++;
+        invalidateLensBlurCache();
         if (maskUiActive) refreshMaskBar();
+        if (focalUiActive) { renderFocalContextBar(activeToolKey); drawFocalOverlay(); }
         if (!document.getElementById('wheelsEditor').classList.contains('hidden')) syncWheelsUI();
 
         switchEditorMainTab(activeEditorMainTab);
@@ -4331,6 +6516,7 @@
 
         document.getElementById('btnOpenExport').addEventListener('click', () => {
             state.selectedTextId = null;
+            lensBlurPreviewFocus = false;
             renderEditorCanvas();
             modal.classList.remove('hidden');
         });
@@ -4369,10 +6555,101 @@
         });
     }
 
-    // Jembatan untuk fitur Templates
+    // Jembatan untuk fitur Templates & Pro Film / Digicam Camera
+    function addCapturedPhotoToLibrary(canvasEl, title, presetIdOrOpts = 'original', evAdjustLegacy = 0) {
+        const opts = typeof presetIdOrOpts === 'object' && presetIdOrOpts !== null
+            ? presetIdOrOpts
+            : { presetId: presetIdOrOpts, evAdjust: evAdjustLegacy };
+        const presetId = opts.presetId || 'original';
+        const evAdjust = opts.evAdjust || 0;
+        const grain = opts.grain || 0;
+        const lensBlurAmount = opts.lensBlurAmount || 0;
+        const dateStamp = opts.dateStamp || '';
+
+        const hasPreset = !!(presetId && presetId !== 'original');
+        const hasEdits = hasPreset || !!evAdjust || !!grain || !!lensBlurAmount || !!dateStamp;
+        const item = addPhotoToLibrary(canvasEl, title || 'Camera Shot', hasEdits);
+        if (hasPreset) item.editState.presetId = presetId;
+        if (evAdjust) item.editState.adjust.exposure = Math.max(-100, Math.min(100, Math.round(evAdjust)));
+        if (grain) item.editState.adjust.grain = Math.max(0, Math.min(100, Math.round(grain)));
+        if (lensBlurAmount > 0) {
+            item.editState.lensBlur = {
+                ...createDefaultLensBlur(),
+                amount: Math.max(0, Math.min(100, Math.round(lensBlurAmount))),
+                bokeh: 40
+            };
+        }
+        if (dateStamp) {
+            const w = canvasEl.width;
+            const h = canvasEl.height;
+            item.editState.texts.push({
+                id: 'txt_' + Date.now() + '_cam',
+                text: dateStamp,
+                x: w * 0.80,
+                y: h * 0.93,
+                font: "'Space Mono', monospace",
+                fontName: 'SPACE MONO',
+                size: Math.max(16, Math.round(Math.min(w, h) * 0.036)),
+                color: '#ff7b00',
+                opacity: 94,
+                rotate: 0,
+                bold: true,
+                italic: false,
+                shadow: true,
+                outline: false,
+                align: 'center'
+            });
+        }
+        if (hasEdits) {
+            // Render cepat pratinjau thumbnail dengan color pipeline asli (termasuk HSL preset & grain!)
+            const scale = Math.min(1, 480 / Math.max(canvasEl.width, canvasEl.height));
+            const tw = Math.max(1, Math.round(canvasEl.width * scale));
+            const th = Math.max(1, Math.round(canvasEl.height * scale));
+            const tc = createBlankCanvas(tw, th);
+            const tCtx = tc.getContext('2d', { willReadFrequently: true });
+            tCtx.drawImage(canvasEl, 0, 0, tw, th);
+            const idata = tCtx.getImageData(0, 0, tw, th);
+            applyColorPipelineToImageData(idata, tw, th, item.editState);
+            tCtx.putImageData(idata, 0, 0);
+            const pr = window.FILM_PRESETS.find((p) => p.id === item.editState.presetId);
+            if (pr && pr.params && pr.params.vignette) {
+                const vs = pr.params.vignette / 100;
+                const vg = tCtx.createRadialGradient(tw / 2, th / 2, Math.min(tw, th) * 0.24, tw / 2, th / 2, Math.max(tw, th) * 0.72);
+                vg.addColorStop(0, 'rgba(0,0,0,0)');
+                vg.addColorStop(1, `rgba(0,0,0,${(vs * 0.85).toFixed(2)})`);
+                tCtx.fillStyle = vg;
+                tCtx.fillRect(0, 0, tw, th);
+            }
+            if (dateStamp) {
+                tCtx.save();
+                const sz = Math.max(9, Math.round(Math.min(tw, th) * 0.036));
+                tCtx.font = `700 ${sz}px "Space Mono", monospace`;
+                tCtx.fillStyle = '#ff7b00';
+                tCtx.textAlign = 'center';
+                tCtx.textBaseline = 'middle';
+                tCtx.shadowColor = 'rgba(0,0,0,0.6)';
+                tCtx.shadowBlur = 3;
+                tCtx.fillText(dateStamp, tw * 0.80, th * 0.93);
+                tCtx.restore();
+            }
+            item.editedThumbUrl = tc.toDataURL('image/jpeg', 0.86);
+            schedulePersist(item, 80);
+        }
+        renderLibraryGrid();
+        return item;
+    }
+
     window.svnLens = {
         photos: () => libraryPhotos, showView: switchStudioView, hydrate: hydratePhoto, open: openPhotoInEditor, toast: flashToast,
-        addToLibrary: (cv, title) => { const it = addPhotoToLibrary(cv, title, false); renderLibraryGrid(); return it; }
+        addToLibrary: (cv, title) => { const it = addPhotoToLibrary(cv, title, false); renderLibraryGrid(); return it; },
+        addCapturedPhoto: addCapturedPhotoToLibrary,
+        renderColorPreview: (imgData, w, h, presetId, evAdjust = 0, grain = 0) => {
+            const st = createDefaultEditState();
+            st.presetId = presetId || 'original';
+            st.adjust.exposure = evAdjust || 0;
+            st.adjust.grain = grain || 0;
+            applyColorPipelineToImageData(imgData, w, h, st);
+        }
     };
 
     window.addEventListener('DOMContentLoaded', init);
@@ -4386,7 +6663,7 @@
 (() => {
 'use strict';
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const W = 1080, RA = { '4:5': 1.25, '1:1': 1, '3:4': 4 / 3, '9:16': 16 / 9, '16:9': 9 / 16 };
+const W = 1080, RA = { '4:5': 1.25, '3:2': 2 / 3, '1:1': 1, '3:4': 4 / 3, '9:16': 16 / 9, '16:9': 9 / 16 };
 const FONTS = ['Playfair Display', 'Cormorant Garamond', 'DM Serif Display', 'Bebas Neue', 'Oswald', 'Inter', 'Space Mono', 'Caveat', 'Great Vibes', 'Dancing Script'];
 const SW = ['#ffffff', '#f4f1ea', '#eaeaea', '#cacaca', '#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#fb923c', '#f43f5e', '#26211e', '#000000'];
 const IMG = {};
@@ -4400,6 +6677,11 @@ const p = (x, y, w, h, o) => ({ t: 'p', x, y, w, h, ...o }), tx = (x, y, s, fs, 
 const pol = (x, y, r) => { const a = r * Math.PI / 180; return [sq(x, y, .52, .62, '#ffffff', { r, sh: 1 }), p(x + .06 * Math.sin(a), (y * 1.25 - .06 * Math.cos(a)) / 1.25, .44, .44, { r })]; };
 const mono = c => ({ f: 'Space Mono', c });
 const T = [
+  { n: 'Grad Editorial', ra: '3:2', sl: [['#1c1e1c']], L: [
+      p(.5, .5, 1, 2 / 3),
+      tx(.62, .16, 'GRADUATION FOR\nLOCATION\n\nPHOTOGRAPHY BY', .0128, { f: 'Inter', c: '#f4f1ea', al: 'left', sh: 1 }),
+      tx(.77, .16, 'NAMA WISUDAWAN\nUNIVERSITAS PENDIDIKAN\nINDONESIA\n@STUDIO.ANDA', .0128, { f: 'Inter', c: '#ffffff', al: 'left', sh: 1 })
+  ] },
   { n: 'Split', sl: [['#eaeaea', '#dddddd'], ['#eaeaea', '#dddddd']], L: [0, 1].flatMap(i => [p(i + .5, .2275, .3, .3), p(i + .5, .7225, .3, .3), tx(i + .19, .5, i ? 'two' : 'one', .075, { c: '#6b6b6b', f: 'Inter' }), tx(i + .8, .5, i ? 'worlds' : 'world', .075, { c: '#6b6b6b', f: 'Inter' })]) },
   { n: 'Panorama', sl: [['#f4f1ea'], ['#f4f1ea'], ['#f4f1ea']], L: [p(1.5, .46, 2.88, 1), tx(.5, .93, 'swipe', .032, mono('#78716c')), tx(2.5, .93, 'fin.', .032, mono('#78716c'))] },
   { n: 'Triptych', sl: [['#1c1917'], ['#1c1917'], ['#1c1917']], L: [0, 1, 2].flatMap(i => [p(i + .5, .47, .84, 1.05), tx(i + .5, .93, '0' + (i + 1), .036, mono('#a8a29e'))]) },
@@ -4409,7 +6691,7 @@ const T = [
   { n: 'Blank', sl: [['#f4f1ea']], L: [] }
 ];
 function fromT(t) {
-  const s = { ra: '4:5', sl: t.sl.map(([bg, bg2]) => ({ bg, bg2 })), L: [] }, h = H(s);
+  const s = { ra: t.ra || '4:5', sl: t.sl.map(([bg, bg2]) => ({ bg, bg2 })), L: [] }, h = H(s);
   s.L = t.L.map(o => { const l = { id: id(), r: 0, rad: 0, zoom: 1, op: 1, k: 'r', c: '#ffffff', f: 'Playfair Display', ...o }; l.x *= W; l.y *= h; if (l.t === 't') l.fs *= W; else { l.w *= W; l.h *= W; } return l; });
   return s;
 }
@@ -4421,8 +6703,9 @@ function mk(l) {
 }
 function up(e, l) {
   const s = e.style, n = e.firstChild, q = n.style;
-  s.left = l.x + 'px'; s.top = l.y + 'px'; s.opacity = l.op; s.transform = `translate(-50%,-50%) rotate(${l.r}deg)`;
-  if (l.t === 't') { n.textContent = l.s; q.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px/1.15 "${l.f}",serif`; q.color = l.c; q.textShadow = l.sh ? '0 4px 24px rgba(0,0,0,.35)' : 'none'; return; }
+  const txOff = l.t === 't' && l.al === 'left' ? '0' : l.t === 't' && l.al === 'right' ? '-100%' : '-50%';
+  s.left = l.x + 'px'; s.top = l.y + 'px'; s.opacity = l.op; s.transform = `translate(${txOff},-50%) rotate(${l.r}deg)`;
+  if (l.t === 't') { n.textContent = l.s; q.textAlign = l.al || 'center'; q.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px/1.32 "${l.f}",sans-serif`; q.color = l.c; q.textShadow = l.sh ? '0 4px 24px rgba(0,0,0,.45)' : 'none'; return; }
   s.width = l.w + 'px'; s.height = l.h + 'px'; q.borderRadius = l.k === 'o' ? '50%' : l.rad + 'px'; q.boxShadow = l.sh ? '0 14px 44px rgba(0,0,0,.28)' : 'none';
   if (l.t === 's') { q.background = l.c; return; }
   const [im, pl] = n.children, ok = l.src && IMG[l.src]; q.background = ok ? 'none' : '#cacaca'; im.hidden = !ok; pl.hidden = !!ok;
@@ -4461,7 +6744,7 @@ function gallery() {
   const g = $('#tplGrid'); g.innerHTML = '';
   T.forEach(t => {
     const s = fromT(t), b = document.createElement('button'); b.className = 'tpl-card'; if (s.sl.length > 2) b.style.gridColumn = '1/-1';
-    b.innerHTML = `<div class="tpl-thumb"><div class="tpl-world"></div></div><strong>${t.n}</strong><span>${s.sl.length} slide · 4:5</span>`; g.append(b);
+    b.innerHTML = `<div class="tpl-thumb"><div class="tpl-world"></div></div><strong>${t.n}</strong><span>${s.sl.length} slide · ${s.ra}</span>`; g.append(b);
     const th = $('.tpl-thumb', b), w = $('.tpl-world', b); build(w, s);
     w.style.setProperty('--s', Math.min((th.clientWidth - 24) / (s.sl.length * W), (th.clientHeight - 24) / H(s)));
     b.onclick = () => openT(t);
@@ -4666,8 +6949,8 @@ async function paint() {
   for (const l of st.L) {
     x.save(); x.translate(l.x, l.y); x.rotate(l.r * Math.PI / 180); x.globalAlpha = l.op;
     if (l.t === 't') {
-      x.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px "${l.f}",serif`; x.fillStyle = l.c; x.textAlign = 'center'; x.textBaseline = 'middle'; if (l.sh) shd(24, 4, .35);
-      const ls = l.s.split('\n'); ls.forEach((t, i) => x.fillText(t, 0, (i - (ls.length - 1) / 2) * l.fs * 1.15));
+      x.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px "${l.f}",sans-serif`; x.fillStyle = l.c; x.textAlign = l.al || 'center'; x.textBaseline = 'middle'; if (l.sh) shd(24, 4, .45);
+      const ls = l.s.split('\n'); ls.forEach((t, i) => x.fillText(t, 0, (i - (ls.length - 1) / 2) * l.fs * 1.32));
     } else {
       x.beginPath(); if (l.k === 'o') x.ellipse(0, 0, l.w / 2, l.h / 2, 0, 0, 7); else x.roundRect(-l.w / 2, -l.h / 2, l.w, l.h, l.rad);
       if (l.t === 's') { if (l.sh) shd(44, 14, .28); x.fillStyle = l.c; x.fill(); }
@@ -4696,7 +6979,7 @@ async function exportAll(pano) {
    Geser strip horizontal dengan mouse (drag) & scroll wheel
    ========================================== */
 (() => {
-  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,#fontCatRow';
+  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,.mask-layers-scroll,.mask-manual-row,.mask-params-row,.mask-manage-row,.mask-group-tabs,.glitch-row,.hsl-swatch-row,.hsl-param-row,.lensblur-row,.cam-tray-scroll,.cam-lcd-strip,.cam-top-pills,#fontCatRow';
   let el = null, sx = 0, sl = 0, moved = false;
   document.addEventListener('pointerdown', e => {
     moved = false; if (e.pointerType !== 'mouse' || e.button !== 0) return;

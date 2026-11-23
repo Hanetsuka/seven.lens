@@ -1126,8 +1126,65 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['x_st6', 'LIGHTBURST', 'Night Burst', 'strobe', 'STROBE FLASH', { exposure: 8, contrast: 22, warmth: 8, tint: 6, saturation: 22, highlights: 16, shadows: -22 }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
-// EDITORIAL SUN — hangat, kontras kuat, hitam terangkat tipis (potret golden hour)
+// EDITORIAL SUN — hangat, kontras kuat, hitam terangkat tipis (potret golden hour & wisuda editorial)
 [
+    ['ed_grad_moody', 'GRAD MOODY', 'Grad Editorial Moody', 'editorial', 'EDITORIAL GRAD', {
+        exposure: -10, contrast: 15, highlights: -32, whites: -20, shadows: -10, blacks: -8,
+        fade: 4, warmth: 8, tint: -6, saturation: -14, vibrance: 10, clarity: 14, dehaze: 10, grain: 8, vignette: 44,
+        shadowsTint: [16, 26, 25], highlightsTint: [228, 226, 212], splitStrength: 0.22,
+        hsl: {
+            red: { h: 2, s: 8, l: -8 },
+            orange: { h: -4, s: -4, l: 8 },
+            yellow: { h: -24, s: -68, l: -28 },
+            green: { h: 26, s: -78, l: -48 },
+            aqua: { h: -10, s: -32, l: -16 },
+            blue: { h: -18, s: -34, l: -18 },
+            purple: { h: 0, s: -48, l: -16 },
+            magenta: { h: 0, s: -36, l: -10 }
+        },
+        curve: {
+            rgb: [[0, 6], [46, 30], [128, 120], [198, 198], [255, 234]],
+            r: [[0, 0], [64, 58], [140, 143], [255, 248]],
+            g: [[0, 3], [128, 128], [255, 248]],
+            b: [[0, 7], [64, 62], [136, 126], [255, 232]]
+        }
+    }],
+    ['ed_grad_soft', 'GRAD SOFT', 'Grad Editorial Soft', 'editorial', 'EDITORIAL GRAD', {
+        exposure: -4, contrast: 12, highlights: -24, whites: -14, shadows: -2, blacks: -4,
+        fade: 6, warmth: 9, tint: -4, saturation: -10, vibrance: 12, clarity: 10, grain: 6, vignette: 28,
+        shadowsTint: [20, 30, 28], highlightsTint: [236, 232, 220], splitStrength: 0.18,
+        hsl: {
+            orange: { h: -3, s: -2, l: 8 },
+            yellow: { h: -18, s: -50, l: -16 },
+            green: { h: 18, s: -62, l: -32 },
+            aqua: { h: -8, s: -24, l: -10 },
+            blue: { h: -14, s: -24, l: -12 }
+        },
+        curve: {
+            rgb: [[0, 10], [56, 44], [128, 126], [198, 202], [255, 240]],
+            b: [[0, 8], [136, 128], [255, 236]]
+        }
+    }],
+    ['m_grad_deep', 'GRAD DEEP', 'Grad Moody Deep', 'moody', 'EDITORIAL GRAD', {
+        exposure: -15, contrast: 18, highlights: -38, whites: -24, shadows: -14, blacks: -12,
+        fade: 4, warmth: 6, tint: -9, saturation: -20, vibrance: 8, clarity: 18, dehaze: 14, grain: 10, vignette: 52,
+        shadowsTint: [14, 26, 26], highlightsTint: [222, 224, 210], splitStrength: 0.26,
+        hsl: {
+            red: { h: 2, s: 6, l: -10 },
+            orange: { h: -4, s: -6, l: 6 },
+            yellow: { h: -28, s: -78, l: -36 },
+            green: { h: 32, s: -85, l: -58 },
+            aqua: { h: -12, s: -40, l: -22 },
+            blue: { h: -20, s: -42, l: -24 },
+            purple: { h: 0, s: -55, l: -20 },
+            magenta: { h: 0, s: -45, l: -16 }
+        },
+        curve: {
+            rgb: [[0, 5], [48, 28], [128, 114], [196, 190], [255, 226]],
+            r: [[0, 0], [132, 134], [255, 244]],
+            b: [[0, 8], [132, 120], [255, 226]]
+        }
+    }],
     ['x_ed1', 'SUNLIT', 'Sunlit Editorial', 'editorial', 'EDITORIAL SUN', { warmth: 15, contrast: 24, saturation: 10, vibrance: 8, highlights: -10, shadows: -4, fade: 5, shadowsTint: [44, 30, 20], highlightsTint: [255, 214, 168], splitStrength: 0.16, curve: { rgb: [[0, 12], [64, 52], [192, 206], [255, 250]] } }],
     ['x_ed2', 'GOLDTEAL', 'Golden Teal', 'editorial', 'EDITORIAL SUN', { warmth: 12, contrast: 22, saturation: 8, fade: 5, shadowsTint: [20, 52, 56], highlightsTint: [255, 208, 150], splitStrength: 0.22 }],
     ['x_ed3', 'HERITAGE', 'Heritage Warm', 'editorial', 'EDITORIAL SUN', { warmth: 18, contrast: 26, saturation: 14, vibrance: 10, shadows: -8, highlights: -6, fade: 4, grain: 6 }],

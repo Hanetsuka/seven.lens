@@ -20,6 +20,7 @@
 <body>
     <!-- Hidden Global Inputs (visually hidden instead of display:none for full mobile/desktop compatibility) -->
     <input type="file" id="photoFileInput" class="visually-hidden-input" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple>
+    <input type="file" id="nativeCameraInput" class="visually-hidden-input" accept="image/*" capture="environment">
     <input type="file" id="lutFileInput" class="visually-hidden-input" accept=".cube" multiple>
     <input type="file" id="customFontInput" class="visually-hidden-input" accept=".ttf,.otf,.woff,.woff2">
 
@@ -71,18 +72,23 @@
                         <span class="row-title">Continue editing</span>
                         <span class="row-arrow">→</span>
                     </button>
-                    <button class="home-menu-row" id="btnHomeImportPhoto">
+                    <button class="home-menu-row" id="btnHomeCamera">
                         <span class="row-num">02</span>
+                        <span class="row-title">Take photo (Pro Camera)</span>
+                        <span class="row-arrow">→</span>
+                    </button>
+                    <button class="home-menu-row" id="btnHomeImportPhoto">
+                        <span class="row-num">03</span>
                         <span class="row-title">Import photos</span>
                         <span class="row-arrow">→</span>
                     </button>
                     <button class="home-menu-row" id="btnHomeBrowsePresets">
-                        <span class="row-num">03</span>
+                        <span class="row-num">04</span>
                         <span class="row-title">Browse film presets</span>
                         <span class="row-arrow">→</span>
                     </button>
                     <button class="home-menu-row" id="btnHomeTemplates">
-                        <span class="row-num">04</span>
+                        <span class="row-num">05</span>
                         <span class="row-title">Carousel templates</span>
                         <span class="row-arrow">→</span>
                     </button>
@@ -93,7 +99,10 @@
             <section id="viewLibrary" class="studio-view">
                 <header class="studio-topbar">
                     <span id="libTopMeta" class="meta-label">STUDIO / 03 PHOTOS</span>
-                    <button id="btnLibImport" class="link-underlined">IMPORT →</button>
+                    <div style="display:flex; align-items:center; gap:14px;">
+                        <button id="btnLibCamera" class="link-underlined">CAMERA</button>
+                        <button id="btnLibImport" class="link-underlined">IMPORT →</button>
+                    </div>
                 </header>
 
                 <div class="editorial-header">
@@ -151,7 +160,7 @@
             <section id="viewTemplates" class="studio-view">
                 <header class="studio-topbar">
                     <span class="meta-label">STUDIO / TEMPLATES</span>
-                    <span class="meta-label">/ 07</span>
+                    <span class="meta-label">/ 08</span>
                 </header>
 
                 <div class="editorial-header">
@@ -163,7 +172,7 @@
             </section>
         </div>
 
-        <!-- Bottom Navigation Bar (01 HOME | 02 LIBRARY | 03 LUTS) -->
+        <!-- Bottom Navigation Bar (01 HOME | 02 LIBRARY | CAMERA | 03 LUTS | 04 TEMPLATE) -->
         <nav class="studio-bottom-nav">
             <button class="studio-nav-item active" data-view="viewHome">
                 <span class="nav-num">01</span>
@@ -174,6 +183,9 @@
                 <span class="nav-num">02</span>
                 <span class="nav-label">LIBRARY</span>
                 <span class="nav-dot"></span>
+            </button>
+            <button id="btnNavCamera" class="studio-nav-camera" title="Buka Pro Film Camera" aria-label="Buka Kamera">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
             </button>
             <button class="studio-nav-item" data-view="viewLuts">
                 <span class="nav-num">03</span>
@@ -197,6 +209,7 @@
             <div style="display:flex; align-items:center; gap:14px;">
                 <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
                 <button id="btnEditorImport" class="editor-top-link">+ PHOTO</button>
+                <button id="btnEditorCamera" class="editor-top-link" title="Ambil Foto dengan Kamera">CAMERA</button>
             </div>
 
             <div class="editor-history-btns">
@@ -216,26 +229,59 @@
 
         <!-- Center Photo Viewport -->
         <main class="editor-stage-area">
-            <div class="canvas-wrapper" id="canvasWrapper">
-                <canvas id="mainCanvas"></canvas>
+            <div class="stage-viewport" id="stageViewport">
+                <div class="canvas-wrapper" id="canvasWrapper">
+                    <canvas id="mainCanvas"></canvas>
 
-                <!-- Crop Interactive Box Overlay -->
-                <canvas id="maskOverlay" class="mask-overlay hidden"></canvas>
-                <div id="cropOverlay" class="crop-overlay hidden">
-                    <div id="cropBox" class="crop-box">
-                        <div class="crop-grid-h1"></div>
-                        <div class="crop-grid-h2"></div>
-                        <div class="crop-grid-v1"></div>
-                        <div class="crop-grid-v2"></div>
-                        <div class="crop-handle nw" data-handle="nw"></div>
-                        <div class="crop-handle ne" data-handle="ne"></div>
-                        <div class="crop-handle sw" data-handle="sw"></div>
-                        <div class="crop-handle se" data-handle="se"></div>
-                        <div class="crop-handle n" data-handle="n"></div>
-                        <div class="crop-handle s" data-handle="s"></div>
-                        <div class="crop-handle e" data-handle="e"></div>
-                        <div class="crop-handle w" data-handle="w"></div>
+                    <!-- Interactive Focal Point Overlay (Radial / Zoom / Spin / Bokeh / Tilt-Shift Blur) -->
+                    <canvas id="focalOverlay" class="focal-overlay hidden"></canvas>
+
+                    <!-- Masking Interactive Overlay -->
+                    <canvas id="maskOverlay" class="mask-overlay hidden"></canvas>
+
+                    <!-- Crop Interactive Box Overlay -->
+                    <div id="cropOverlay" class="crop-overlay hidden">
+                        <div id="cropBox" class="crop-box">
+                            <div class="crop-grid-h1"></div>
+                            <div class="crop-grid-h2"></div>
+                            <div class="crop-grid-v1"></div>
+                            <div class="crop-grid-v2"></div>
+                            <div class="crop-handle nw" data-handle="nw"></div>
+                            <div class="crop-handle ne" data-handle="ne"></div>
+                            <div class="crop-handle sw" data-handle="sw"></div>
+                            <div class="crop-handle se" data-handle="se"></div>
+                            <div class="crop-handle n" data-handle="n"></div>
+                            <div class="crop-handle s" data-handle="s"></div>
+                            <div class="crop-handle e" data-handle="e"></div>
+                            <div class="crop-handle w" data-handle="w"></div>
+                        </div>
                     </div>
+                </div>
+
+                <!-- Floating Quick Mask Actions HUD (Active when editing a mask) -->
+                <div id="maskQuickHud" class="mask-quick-hud hidden">
+                    <button id="btnMaskQuickBrush" class="qhud-btn" title="Tambah area mask dengan kuas (+)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 5-3-3-9 9v3h3l9-9Z"/><path d="M12 19h8"/></svg>
+                    </button>
+                    <button id="btnMaskQuickErase" class="qhud-btn" title="Hapus area mask dengan penghapus (−)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+                    </button>
+                    <span id="maskQuickBrushSep" class="zoom-hud-sep"></span>
+                    <button id="btnMaskQuickOverlay" class="qhud-btn" title="Tampilkan / Sembunyikan overlay merah mask">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button id="btnMaskQuickInvert" class="qhud-btn" title="Balik area mask (Invert)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/></svg>
+                    </button>
+                </div>
+
+                <!-- Floating Zoom & Pan HUD (Active during Masking / Brush) -->
+                <div id="canvasZoomHud" class="canvas-zoom-hud hidden">
+                    <button id="btnZoomOut" class="zoom-hud-btn" title="Perkecil (Zoom Out)">−</button>
+                    <button id="btnZoomReset" class="zoom-hud-pct" title="Reset Zoom ke 100%">100%</button>
+                    <button id="btnZoomIn" class="zoom-hud-btn" title="Perbesar (Zoom In)">+</button>
+                    <span class="zoom-hud-sep"></span>
+                    <button id="btnZoomPan" class="zoom-hud-pan" title="Mode Geser Foto (atau tahan Spasi)">✋</button>
                 </div>
             </div>
 
@@ -365,7 +411,7 @@
 
                 <!-- Text Editor Controls (Shown when a text layer is active) -->
                 <div id="textEditorControls" class="text-editor-controls hidden">
-                    <input type="text" id="textLiveInput" class="dark-text-input" placeholder="Ketik teks di sini...">
+                    <textarea id="textLiveInput" rows="2" class="dark-text-input" placeholder="Ketik teks di sini... (Enter untuk baris baru)"></textarea>
 
                     <div class="subcat-bar" id="textSubTabBar">
                         <button class="subcat-btn active" data-txttab="font">FONT</button>
@@ -428,6 +474,7 @@
                             <button class="dark-chip align-btn active" data-align="center">CENTER</button>
                             <button class="dark-chip align-btn" data-align="right">ALIGN RIGHT</button>
                             <button id="btnCenterOnCanvas" class="dark-chip">TENGAHKAN DI FOTO</button>
+                            <button id="btnAddGradCredits" class="dark-chip chip-ai">GRAD CREDITS</button>
                             <button id="btnAdd90sDate" class="dark-chip">'98 DATE STAMP</button>
                         </div>
                     </div>
@@ -531,6 +578,7 @@
     <script src="js/lut-presets.js"></script>
     <script src="js/ai-tools.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/camera-studio.js"></script>
     <script>
         // Register Service Worker untuk akses 100% Offline (PWA)
         if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
