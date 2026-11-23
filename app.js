@@ -220,10 +220,9 @@
         if (!dbPromise) {
             dbPromise = new Promise((resolve, reject) => {
                 if (!window.indexedDB) { reject(new Error('IndexedDB tidak tersedia')); return; }
-                const rq = indexedDB.open(DB_NAME, 1);
+                const rq = indexedDB.open(DB_NAME, 2);
                 rq.onupgradeneeded = () => {
-                    rq.result.createObjectStore('meta', { keyPath: 'id' });
-                    rq.result.createObjectStore('blobs', { keyPath: 'id' });
+                    ['meta', 'blobs', 'looks'].forEach((n) => { if (!rq.result.objectStoreNames.contains(n)) rq.result.createObjectStore(n, { keyPath: 'id' }); });
                 };
                 rq.onsuccess = () => resolve(rq.result);
                 rq.onerror = () => reject(rq.error);
@@ -267,7 +266,27 @@
         persistTimers.set(photo.id, setTimeout(() => persistPhoto(photo), delay));
     }
 
+    let persistError = null;
+    function setPersistError(err) {
+        persistError = err ? `${err.name || ''} ${err.message || err}`.trim() : null;
+        let b = document.getElementById('persistBanner');
+        const host = document.getElementById('libraryGrid');
+        if (!err) { if (b) b.remove(); return; }
+        if (!b && host) {
+            b = document.createElement('div');
+            b.id = 'persistBanner';
+            b.className = 'persist-banner';
+            host.parentNode.insertBefore(b, host);
+        }
+        if (b) b.textContent = `⚠ Penyimpanan permanen tidak aktif (${persistError}). Hasil edit hanya bertahan selama halaman ini terbuka — gunakan EXPORT, atau buka aplikasi lewat https / localhost.`;
+    }
+
     async function persistPhoto(photo) {
+        if (!photo || photo._skipPersist || photo._lazy) return false;
+        try { await persistPhotoRaw(photo); setPersistError(null); return true; } catch (err) { setPersistError(err); return false; }
+    }
+
+    async function persistPhotoRaw(photo) {
         if (!photo || photo._skipPersist || photo._lazy) return;
         try {
             if (!photo._origBlob) photo._origBlob = await encodeCanvas(photo.originalCanvas);
@@ -289,6 +308,7 @@
                 quotaWarned = true;
                 alert('Penyimpanan perangkat penuh, sebagian foto tidak dapat disimpan permanen. Hapus foto lama atau kosongkan ruang.');
             }
+            throw err;
         }
     }
 
@@ -346,6 +366,205 @@
     document.addEventListener('visibilitychange', () => { if (document.hidden) autosaveNow(); });
     window.addEventListener('pagehide', autosaveNow);
 
+    // ==========================================
+    // SIMPAN / SALIN EDIT / PRESET HASIL EDIT
+    // ==========================================
+    let lookClipboard = null, myLooks = [], toastTimer = 0, libSelectMode = false;
+    const LOOK_OPT = { masks: false, texts: false };
+    const libSelected = new Set();
+    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt'];
+
+    function flashToast(msg, ms = 1900) {
+        let t = document.getElementById('saveToast');
+        if (!t) { t = document.createElement('div'); t.id = 'saveToast'; t.className = 'save-toast'; document.body.appendChild(t); }
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    // Simpan eksplisit + konfirmasi hanya jika penyimpanan permanen benar-benar berhasil
+    async function saveNowExplicit() {
+        saveCurrentPhotoBackToLibrary();
+        const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+        if (!photo) return;
+        clearTimeout(persistTimers.get(photo.id));
+        const ok = await persistPhoto(photo);
+        flashToast(ok ? '✓ Tersimpan di Library (permanen)' : `⚠ Tersimpan sementara — penyimpanan permanen gagal: ${persistError || 'tidak diketahui'}`, ok ? 1900 : 6000);
+    }
+
+    // Simpan hasil edit sebagai foto BARU di Library (salinan resolusi penuh)
+    function saveAsNewPhoto() {
+        const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+        saveCurrentPhotoBackToLibrary();
+        renderEditorCanvasSync();
+        const out = createBlankCanvas(mainCanvas.width, mainCanvas.height);
+        out.getContext('2d').drawImage(mainCanvas, 0, 0);
+        addPhotoToLibrary(out, `${photo ? photo.title : 'Foto'} (edit)`, true);
+        renderLibraryGrid();
+        flashToast('✓ Disimpan sebagai foto baru di Library');
+    }
+
+    function captureLook(opts = {}) {
+        const look = { v: 1 };
+        LOOK_KEYS.forEach((k) => { look[k] = state[k] === undefined ? null : JSON.parse(JSON.stringify(state[k])); });
+        look.adjust = JSON.parse(JSON.stringify(state.adjust));
+        delete look.adjust.straighten; // geometri tidak ikut disalin
+        if (opts.masks) look.masks = state.masks.filter((m) => m.type !== 'brush').map((m) => JSON.parse(JSON.stringify(m)));
+        if (opts.texts) look.texts = JSON.parse(JSON.stringify(state.texts));
+        return look;
+    }
+
+    function applyLookToState(look) {
+        const d = createDefaultEditState();
+        LOOK_KEYS.forEach((k) => { state[k] = look[k] !== undefined && look[k] !== null ? JSON.parse(JSON.stringify(look[k])) : d[k]; });
+        if (state.activeCubeLutId && !myCubeLuts.find((l) => l.id === state.activeCubeLutId)) state.activeCubeLutId = null;
+        state.adjust = { ...d.adjust, ...look.adjust, straighten: (state.adjust && state.adjust.straighten) || 0 };
+        if (look.masks) {
+            const keep = state.masks.filter((m) => m.type === 'brush');
+            state.masks = keep.concat(look.masks.map((m) => ({ ...JSON.parse(JSON.stringify(m)), id: 'mk_' + Math.random().toString(36).slice(2, 8) })));
+            maskVer++;
+        }
+        if (look.texts) state.texts = look.texts.map((t) => ({ ...JSON.parse(JSON.stringify(t)), id: 'txt_' + Math.random().toString(36).slice(2, 8) }));
+        if (!state.curves) state.curves = createIdentityCurves();
+    }
+
+    function applyLookInEditor(look, label = 'Paste edit') {
+        if (!look) return;
+        applyLookToState(look);
+        switchEditorMainTab(activeEditorMainTab);
+        renderEditorCanvas();
+        pushHistory(label, true);
+        flashToast('✓ Edit diterapkan');
+    }
+
+    function persistClipboard() {
+        idbRun(['looks'], 'readwrite', (s) => s.put({ id: '__clip__', look: lookClipboard })).catch(() => {});
+    }
+
+    async function loadLooks() {
+        try {
+            const recs = await idbRun(['looks'], 'readonly', (s) => s.getAll());
+            myLooks = (recs || []).filter((r) => r.id !== '__clip__').sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+            const clip = (recs || []).find((r) => r.id === '__clip__');
+            if (clip) lookClipboard = clip.look;
+            updateLibActions();
+        } catch (e) { /* tanpa penyimpanan: preset hanya tersimpan selama sesi */ }
+    }
+
+    function makeLookThumb() {
+        const c = createBlankCanvas(76, 76), m = Math.min(mainCanvas.width, mainCanvas.height);
+        c.getContext('2d').drawImage(mainCanvas, (mainCanvas.width - m) / 2, (mainCanvas.height - m) / 2, m, m, 0, 0, 76, 76);
+        return c.toDataURL('image/jpeg', 0.8);
+    }
+
+    function saveLookAsPreset() {
+        const name = (window.prompt('Nama preset hasil edit ini:', `Edit ${myLooks.length + 1}`) || '').trim();
+        if (!name) return;
+        renderEditorCanvasSync('good');
+        const rec = { id: 'look_' + Date.now(), name, look: captureLook({ masks: LOOK_OPT.masks, texts: LOOK_OPT.texts }), thumb: makeLookThumb(), createdAt: Date.now() };
+        myLooks.unshift(rec);
+        idbRun(['looks'], 'readwrite', (s) => s.put(rec)).catch(() => flashToast('⚠ Preset hanya tersimpan selama sesi (penyimpanan permanen gagal)', 4000));
+        activePresetCat = 'myedits';
+        switchEditorMainTab('Presets');
+        document.querySelectorAll('#presetCatBar [data-pcat]').forEach((b) => b.classList.toggle('active', b.dataset.pcat === 'myedits'));
+        flashToast(`★ Preset "${name}" tersimpan di MY EDITS`);
+    }
+
+    function buildEditMenu() {
+        const hist = document.querySelector('.editor-history-btns');
+        if (!hist || document.getElementById('btnEditMenu')) return;
+        const btn = document.createElement('button');
+        btn.id = 'btnEditMenu';
+        btn.className = 'hist-icon-btn';
+        btn.title = 'Simpan · Salin edit · Preset';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="3" width="12" height="14" rx="2"/><path d="M16 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2"/></svg>';
+        hist.appendChild(btn);
+        const menu = document.createElement('div');
+        menu.id = 'editMenu';
+        menu.className = 'edit-menu hidden';
+        menu.innerHTML = `
+            <button data-act="save">✓ SIMPAN KE LIBRARY</button>
+            <button data-act="savecopy">＋ SIMPAN SEBAGAI FOTO BARU</button>
+            <div class="edit-menu-sep"></div>
+            <button data-act="copy">⧉ SALIN EDIT</button>
+            <div class="edit-menu-opts"><button data-opt="masks" class="dark-chip">+ MASKING</button><button data-opt="texts" class="dark-chip">+ TEKS</button></div>
+            <button data-act="paste">⎘ TEMPEL EDIT</button>
+            <button data-act="savelook">★ SIMPAN SEBAGAI PRESET</button>`;
+        document.body.appendChild(menu);
+        const refresh = () => {
+            menu.querySelector('[data-act="paste"]').disabled = !lookClipboard;
+            menu.querySelectorAll('[data-opt]').forEach((b) => b.classList.toggle('active', !!LOOK_OPT[b.dataset.opt]));
+        };
+        btn.addEventListener('click', (e) => { e.stopPropagation(); refresh(); menu.classList.toggle('hidden'); });
+        document.addEventListener('click', (e) => { if (!menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden'); });
+        menu.addEventListener('click', async (e) => {
+            const o = e.target.closest('[data-opt]');
+            if (o) { LOOK_OPT[o.dataset.opt] = !LOOK_OPT[o.dataset.opt]; refresh(); return; }
+            const b = e.target.closest('[data-act]');
+            if (!b || b.disabled) return;
+            menu.classList.add('hidden');
+            const act = b.dataset.act;
+            if (act === 'save') await saveNowExplicit();
+            else if (act === 'savecopy') saveAsNewPhoto();
+            else if (act === 'copy') {
+                lookClipboard = captureLook({ masks: LOOK_OPT.masks, texts: LOOK_OPT.texts });
+                persistClipboard();
+                updateLibActions();
+                flashToast('⧉ Edit disalin — buka foto lain lalu TEMPEL EDIT', 3200);
+            } else if (act === 'paste') applyLookInEditor(lookClipboard);
+            else if (act === 'savelook') saveLookAsPreset();
+        });
+    }
+
+    function buildLibActions() {
+        const grid = document.getElementById('libraryGrid');
+        if (!grid || document.getElementById('libActions')) return;
+        const row = document.createElement('div');
+        row.id = 'libActions';
+        row.className = 'lib-actions';
+        row.innerHTML = '<button id="btnLibSelect" class="link-underlined">PILIH FOTO</button><span id="libSelInfo" class="meta-label"></span><button id="btnLibPaste" class="link-underlined hidden">TEMPEL EDIT →</button>';
+        grid.parentNode.insertBefore(row, grid);
+        document.getElementById('btnLibSelect').addEventListener('click', () => {
+            libSelectMode = !libSelectMode;
+            libSelected.clear();
+            renderLibraryGrid();
+        });
+        document.getElementById('btnLibPaste').addEventListener('click', () => batchPasteLook([...libSelected]));
+    }
+
+    function updateLibActions() {
+        const sel = document.getElementById('btnLibSelect');
+        if (!sel) return;
+        sel.textContent = libSelectMode ? 'SELESAI' : 'PILIH FOTO';
+        const info = document.getElementById('libSelInfo'), paste = document.getElementById('btnLibPaste');
+        if (!libSelectMode) { info.textContent = ''; paste.classList.add('hidden'); return; }
+        info.textContent = lookClipboard ? `${libSelected.size} DIPILIH` : 'SALIN EDIT DULU DI EDITOR (IKON ⧉ DI ATAS)';
+        paste.textContent = `TEMPEL EDIT (${libSelected.size}) →`;
+        paste.classList.toggle('hidden', !(lookClipboard && libSelected.size));
+    }
+
+    async function batchPasteLook(ids) {
+        if (!lookClipboard || !ids.length) return;
+        let done = 0;
+        for (const id of ids) {
+            const p = libraryPhotos.find((x) => x.id === id);
+            if (!p) continue;
+            flashToast(`Menerapkan edit ${++done}/${ids.length}…`, 60000);
+            try { await hydratePhoto(p); } catch (err) { continue; }
+            openPhotoInEditorNow(p.id, 'Presets');
+            applyLookToState(lookClipboard);
+            renderEditorCanvasSync('good');
+            saveCurrentPhotoBackToLibrary();
+            await new Promise((r) => setTimeout(r, 15));
+        }
+        libSelectMode = false;
+        libSelected.clear();
+        switchStudioView('viewLibrary');
+        renderLibraryGrid();
+        flashToast(`✓ Edit diterapkan & tersimpan di ${done} foto`);
+    }
+
     function init() {
         const seed = () => {
             let seeded = false;
@@ -357,7 +576,11 @@
         };
         loadLibraryFromDB()
             .then((has) => { if (!has) seed(); renderLibraryGrid(); updatePhotoCountLabels(); })
-            .catch(() => { generateStarterLibraryPhotos(); renderLibraryGrid(); });
+            .catch((e) => { setPersistError(e); generateStarterLibraryPhotos(); renderLibraryGrid(); });
+        buildEditMenu();
+        buildLibActions();
+        loadLooks();
+        dbOpen().then(() => setPersistError(null)).catch((e) => setPersistError(e));
         renderLibraryGrid();
         renderMyLutsView();
         bindStudioNavigation();
@@ -804,7 +1027,7 @@
         list.forEach((photo, idx) => {
             const numStr = String(idx + 1).padStart(2, '0');
             const card = document.createElement('div');
-            card.className = 'lib-photo-card';
+            card.className = 'lib-photo-card' + (libSelectMode && libSelected.has(photo.id) ? ' selected' : '');
             card.innerHTML = `
                 <div class="lib-thumb-wrap">
                     <img src="${photo.editedThumbUrl || photo.thumbUrl}" alt="${photo.title}">
@@ -825,11 +1048,17 @@
                     renderLibraryGrid();
                     return;
                 }
+                if (libSelectMode) {
+                    if (libSelected.has(photo.id)) libSelected.delete(photo.id); else libSelected.add(photo.id);
+                    renderLibraryGrid();
+                    return;
+                }
                 openPhotoInEditor(photo.id);
             });
 
             grid.appendChild(card);
         });
+        updateLibActions();
     }
 
     function renderMyLutsView() {
@@ -863,6 +1092,8 @@
     // ==========================================
     async function openPhotoInEditor(photoId, initialTab = 'Presets') {
         const target = libraryPhotos.find((p) => p.id === photoId) || libraryPhotos[0];
+        const edShell = document.getElementById('editorShell');
+        if (editorDirty && currentPhotoId && target && currentPhotoId !== target.id && edShell && !edShell.classList.contains('hidden')) saveCurrentPhotoBackToLibrary();
         if (target && target._lazy) {
             try { await hydratePhoto(target); } catch (err) { alert('Foto tidak dapat dimuat: ' + (err.message || err)); return; }
         }
@@ -1923,6 +2154,46 @@
             return;
         }
 
+        if (activePresetCat === 'myedits') {
+            myLooks.forEach((rec) => {
+                const card = document.createElement('div');
+                card.className = 'thumb-card';
+                const box = document.createElement('div');
+                box.className = 'thumb-box';
+                const img = document.createElement('img');
+                img.src = rec.thumb;
+                img.alt = rec.name;
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+                box.appendChild(img);
+                const del = document.createElement('span');
+                del.className = 'fav-star-badge';
+                del.textContent = '×';
+                del.title = 'Hapus preset';
+                del.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    if (!confirm(`Hapus preset "${rec.name}"?`)) return;
+                    myLooks = myLooks.filter((x) => x.id !== rec.id);
+                    idbRun(['looks'], 'readwrite', (s) => s.delete(rec.id)).catch(() => {});
+                    renderPresetsStrip();
+                });
+                box.appendChild(del);
+                const lbl = document.createElement('span');
+                lbl.className = 'thumb-label';
+                lbl.textContent = rec.name.toUpperCase().slice(0, 12);
+                card.appendChild(box);
+                card.appendChild(lbl);
+                card.addEventListener('click', () => applyLookInEditor(rec.look, `Preset ${rec.name}`));
+                strip.appendChild(card);
+            });
+            if (!myLooks.length) {
+                const hint = document.createElement('div');
+                hint.className = 'thumb-card';
+                hint.innerHTML = '<div class="thumb-box" style="display:flex;align-items:center;justify-content:center;border:1px dashed #6e655c;color:#e7e2d8;font-size:1.3rem;">★</div><span class="thumb-label">SIMPAN DARI ⧉</span>';
+                strip.appendChild(hint);
+            }
+            return;
+        }
+
         // Filter daftar preset berdasarkan kategori
         let list = [];
         if (activePresetCat === 'favorites') {
@@ -2940,6 +3211,7 @@
         // Back to Library
         document.getElementById('btnBackToLibrary').addEventListener('click', () => {
             saveCurrentPhotoBackToLibrary();
+            flashToast('✓ Tersimpan di Library');
             switchStudioView('viewLibrary');
         });
 
@@ -4092,12 +4364,16 @@
             a.click();
 
             saveCurrentPhotoBackToLibrary();
+            flashToast('✓ Diekspor & tersimpan di Library');
             modal.classList.add('hidden');
         });
     }
 
     // Jembatan untuk fitur Templates
-    window.svnLens = { photos: () => libraryPhotos, showView: switchStudioView, hydrate: hydratePhoto };
+    window.svnLens = {
+        photos: () => libraryPhotos, showView: switchStudioView, hydrate: hydratePhoto, open: openPhotoInEditor, toast: flashToast,
+        addToLibrary: (cv, title) => { const it = addPhotoToLibrary(cv, title, false); renderLibraryGrid(); return it; }
+    };
 
     window.addEventListener('DOMContentLoaded', init);
 })();
@@ -4250,7 +4526,7 @@ function sheet() {
   } else if (mode === 'add') {
     h = `<div class="tpl-row">${chip('add', 'p', 'Foto')}${chip('add', 't', 'Teks')}${chip('add', 'r', 'Kotak')}${chip('add', 'o', 'Lingkaran')}</div><div class="tpl-row">${chip('fill', '', 'Isi slot kosong dengan foto')}</div>`;
   } else if (mode === 'export') {
-    h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
+    h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${chip('x3', '', 'Simpan ke Library')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
   } else if (mode === 'src') {
     const ps = window.svnLens.photos();
     h = `<div class="tpl-lab"><span>Dari Library</span></div><div class="tpl-row">${ps.map(q => `<button class="tpl-lib" data-a="lib" data-v="${q.id}" aria-label="${esc(q.title || 'Foto')}"><img src="${q.editedThumbUrl || q.thumbUrl}" alt=""></button>`).join('') || '<span class="tpl-note">Library masih kosong.</span>'}</div><div class="tpl-row">${chip('dev', '', 'Dari galeri perangkat')}${chip('shut', '', 'Tutup')}</div>`;
@@ -4308,6 +4584,7 @@ function act(a, v) {
     case 'fill': pick(null); return; case 'replace': pick(sel); return;
     case 'font': case 'col': case 'tg': { const l = lay(sel); if (a === 'font') l.f = v; else if (a === 'col') l.c = v; else l[v] = !l[v]; up(el(l.id), l); commit(); break; }
     case 'lib': useLib(v); return; case 'dev': devPick(); return; case 'shut': mode = null; break;
+    case 'x3': saveToLib(); return;
     case 'x1': exportAll(false); return; case 'x2': exportAll(true); return;
   }
   sheet();
@@ -4399,6 +4676,12 @@ async function paint() {
     x.restore();
   }
   return c;
+}
+async function saveToLib() {
+  toast('Menyimpan ke Library…');
+  const c = await paint(), n = st.sl.length, h = H();
+  for (let i = 0; i < n; i++) { const d = document.createElement('canvas'); d.width = W; d.height = h; d.getContext('2d').drawImage(c, i * W, 0, W, h, 0, 0, W, h); window.svnLens.addToLibrary(d, `Template ${i + 1}/${n}`); }
+  toast(`✓ ${n} gambar tersimpan di Library`);
 }
 async function exportAll(pano) {
   toast('Menyiapkan gambar…'); const c = await paint(), n = st.sl.length, h = H(), blob = cv => new Promise(r => cv.toBlob(r, 'image/jpeg', .95)), out = [];
