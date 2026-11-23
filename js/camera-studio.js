@@ -152,6 +152,7 @@
     let pinchStart = null;
     let orientationBound = false;
     let audioCtx = null;
+    let camStartSeq = 0;
 
     function getTodayDigicamStamp() {
         const d = new Date();
@@ -373,6 +374,7 @@
     }
 
     function closeCameraStudio(openPhotoId = null) {
+        camStartSeq++;
         stopCameraStream();
         state.isOpen = false;
         state.countingDown = false;
@@ -408,7 +410,88 @@
         state.maxHwZoom = 1;
     }
 
+    async function tryAcquireCameraStream(facing, seq) {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const tryGet = async (constraints) => {
+            if (seq !== camStartSeq || !state.isOpen) return null;
+            return navigator.mediaDevices.getUserMedia(constraints);
+        };
+
+        // Urutan fallback aman untuk HP Android multi-lensa (Xiaomi/HyperOS/Samsung) & iOS Safari:
+        // 1. Resolusi aman 1080p (menghindari crash Camera2 HAL pada 2560x1920)
+        // 2. FacingMode murni tanpa batasan resolusi
+        // 3. Pilih deviceId lensa utama langsung (menghindari sensor depth/macro/ToF)
+        // 4. Fallback minimal { video: true }
+        const attempts = [
+            { audio: false, video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+            { audio: false, video: { facingMode: facing } }
+        ];
+
+        let lastErr = null;
+        for (let i = 0; i < attempts.length; i++) {
+            try {
+                const st = await tryGet(attempts[i]);
+                if (st) return st;
+                return null;
+            } catch (err) {
+                lastErr = err;
+                if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) throw err;
+                await sleep(200);
+            }
+        }
+
+        // Tahap 3: Enumerasi perangkat kamera & coba lensa utama satu per satu
+        if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
+            try {
+                const devs = await navigator.mediaDevices.enumerateDevices();
+                const cams = devs.filter((d) => d.kind === 'videoinput' && d.deviceId);
+                if (cams.length) {
+                    const isBack = facing === 'environment';
+                    const scoreCam = (d, idx) => {
+                        const lbl = (d.label || '').toLowerCase();
+                        let s = 0;
+                        if (isBack && /(back|rear|environment)/.test(lbl)) s += 100;
+                        if (!isBack && /(front|user|selfie)/.test(lbl)) s += 100;
+                        if (isBack && /(front|user|selfie)/.test(lbl)) s -= 80;
+                        if (!isBack && /(back|rear|environment)/.test(lbl)) s -= 80;
+                        if (/(camera2 0|main|wide|0, facing back)/.test(lbl)) s += 40;
+                        if (/(depth|macro|tof|ir|bokeh|aux|tele)/.test(lbl)) s -= 60;
+                        return s - idx * 2;
+                    };
+                    const ranked = cams
+                        .map((d, idx) => ({ d, s: scoreCam(d, idx) }))
+                        .sort((a, b) => b.s - a.s)
+                        .map((x) => x.d);
+                    for (const cam of ranked) {
+                        try {
+                            const st = await tryGet({ audio: false, video: { deviceId: { exact: cam.deviceId } } });
+                            if (st) return st;
+                            return null;
+                        } catch (err) {
+                            lastErr = err;
+                            if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) throw err;
+                            await sleep(180);
+                        }
+                    }
+                }
+            } catch (enumErr) {
+                if (enumErr && (enumErr.name === 'NotAllowedError' || enumErr.name === 'PermissionDeniedError')) throw enumErr;
+            }
+        }
+
+        // Tahap 4: Fallback paling dasar { video: true }
+        try {
+            const st = await tryGet({ audio: false, video: true });
+            if (st) return st;
+            return null;
+        } catch (err) {
+            throw err || lastErr;
+        }
+    }
+
     async function startCameraStream() {
+        const mySeq = ++camStartSeq;
+        const hadActiveStream = !!state.stream;
         stopCameraStream();
         fallbackEl.classList.add('hidden');
         state.demoMode = false;
@@ -423,22 +506,23 @@
             return;
         }
 
-        const constraints = {
-            audio: false,
-            video: {
-                facingMode: { ideal: state.facingMode },
-                width: { ideal: 2560 },
-                height: { ideal: 1920 }
-            }
-        };
+        // Beri jeda pelepasan hardware Android Camera2 HAL jika baru saja menutup/mengganti kamera
+        if (hadActiveStream) {
+            await new Promise((r) => setTimeout(r, 260));
+            if (mySeq !== camStartSeq || !state.isOpen) return;
+        }
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            if (!state.isOpen) {
+            const stream = await tryAcquireCameraStream(state.facingMode, mySeq);
+            if (!stream) return;
+            if (mySeq !== camStartSeq || !state.isOpen) {
                 stream.getTracks().forEach((t) => t.stop());
                 return;
             }
             state.stream = stream;
+            videoEl.muted = true;
+            videoEl.setAttribute('playsinline', '');
+            videoEl.setAttribute('webkit-playsinline', '');
             videoEl.srcObject = stream;
             await videoEl.play().catch(() => {});
 
@@ -453,10 +537,13 @@
             }
 
             syncDigicamUI();
-            applyHardwareTrackSettings();
+            if (state.flashOn || state.zoom > 1 || isManualExposure()) {
+                applyHardwareTrackSettings();
+            }
             applyLiveVisualFilter();
             layoutViewfinder();
         } catch (err) {
+            if (mySeq !== camStartSeq || !state.isOpen) return;
             const name = err && err.name ? err.name : '';
             if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
                 showFallback(
@@ -467,6 +554,11 @@
                 showFallback(
                     'Kamera Tidak Terdeteksi',
                     'Perangkat ini tidak memiliki kamera aktif. Di HP akan otomatis membuka kamera belakang, atau coba Pratinjau Grid & Filter.'
+                );
+            } else if (name === 'NotReadableError' || name === 'AbortError') {
+                showFallback(
+                    'Kamera Sedang Sibuk',
+                    'Pastikan tidak ada aplikasi lain (kamera/video call) yang memakai kamera, lalu ketuk COBA LAGI atau gunakan Kamera Bawaan HP.'
                 );
             } else {
                 showFallback(
