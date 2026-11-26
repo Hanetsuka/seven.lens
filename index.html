@@ -204,27 +204,34 @@
          SHELL 2: DARKROOM EDITOR SHELL (WARM ESPRESSO DARK THEME)
          ========================================================= -->
     <div id="editorShell" class="editor-shell hidden">
-        <!-- Editor Top Bar -->
+        <!-- Editor Top Bar (Rapi & 100% muat di layar HP maupun Desktop) -->
         <header class="editor-topbar">
-            <div style="display:flex; align-items:center; gap:14px;">
-                <button id="btnBackToLibrary" class="editor-top-link">← LIBRARY</button>
-                <button id="btnEditorImport" class="editor-top-link">+ PHOTO</button>
-                <button id="btnEditorCamera" class="editor-top-link" title="Ambil Foto dengan Kamera">CAMERA</button>
+            <div class="editor-top-left">
+                <button id="btnBackToLibrary" class="editor-icon-pill" title="Kembali ke Library">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    <span class="top-lbl">LIBRARY</span>
+                </button>
+                <button id="btnEditorImport" class="editor-icon-btn" title="Tambah Foto Baru (+)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <button id="btnEditorCamera" class="editor-icon-btn" title="Buka Kamera Pro">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </button>
             </div>
 
             <div class="editor-history-btns">
                 <button id="btnUndo" class="hist-icon-btn" title="Undo (Ctrl+Z)" disabled>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
                 </button>
                 <button id="btnRedo" class="hist-icon-btn" title="Redo (Ctrl+Y)" disabled>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
                 </button>
                 <button id="btnResetPhoto" class="hist-icon-btn" title="Reset Semua Editan">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 </button>
             </div>
 
-            <button id="btnOpenExport" class="editor-export-link">EXPORT →</button>
+            <button id="btnOpenExport" class="editor-export-link">EXPORT</button>
         </header>
 
         <!-- Center Photo Viewport -->
@@ -235,6 +242,9 @@
 
                     <!-- Interactive Focal Point Overlay (Radial / Zoom / Spin / Bokeh / Tilt-Shift Blur) -->
                     <canvas id="focalOverlay" class="focal-overlay hidden"></canvas>
+
+                    <!-- Interactive 3D Relight Light-Bulb Overlay -->
+                    <canvas id="relightOverlay" class="focal-overlay hidden"></canvas>
 
                     <!-- Masking Interactive Overlay -->
                     <canvas id="maskOverlay" class="mask-overlay hidden"></canvas>
@@ -315,6 +325,7 @@
                     <button class="subcat-btn" data-pcat="myedits">★ MY EDITS</button>
                     <button class="subcat-btn" data-pcat="myluts">MY LUTS</button>
                     <button class="subcat-btn active" data-pcat="genz">VSCO SOFT ✦</button>
+                    <button class="subcat-btn" data-pcat="flash">⚡ FLASH</button>
                     <button class="subcat-btn" data-pcat="editorial">EDITORIAL SUN</button>
                     <button class="subcat-btn" data-pcat="digicam">Y2K DIGICAM</button>
                     <button class="subcat-btn" data-pcat="korean">K-SOFT</button>
@@ -570,6 +581,49 @@
             </div>
 
             <button id="btnDownloadNow" class="btn-espresso-block">DOWNLOAD PHOTO →</button>
+        </div>
+    </div>
+
+    <!-- =========================================================
+         MODAL 3: AI RELIGHT PRO (BYOK: Google Gemini Image / Fal.ai IC-Light v2)
+         ========================================================= -->
+    <div id="aiProModal" class="cream-modal-backdrop hidden">
+        <div class="cream-modal-card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="meta-label">GENERATIVE CLOUD RELIGHT</span>
+                <button id="btnCloseAiProModal" class="link-underlined">TUTUP</button>
+            </div>
+            <h2 class="cream-modal-title">AI Relight <em>Pro.</em></h2>
+            <p class="ai-modal-desc">Gunakan Generative AI Cloud untuk pencahayaan ulang wajah 3D &amp; bayangan subjek super mulus ala Hypic/Meitu.</p>
+
+            <div class="export-form">
+                <div class="form-row">
+                    <label>PILIH MESIN AI CLOUD</label>
+                    <select id="aiProProvider" class="cream-input">
+                        <option value="gemini">Google Gemini Image (gemini-2.5-flash-image) — Direkomendasikan</option>
+                        <option value="fal">Fal.ai IC-Light v2 (fal-ai/iclight-v2) — Spesialis Relight</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>API KEY PRIBADI</label>
+                    <div class="ai-key-input-wrap">
+                        <input type="password" id="aiProApiKey" class="cream-input" placeholder="Tempel API Key Anda di sini..." autocomplete="off">
+                        <button type="button" id="btnToggleAiKeyVis" class="ai-key-eye" title="Tampilkan / Sembunyikan Key">👁</button>
+                    </div>
+                    <p id="aiProKeyHint" class="ai-key-hint">Buat API Key di Google AI Studio: aistudio.google.com/apikey</p>
+                </div>
+                <div class="form-row">
+                    <label>PROXY URL (OPSIONAL)</label>
+                    <input type="url" id="aiProProxyUrl" class="cream-input" placeholder="Kosongkan untuk koneksi langsung (atau URL Worker Anda)">
+                </div>
+            </div>
+
+            <p class="ai-privacy-note">🔒 Kunci tersimpan lokal di perangkat Anda saja (localStorage) — tidak pernah di-upload ke GitHub.</p>
+
+            <button id="btnSaveAiProKey" class="btn-espresso-block">SIMPAN &amp; JALANKAN ✨ AI PRO</button>
+            <div style="text-align:center; margin-top:10px;">
+                <button type="button" id="btnClearAiProKey" class="link-underlined">HAPUS API KEY TERSIMPAN</button>
+            </div>
         </div>
     </div>
 

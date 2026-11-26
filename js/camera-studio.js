@@ -78,6 +78,11 @@
 
     const CAM_FILTERS = [
         { id: 'original', code: 'ORIGINAL', swatch: 'linear-gradient(135deg,#e5e0d8,#a8a29e)', css: 'none', tint: null, blend: 'normal', vig: 0 },
+        { id: 'fl_ccd', code: '⚡ NIGHT CCD', swatch: 'radial-gradient(circle at 46% 42%,#f4f9ff 0%,#7892b0 48%,#0d1118 100%)', css: 'contrast(1.22) saturate(1.08) brightness(1.06)', tint: 'radial-gradient(circle at 50% 42%, rgba(242,247,255,0.46) 0%, rgba(232,244,255,0.16) 44%, rgba(0,0,0,0) 76%)', blend: 'screen', vig: 0.64 },
+        { id: 'fl_rim', code: '⚡ STUDIO RIM', swatch: 'radial-gradient(circle at 50% 42%,#fff4de 0%,#4e453b 42%,#070708 100%)', css: 'contrast(1.30) saturate(0.96) brightness(1.04)', tint: 'radial-gradient(circle at 50% 42%, rgba(255,246,232,0.42) 0%, rgba(255,240,214,0.14) 40%, rgba(0,0,0,0) 72%)', blend: 'screen', vig: 0.82 },
+        { id: 'fl_disp', code: '⚡ FUJI 98', swatch: 'radial-gradient(circle at 46% 42%,#ffefd2 0%,#5f8878 48%,#10201a 100%)', css: 'contrast(1.22) saturate(1.10) brightness(1.04) sepia(0.08) hue-rotate(-4deg)', tint: 'radial-gradient(circle at 48% 42%, rgba(255,239,210,0.42) 0%, rgba(205,240,224,0.14) 46%, rgba(0,0,0,0) 76%)', blend: 'screen', vig: 0.62 },
+        { id: 'fl_soft', code: '⚡ SOFT FLASH', swatch: 'radial-gradient(circle at 50% 42%,#fffaf2 0%,#e8d8cc 54%,#4a3e38 100%)', css: 'contrast(1.04) saturate(0.96) brightness(1.08)', tint: 'radial-gradient(circle at 50% 42%, rgba(255,248,240,0.38) 0%, rgba(255,245,235,0.14) 52%, rgba(0,0,0,0) 82%)', blend: 'screen', vig: 0.34 },
+        { id: 'fl_warm', code: '⚡ WARM FLASH', swatch: 'radial-gradient(circle at 50% 44%,#ffd59c 0%,#a66d3f 50%,#21140d 100%)', css: 'contrast(1.20) saturate(1.10) sepia(0.20) brightness(1.03)', tint: 'radial-gradient(circle at 50% 44%, rgba(255,213,156,0.42) 0%, rgba(255,198,130,0.15) 46%, rgba(0,0,0,0) 78%)', blend: 'screen', vig: 0.60 },
         { id: 'ed_grad_moody', code: 'GRAD MOODY', swatch: 'linear-gradient(135deg,#2a332b,#5c5540,#d4a97d)', css: 'contrast(1.14) saturate(0.68) brightness(0.93) sepia(0.14) hue-rotate(-6deg)', tint: 'rgba(20, 34, 30, 0.22)', blend: 'soft-light', vig: 0.44 },
         { id: 'ed_grad_soft', code: 'GRAD SOFT', swatch: 'linear-gradient(135deg,#475246,#8f826a,#e7cfb0)', css: 'contrast(1.06) saturate(0.80) brightness(0.98) sepia(0.12)', tint: 'rgba(235, 224, 200, 0.14)', blend: 'soft-light', vig: 0.28 },
         { id: 'm_grad_deep', code: 'GRAD DEEP', swatch: 'linear-gradient(135deg,#182120,#3d463c,#b58963)', css: 'contrast(1.22) saturate(0.56) brightness(0.87) sepia(0.16) hue-rotate(-8deg)', tint: 'rgba(14, 28, 28, 0.30)', blend: 'multiply', vig: 0.52 },
@@ -628,6 +633,9 @@
             const img = c.getImageData(0, 0, w, h);
             window.svnLens.renderColorPreview(img, w, h, state.filterId, Math.round(ev * 24), isoGrain);
             c.putImageData(img, 0, 0);
+            if (window.svnLens.renderPresetOverlay && state.filterId !== 'original') {
+                window.svnLens.renderPresetOverlay(c, w, h, state.filterId, 1);
+            }
         }
         applyLiveVisualFilter();
     }

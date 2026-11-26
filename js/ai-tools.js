@@ -1174,11 +1174,135 @@ const AITools = {
     },
 
     /**
-     * Auto Select Subject (Lightroom-style, 100% Offline, opsional Tap-to-Focus point)
+     * Auto Select Subject (Lightroom-style, 100% Offline heuristic fallback, opsional Tap-to-Focus point)
      */
     detectSubjectMask(sourceCanvas, outW, outH, focusPt = null) {
         const { mask, sw, sh } = this._computeSubjectProbability(sourceCanvas, focusPt);
-        return this._floatMaskToCanvas(mask, sw, sh, outW || sourceCanvas.width, outH || sourceCanvas.height);
+        const cv = this._floatMaskToCanvas(mask, sw, sh, outW || sourceCanvas.width, outH || sourceCanvas.height);
+        cv._isNeural = false;
+        return cv;
+    },
+
+    /**
+     * Real Neural Network Subject Segmentation (Bria AI RMBG-1.4 — 1024x1024 quantized ONNX)
+     * Berjalan 100% di browser (client-side WASM) & tersimpan permanen di cache browser setelah unduhan pertama.
+     * Mendeteksi orang (rambut, wajah, pakaian) sekaligus objek yang dipegang (buket bunga, tas, produk, hewan).
+     */
+    async _loadNeuralSegmenter(onProgress = null) {
+        if (this._neuralSegReady) return this._neuralSegReady;
+        if (this._neuralSegPromise) return this._neuralSegPromise;
+
+        this._neuralSegPromise = (async () => {
+            if (onProgress) onProgress('Memuat mesin AI deteksi subjek...', 5);
+            const tf = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+            const { env, AutoModel, AutoProcessor, RawImage } = tf;
+            env.allowLocalModels = false;
+            env.useBrowserCache = true;
+
+            const modelId = 'briaai/RMBG-1.4';
+            const progress_callback = (p) => {
+                if (!onProgress || !p) return;
+                if (p.status === 'progress' && typeof p.progress === 'number') {
+                    onProgress(`Mengunduh AI Deteksi Subjek (${Math.round(p.progress)}%)...`, p.progress);
+                } else if (p.status === 'initiate') {
+                    onProgress('Menyiapkan model AI RMBG-1.4...', 10);
+                }
+            };
+
+            let model;
+            try {
+                model = await AutoModel.from_pretrained(modelId, {
+                    device: 'wasm',
+                    dtype: 'q8',
+                    config: { model_type: 'custom' },
+                    progress_callback
+                });
+            } catch (errQ8) {
+                console.warn('RMBG-1.4 q8 load fallback to default:', errQ8);
+                model = await AutoModel.from_pretrained(modelId, {
+                    device: 'wasm',
+                    config: { model_type: 'custom' },
+                    progress_callback
+                });
+            }
+
+            const processor = await AutoProcessor.from_pretrained(modelId, {
+                config: {
+                    do_normalize: true,
+                    do_pad: false,
+                    do_rescale: true,
+                    do_resize: true,
+                    image_mean: [0.5, 0.5, 0.5],
+                    image_std: [1, 1, 1],
+                    resample: 2,
+                    rescale_factor: 0.00392156862745098,
+                    size: { width: 1024, height: 1024 },
+                    feature_extractor_type: 'ImageFeatureExtractor'
+                }
+            });
+
+            this._neuralSegReady = { model, processor, RawImage };
+            return this._neuralSegReady;
+        })().catch((err) => {
+            this._neuralSegPromise = null;
+            throw err;
+        });
+
+        return this._neuralSegPromise;
+    },
+
+    async detectSubjectMaskAI(sourceCanvas, outW, outH, onProgress = null) {
+        const { model, processor, RawImage } = await this._loadNeuralSegmenter(onProgress);
+        if (onProgress) onProgress('Mendeteksi subjek AI (RMBG-1.4)...', 95);
+
+        const maxIn = 1024;
+        const sc = Math.min(1, maxIn / Math.max(sourceCanvas.width, sourceCanvas.height));
+        const sw = Math.max(16, Math.round(sourceCanvas.width * sc));
+        const sh = Math.max(16, Math.round(sourceCanvas.height * sc));
+        const inCv = this._getScratch('aiSegIn', sw, sh);
+        const inCtx = inCv.getContext('2d', { willReadFrequently: true });
+        inCtx.clearRect(0, 0, sw, sh);
+        inCtx.drawImage(sourceCanvas, 0, 0, sw, sh);
+        const imgData = inCtx.getImageData(0, 0, sw, sh);
+
+        const rawImg = new RawImage(imgData.data, sw, sh, 4).rgb();
+        const { pixel_values } = await processor(rawImg);
+        const res = await model({ input: pixel_values });
+        const outTensor = res.output || res[Object.keys(res)[0]];
+        const dims = outTensor.dims;
+        const mh = dims[dims.length - 2];
+        const mw = dims[dims.length - 1];
+        const mData = outTensor.data;
+
+        const maskCv = document.createElement('canvas');
+        maskCv.width = mw;
+        maskCv.height = mh;
+        const mCtx = maskCv.getContext('2d');
+        const mImg = mCtx.createImageData(mw, mh);
+        const md = mImg.data;
+        const total = mw * mh;
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            let v = mData[p];
+            if (v < 0) v = 0;
+            else if (v > 1) v = 1;
+            md[i] = 255;
+            md[i + 1] = 255;
+            md[i + 2] = 255;
+            md[i + 3] = (v * 255 + 0.5) | 0;
+        }
+        mCtx.putImageData(mImg, 0, 0);
+
+        const fw = outW || sourceCanvas.width;
+        const fh = outH || sourceCanvas.height;
+        const out = document.createElement('canvas');
+        out.width = fw;
+        out.height = fh;
+        const oCtx = out.getContext('2d');
+        oCtx.imageSmoothingEnabled = true;
+        oCtx.imageSmoothingQuality = 'high';
+        oCtx.drawImage(maskCv, 0, 0, fw, fh);
+        out._isNeural = true;
+        return out;
     },
 
     /**
@@ -1713,6 +1837,1945 @@ const AITools = {
                 ctx.stroke();
                 ctx.restore();
             }
+        }
+    },
+
+    // =========================================================================
+    // 3D RELIGHT STUDIO (Pseudo-3D Surface Normals + Depth Separation + Directional Rim Light)
+    // =========================================================================
+    _hexToRgb(hex) {
+        const h = String(hex || '#ff9f43').replace('#', '');
+        const full = h.length === 3 ? h[0] + h[0] + h[1] + h[1] + h[2] + h[2] : h;
+        const n = parseInt(full, 16);
+        if (isNaN(n)) return [255, 175, 90];
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    },
+
+    /**
+     * Analisis Pemandangan & Multi-Subjek untuk Relight Fisik (O(N), ~2ms, di-cache per foto):
+     * 1. Mendeteksi masker langit (skyMask) & garis horizon per kolom agar TIDAK PERNAH ada bayangan melayang
+     *    atau lingkaran flash palsu di langit terbuka / pepohonan jauh!
+     * 2. Membedakan foto indoor/dinding dekat (outdoorFactor ≈ 0 -> bayangan dinding) vs outdoor langit terbuka
+     *    (outdoorFactor ≈ 1 -> bayangan perspektif menapak di tanah/rumput!).
+     * 3. Memisahkan tiap subjek secara individual (mis. 2 orang di posisi berbeda) beserta titik tumpuan kaki (feetX, feetY).
+     */
+    _analyzeRelightScene(sd, lum, subj, lw, lh, hasMask) {
+        const n = lw * lh;
+        const skyMask = new Float32Array(n);
+        const colHorizon = new Float32Array(lw);
+        const groundAccept = new Float32Array(n);
+        const compLabels = new Int16Array(n);
+        const subjects = [];
+
+        // 1. Deteksi Komponen Multi-Subjek + titik tumpuan kaki (feetX, feetY)
+        if (hasMask) {
+            const q = new Int32Array(n);
+            let nextId = 1;
+            const rawComps = [];
+            for (let i = 0; i < n; i++) {
+                if (subj[i] < 0.42 || compLabels[i]) continue;
+                let head = 0, tail = 0;
+                q[tail++] = i;
+                compLabels[i] = nextId;
+                let minX = lw, maxX = 0, minY = lh, maxY = 0;
+                let sumW = 0, sumX = 0, sumY = 0;
+                while (head < tail) {
+                    const p = q[head++];
+                    const x = p % lw, y = (p - x) / lw;
+                    const sw = subj[p];
+                    sumW += sw; sumX += x * sw; sumY += y * sw;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                    if (x > 0 && subj[p - 1] >= 0.42 && !compLabels[p - 1]) { compLabels[p - 1] = nextId; q[tail++] = p - 1; }
+                    if (x < lw - 1 && subj[p + 1] >= 0.42 && !compLabels[p + 1]) { compLabels[p + 1] = nextId; q[tail++] = p + 1; }
+                    if (y > 0 && subj[p - lw] >= 0.42 && !compLabels[p - lw]) { compLabels[p - lw] = nextId; q[tail++] = p - lw; }
+                    if (y < lh - 1 && subj[p + lw] >= 0.42 && !compLabels[p + lw]) { compLabels[p + lw] = nextId; q[tail++] = p + lw; }
+                }
+                rawComps.push({ id: nextId, count: tail, minX, maxX, minY, maxY, sumW, sumX, sumY });
+                nextId++;
+            }
+
+            const minArea = Math.max(24, n * 0.006);
+            rawComps.sort((a, b) => b.count - a.count);
+            for (let k = 0; k < rawComps.length && subjects.length < 6; k++) {
+                const c = rawComps[k];
+                if (c.count < minArea) continue;
+                const bh = Math.max(1, c.maxY - c.minY);
+                const footBandTop = Math.max(c.minY, c.maxY - Math.max(3, Math.round(bh * 0.08)));
+                let fSumX = 0, fCnt = 0, fMinX = lw, fMaxX = 0;
+                for (let y = footBandTop; y <= c.maxY; y++) {
+                    const row = y * lw;
+                    for (let x = c.minX; x <= c.maxX; x++) {
+                        if (compLabels[row + x] === c.id) {
+                            fSumX += x; fCnt++;
+                            if (x < fMinX) fMinX = x;
+                            if (x > fMaxX) fMaxX = x;
+                        }
+                    }
+                }
+                const cx = (c.sumX / Math.max(1, c.sumW)) / lw;
+                const cy = (c.sumY / Math.max(1, c.sumW)) / lh;
+                const feetX = fCnt > 0 ? (fSumX / fCnt) / lw : cx;
+                const feetY = (c.maxY + 0.5) / lh;
+                subjects.push({
+                    id: c.id,
+                    area: c.count / n,
+                    cx, cy,
+                    minX: c.minX / lw, maxX: (c.maxX + 1) / lw,
+                    minY: c.minY / lh, maxY: (c.maxY + 1) / lh,
+                    w: (c.maxX - c.minX + 1) / lw,
+                    h: (c.maxY - c.minY + 1) / lh,
+                    feetX, feetY,
+                    footMinX: (fCnt > 0 ? fMinX : c.minX) / lw,
+                    footMaxX: (fCnt > 0 ? fMaxX + 1 : c.maxX + 1) / lw,
+                    touchesBottom: c.maxY >= lh - 3
+                });
+            }
+        }
+
+        // 2. Deteksi Langit Terbuka (Sky Mask) & Garis Horizon (ketat agar dinding putih indoor TIDAK salah dikira langit!)
+        const grad = new Float32Array(n);
+        for (let y = 1; y < lh - 1; y++) {
+            const r0 = (y - 1) * lw, r1 = y * lw, r2 = (y + 1) * lw;
+            for (let x = 1; x < lw - 1; x++) {
+                const p = r1 + x;
+                grad[p] = Math.abs(lum[p + 1] - lum[p - 1]) + Math.abs(lum[r2 + x] - lum[r0 + x]);
+            }
+        }
+
+        const isSkyCand = new Uint8Array(n);
+        const isBlueCand = new Uint8Array(n);
+        const isFoliage = new Uint8Array(n);
+        for (let p = 0, i = 0; p < n; p++, i += 4) {
+            const r = sd[i] * 0.00392157;
+            const g = sd[i + 1] * 0.00392157;
+            const b = sd[i + 2] * 0.00392157;
+            const l = lum[p];
+            const cMax = r > g ? (r > b ? r : b) : (g > b ? g : b);
+            const cMin = r < g ? (r < b ? r : b) : (g < b ? g : b);
+            const sat = cMax > 0.01 ? (cMax - cMin) / cMax : 0;
+            const gr = grad[p];
+
+            const greenFol = (g > r + 0.018 && g > b + 0.032) || (g > b + 0.05 && l < 0.56);
+            if (greenFol) { isFoliage[p] = 1; continue; }
+
+            // Langit biru/cyan/senja/awan terang (menolak balon kuning jenuh & dinding kusam)
+            const blueSky = (b - r > 0.022) && (b >= g - 0.075) && (l > 0.16) && (gr < 0.16);
+            const cloudSky = (l > 0.58) && (sat < 0.16) && (b >= r - 0.035) && (gr < 0.13);
+            const sunsetSky = (l > 0.38) && (r > b + 0.03) && (g >= b * 0.88) && (sat < 0.48) && (gr < 0.085);
+            if (blueSky) { isSkyCand[p] = 1; isBlueCand[p] = 1; }
+            else if (cloudSky || sunsetSky) { isSkyCand[p] = 1; }
+        }
+
+        // BFS dari tepi atas (baris 0..3) melewati area latar langit yang kontinu
+        const visited = new Uint8Array(n);
+        const qSky = new Int32Array(n);
+        let qh = 0, qt = 0;
+        const maxSkyY = Math.round(lh * 0.78);
+        const seedRows = Math.min(4, lh);
+        for (let y = 0; y < seedRows; y++) {
+            const row = y * lw;
+            for (let x = 0; x < lw; x++) {
+                const p = row + x;
+                if (!visited[p] && (!hasMask || subj[p] < 0.45) && isSkyCand[p]) {
+                    visited[p] = 1;
+                    qSky[qt++] = p;
+                }
+            }
+        }
+        const colMaxSkyY = new Int32Array(lw).fill(-1);
+        while (qh < qt) {
+            const p = qSky[qh++];
+            const x = p % lw, y = (p - x) / lw;
+            if (y > colMaxSkyY[x]) colMaxSkyY[x] = y;
+            const i0 = p << 2;
+            const r0 = sd[i0], g0 = sd[i0 + 1], b0 = sd[i0 + 2];
+            const tryPush = (np, ny) => {
+                if (ny >= maxSkyY || visited[np] || !isSkyCand[np]) return;
+                if (hasMask && subj[np] >= 0.50) return;
+                const i1 = np << 2;
+                const dCol = (Math.abs(sd[i1] - r0) + Math.abs(sd[i1 + 1] - g0) + Math.abs(sd[i1 + 2] - b0)) * 0.001307;
+                if (dCol < 0.16) {
+                    visited[np] = 1;
+                    qSky[qt++] = np;
+                }
+            };
+            if (x > 0) tryPush(p - 1, y);
+            if (x < lw - 1) tryPush(p + 1, y);
+            if (y > 0) tryPush(p - lw, y - 1);
+            if (y < lh - 1) tryPush(p + lw, y + 1);
+        }
+
+        // Statistik validasi: pisahkan LANGIT OUTDOOR asli vs DINDING PUTIH INDOOR
+        let topBgCnt = 0, topSkyCnt = 0, skyTotal = 0, blueTotal = 0, skyLumSum = 0;
+        const topLim = Math.max(4, Math.round(lh * 0.24));
+        for (let y = 0; y < lh; y++) {
+            const row = y * lw;
+            for (let x = 0; x < lw; x++) {
+                const p = row + x;
+                const isBg = !hasMask || subj[p] < 0.45;
+                if (y < topLim && isBg) {
+                    topBgCnt++;
+                    if (visited[p]) topSkyCnt++;
+                }
+                if (visited[p]) {
+                    skyTotal++;
+                    skyLumSum += lum[p];
+                    if (isBlueCand[p]) blueTotal++;
+                }
+            }
+        }
+
+        // Hitung garis horizon median dari kolom langit yang TIDAK terhalang subjek
+        const colSkyBottom = new Int32Array(lw).fill(-1);
+        const hValsUnocc = [];
+        const hValsAll = [];
+        for (let x = 0; x < lw; x++) {
+            const my = colMaxSkyY[x];
+            if (my >= 0) {
+                hValsAll.push(my / lh);
+                const yChk1 = Math.min(lh - 1, my + 2);
+                const yChk2 = Math.min(lh - 1, my + 5);
+                const blockedBySubj = hasMask && (subj[yChk1 * lw + x] >= 0.22 || subj[yChk2 * lw + x] >= 0.22);
+                if (!blockedBySubj) {
+                    colSkyBottom[x] = my;
+                    hValsUnocc.push(my / lh);
+                }
+            }
+        }
+        const hSrc = hValsUnocc.length > lw * 0.15 ? hValsUnocc : hValsAll;
+        hSrc.sort((a, b) => a - b);
+        const horizonY = hSrc.length > lw * 0.15 ? hSrc[Math.floor(hSrc.length * 0.58)] : 0.48;
+
+        let botBgCnt = 0, botNonSkyCnt = 0, botLumSum = 0, botGreenCnt = 0;
+        const botStart = Math.min(lh - 1, Math.round(Math.max(horizonY + 0.05, 0.58) * lh));
+        for (let y = botStart; y < lh; y++) {
+            const row = y * lw;
+            for (let x = 0; x < lw; x++) {
+                const p = row + x;
+                if (hasMask && subj[p] >= 0.45) continue;
+                botBgCnt++;
+                if (!visited[p]) {
+                    botNonSkyCnt++;
+                    botLumSum += lum[p];
+                    if (isFoliage[p]) botGreenCnt++;
+                }
+            }
+        }
+
+        const topSkyRatio = topBgCnt > 10 ? topSkyCnt / topBgCnt : 0;
+        const skyAreaRatio = skyTotal / n;
+        const blueSkyRatio = skyTotal > 10 ? blueTotal / skyTotal : 0;
+        const avgSkyLum = skyTotal > 10 ? skyLumSum / skyTotal : 0;
+        const avgBotLum = botNonSkyCnt > 10 ? botLumSum / botNonSkyCnt : 0;
+        const botNonSkyRatio = botBgCnt > 10 ? botNonSkyCnt / botBgCnt : 0;
+        const botGreenRatio = botNonSkyCnt > 10 ? botGreenCnt / botNonSkyCnt : 0;
+
+        const hasGenuineOutdoorSky =
+            topSkyRatio > 0.44 &&
+            skyAreaRatio > 0.11 &&
+            horizonY < 0.76 &&
+            (
+                blueSkyRatio > 0.18 ||
+                (botNonSkyRatio > 0.65 && (avgSkyLum - avgBotLum > 0.12 || botGreenRatio > 0.25))
+            );
+
+        let outdoorFactor = 0;
+        if (hasGenuineOutdoorSky) {
+            const fTop = Math.max(0, Math.min(1, (topSkyRatio - 0.34) / 0.32));
+            const fHor = Math.max(0, Math.min(1, (0.78 - horizonY) / 0.20));
+            const fCue = blueSkyRatio > 0.18
+                ? Math.max(0.90, Math.min(1, blueSkyRatio * 3.2))
+                : Math.max(0.75, Math.min(1, (avgSkyLum - avgBotLum) * 3.5 + botGreenRatio));
+            outdoorFactor = Math.max(0, Math.min(1, fTop * fHor * fCue));
+
+            // Isi garis horizon per kolom lebih dulu (interpolasi linear melintasi kolom tertutup subjek!)
+            let lastValid = -1;
+            const nextValid = new Int32Array(lw).fill(-1);
+            let nxt = -1;
+            for (let x = lw - 1; x >= 0; x--) {
+                if (colSkyBottom[x] >= 0) nxt = x;
+                nextValid[x] = nxt;
+            }
+            for (let x = 0; x < lw; x++) {
+                if (colSkyBottom[x] >= 0) {
+                    colHorizon[x] = colSkyBottom[x] / lh;
+                    lastValid = x;
+                } else {
+                    const leftIdx = lastValid;
+                    const rightIdx = nextValid[x];
+                    if (leftIdx >= 0 && rightIdx >= 0 && rightIdx > leftIdx) {
+                        const t = (x - leftIdx) / (rightIdx - leftIdx);
+                        colHorizon[x] = (colSkyBottom[leftIdx] * (1 - t) + colSkyBottom[rightIdx] * t) / lh;
+                    } else if (leftIdx >= 0) {
+                        colHorizon[x] = colSkyBottom[leftIdx] / lh;
+                    } else if (rightIdx >= 0) {
+                        colHorizon[x] = colSkyBottom[rightIdx] / lh;
+                    } else {
+                        colHorizon[x] = horizonY;
+                    }
+                }
+            }
+            // Haluskan profil horizon horizontal agar bebas lonjakan
+            const horCopy = new Float32Array(colHorizon);
+            const hr = Math.max(3, Math.round(lw * 0.03));
+            for (let x = 0; x < lw; x++) {
+                let s = 0, cnt = 0;
+                const x0 = Math.max(0, x - hr), x1 = Math.min(lw - 1, x + hr);
+                for (let k = x0; k <= x1; k++) { s += horCopy[k]; cnt++; }
+                colHorizon[x] = s / cnt;
+            }
+
+            // Dilasi separabel O(N) 4-sweep dari masker subjek (radius rD) untuk menyambungkan langit di balik tepi subjek
+            const nearSubj = new Uint8Array(n);
+            if (hasMask) {
+                const rD = Math.max(4, Math.round(Math.max(lw, lh) * 0.025));
+                const tmpDil = new Uint8Array(n);
+                for (let y = 0; y < lh; y++) {
+                    const row = y * lw;
+                    let cd = 0;
+                    for (let x = 0; x < lw; x++) {
+                        if (subj[row + x] >= 0.16) cd = rD + 1;
+                        else if (cd > 0) cd--;
+                        if (cd > 0) tmpDil[row + x] = 1;
+                    }
+                    cd = 0;
+                    for (let x = lw - 1; x >= 0; x--) {
+                        if (subj[row + x] >= 0.16) cd = rD + 1;
+                        else if (cd > 0) cd--;
+                        if (cd > 0) tmpDil[row + x] = 1;
+                    }
+                }
+                for (let x = 0; x < lw; x++) {
+                    let cd = 0;
+                    for (let y = 0; y < lh; y++) {
+                        const p = y * lw + x;
+                        if (tmpDil[p]) cd = rD + 1;
+                        else if (cd > 0) cd--;
+                        if (cd > 0) nearSubj[p] = 1;
+                    }
+                    cd = 0;
+                    for (let y = lh - 1; y >= 0; y--) {
+                        const p = y * lw + x;
+                        if (tmpDil[p]) cd = rD + 1;
+                        else if (cd > 0) cd--;
+                        if (cd > 0) nearSubj[p] = 1;
+                    }
+                }
+            }
+
+            // Isi kantong langit kecil di sela lengan/rambut di atas horizon + lanjutkan bidang langit di balik subjek (NOL parit gelap!)
+            const rawSky = new Float32Array(n);
+            const recLimY = Math.min(lh - 1, Math.round((horizonY + 0.08) * lh));
+            for (let y = 0; y < lh; y++) {
+                const v = (y + 0.5) / lh;
+                const row = y * lw;
+                for (let x = 0; x < lw; x++) {
+                    const p = row + x;
+                    if (visited[p]) {
+                        rawSky[p] = 1;
+                    } else if (v <= colHorizon[x] + 0.012 && ((hasMask && subj[p] >= 0.16) || (nearSubj[p] && !isFoliage[p]))) {
+                        // Lanjutkan bidang langit secara kontinu di balik subjek & tepi gradien tinggi di atas horizon (NOL cincin gelap!)
+                        rawSky[p] = 1;
+                    } else if (y <= recLimY && (!hasMask || subj[p] < 0.55) && (isBlueCand[p] || (isSkyCand[p] && blueSkyRatio > 0.16 && lum[p] > avgSkyLum - 0.18))) {
+                        rawSky[p] = 0.92;
+                    }
+                }
+            }
+            // Perhalus tepi skyMask (2-pass 3x3) agar transisi langit & pepohonan mulus
+            const tmpSky = new Float32Array(n);
+            const smoothPass = (src, dst) => {
+                for (let y = 0; y < lh; y++) {
+                    const y0 = y > 0 ? y - 1 : 0, y1 = y < lh - 1 ? y + 1 : lh - 1;
+                    const r0 = y0 * lw, r1 = y * lw, r2 = y1 * lw;
+                    for (let x = 0; x < lw; x++) {
+                        const x0 = x > 0 ? x - 1 : 0, x1 = x < lw - 1 ? x + 1 : lw - 1;
+                        dst[r1 + x] = (
+                            src[r1 + x] * 4 +
+                            (src[r1 + x0] + src[r1 + x1] + src[r0 + x] + src[r2 + x]) * 2 +
+                            src[r0 + x0] + src[r0 + x1] + src[r2 + x0] + src[r2 + x1]
+                        ) * 0.0625;
+                    }
+                }
+            };
+            smoothPass(rawSky, tmpSky);
+            smoothPass(tmpSky, skyMask);
+
+            // Peta bidang tanah (groundAccept): 0 di langit & pepohonan jauh di horizon, 1 mulus di rumput/tanah!
+            for (let y = 0; y < lh; y++) {
+                const v = (y + 0.5) / lh;
+                const row = y * lw;
+                for (let x = 0; x < lw; x++) {
+                    const p = row + x;
+                    if (skyMask[p] > 0.25) { groundAccept[p] = 0; continue; }
+                    const hCol = Math.max(horizonY * 0.88, colHorizon[x]);
+                    // Sisakan margin ~7% di bawah batas langit untuk pita pepohonan/gedung horizon jauh
+                    const gStart = Math.min(0.82, hCol + 0.065);
+                    const gFull = Math.min(0.92, gStart + 0.095);
+                    const t = (v - gStart) / Math.max(0.03, gFull - gStart);
+                    const tc = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+                    groundAccept[p] = tc * (1 - skyMask[p]);
+                }
+            }
+        } else {
+            colHorizon.fill(0);
+            groundAccept.fill(1);
+        }
+
+        return { skyMask, colHorizon, horizonY, outdoorFactor, groundAccept, compLabels, subjects };
+    },
+
+    _getRelightMaps(targetCanvas, subjectMaskCanvas, lw, lh, normalKey) {
+        const isNeural = !!(subjectMaskCanvas && subjectMaskCanvas._isNeural);
+        const key = `${normalKey || ''}|${lw}x${lh}|${subjectMaskCanvas ? (isNeural ? 'mN' : 'mH') : 'm0'}|sc3`;
+        if (this._relightCache && this._relightCache.key === key) {
+            return this._relightCache;
+        }
+        const n = lw * lh;
+
+        // 1. Estimasi 3D Surface Normals (nx, ny, nz) dari gradien luminance halus
+        const srcCv = this._getScratch('rlSrc', lw, lh);
+        const sCtx = srcCv.getContext('2d', { willReadFrequently: true });
+        sCtx.clearRect(0, 0, lw, lh);
+        sCtx.filter = 'blur(1.5px)';
+        sCtx.drawImage(targetCanvas, 0, 0, lw, lh);
+        sCtx.filter = 'none';
+        const sd = sCtx.getImageData(0, 0, lw, lh).data;
+
+        const lum = new Float32Array(n);
+        for (let p = 0, i = 0; p < n; p++, i += 4) {
+            lum[p] = (0.299 * sd[i] + 0.587 * sd[i + 1] + 0.114 * sd[i + 2]) * 0.00392157;
+        }
+
+        const nx = new Float32Array(n);
+        const ny = new Float32Array(n);
+        const nz = new Float32Array(n);
+        for (let y = 0; y < lh; y++) {
+            const y0 = y > 0 ? y - 1 : 0;
+            const y1 = y < lh - 1 ? y + 1 : lh - 1;
+            const r0 = y0 * lw, r1 = y * lw, r2 = y1 * lw;
+            for (let x = 0; x < lw; x++) {
+                const x0 = x > 0 ? x - 1 : 0;
+                const x1 = x < lw - 1 ? x + 1 : lw - 1;
+                const gx = (lum[r0 + x1] + 2 * lum[r1 + x1] + lum[r2 + x1]) - (lum[r0 + x0] + 2 * lum[r1 + x0] + lum[r2 + x0]);
+                const gy = (lum[r2 + x0] + 2 * lum[r2 + x] + lum[r2 + x1]) - (lum[r0 + x0] + 2 * lum[r0 + x] + lum[r0 + x1]);
+                const vx = -gx * 2.5;
+                const vy = -gy * 2.5;
+                const vz = 1.0;
+                const inv = 1 / Math.sqrt(vx * vx + vy * vy + vz * vz);
+                const p = r1 + x;
+                nx[p] = vx * inv;
+                ny[p] = vy * inv;
+                nz[p] = vz * inv;
+            }
+        }
+
+        // 2. Subject Depth & Directional Rim-Light Contour Map dari subjectMaskCanvas
+        const subj = new Float32Array(n);
+        const edge = new Float32Array(n);
+        const ex = new Float32Array(n);
+        const ey = new Float32Array(n);
+        let cxS = 0.5, cyS = 0.52;
+        const hasMask = !!subjectMaskCanvas;
+
+        if (subjectMaskCanvas) {
+            const mCv = this._getScratch('rlMask', lw, lh);
+            const mCtx = mCv.getContext('2d', { willReadFrequently: true });
+            mCtx.clearRect(0, 0, lw, lh);
+            mCtx.imageSmoothingEnabled = true;
+            mCtx.imageSmoothingQuality = 'high';
+            mCtx.drawImage(subjectMaskCanvas, 0, 0, lw, lh);
+            const md = mCtx.getImageData(0, 0, lw, lh).data;
+            const rawSubj = new Float32Array(n);
+            for (let p = 0, i = 0; p < n; p++, i += 4) rawSubj[p] = md[i + 3] * 0.00392157;
+
+            if (isNeural) {
+                const tmpSubj = new Float32Array(n);
+                for (let y = 0; y < lh; y++) {
+                    const y0 = y > 0 ? y - 1 : 0;
+                    const y1 = y < lh - 1 ? y + 1 : lh - 1;
+                    const r0 = y0 * lw, r1 = y * lw, r2 = y1 * lw;
+                    for (let x = 0; x < lw; x++) {
+                        const x0 = x > 0 ? x - 1 : 0;
+                        const x1 = x < lw - 1 ? x + 1 : lw - 1;
+                        const p = r1 + x;
+                        const c = rawSubj[p];
+                        let v = c;
+                        if (c > 0.04 && c < 0.92) {
+                            const mn = Math.min(c, rawSubj[r1 + x0], rawSubj[r1 + x1], rawSubj[r0 + x], rawSubj[r2 + x]);
+                            v = c * 0.80 + mn * 0.20;
+                        }
+                        const t = (v - 0.18) / 0.64;
+                        const tc = t < 0 ? 0 : t > 1 ? 1 : t;
+                        tmpSubj[p] = tc * tc * (3 - 2 * tc);
+                    }
+                }
+                for (let y = 0; y < lh; y++) {
+                    const y0 = y > 0 ? y - 1 : 0;
+                    const y1 = y < lh - 1 ? y + 1 : lh - 1;
+                    const r0 = y0 * lw, r1 = y * lw, r2 = y1 * lw;
+                    for (let x = 0; x < lw; x++) {
+                        const x0 = x > 0 ? x - 1 : 0;
+                        const x1 = x < lw - 1 ? x + 1 : lw - 1;
+                        const p = r1 + x;
+                        const c = tmpSubj[p];
+                        if (c > 0.01 && c < 0.99) {
+                            subj[p] = (
+                                c * 4 +
+                                (tmpSubj[r1 + x0] + tmpSubj[r1 + x1] + tmpSubj[r0 + x] + tmpSubj[r2 + x]) * 2 +
+                                tmpSubj[r0 + x0] + tmpSubj[r0 + x1] + tmpSubj[r2 + x0] + tmpSubj[r2 + x1]
+                            ) * 0.0625;
+                        } else {
+                            subj[p] = c;
+                        }
+                    }
+                }
+            } else {
+                for (let y = 0; y < lh; y++) {
+                    const y0 = y > 0 ? y - 1 : 0;
+                    const y1 = y < lh - 1 ? y + 1 : lh - 1;
+                    const r0 = y0 * lw, r1 = y * lw, r2 = y1 * lw;
+                    for (let x = 0; x < lw; x++) {
+                        const x0 = x > 0 ? x - 1 : 0;
+                        const x1 = x < lw - 1 ? x + 1 : lw - 1;
+                        const p = r1 + x;
+                        const c = rawSubj[p];
+                        let v = c;
+                        if (c > 0.02 && c < 0.98) {
+                            const mn = Math.min(c, rawSubj[r1 + x0], rawSubj[r1 + x1], rawSubj[r0 + x], rawSubj[r2 + x]);
+                            v = c * 0.45 + mn * 0.55;
+                        }
+                        const t = (v - 0.24) / 0.56;
+                        const tc = t < 0 ? 0 : t > 1 ? 1 : t;
+                        subj[p] = tc * tc * (3 - 2 * tc);
+                    }
+                }
+            }
+
+            const rawEdge = new Float32Array(n);
+            for (let y = 1; y < lh - 1; y++) {
+                const r0 = (y - 1) * lw, r1 = y * lw, r2 = (y + 1) * lw;
+                for (let x = 1; x < lw - 1; x++) {
+                    const gx = (subj[r0 + x + 1] + 2 * subj[r1 + x + 1] + subj[r2 + x + 1]) - (subj[r0 + x - 1] + 2 * subj[r1 + x - 1] + subj[r2 + x - 1]);
+                    const gy = (subj[r2 + x - 1] + 2 * subj[r2 + x] + subj[r2 + x + 1]) - (subj[r0 + x - 1] + 2 * subj[r0 + x] + subj[r0 + x + 1]);
+                    const mag = Math.sqrt(gx * gx + gy * gy);
+                    const p = r1 + x;
+                    if (mag > 0.03 && subj[p] > 0.35) {
+                        const inv = 1 / mag;
+                        ex[p] = -gx * inv;
+                        ey[p] = -gy * inv;
+                        rawEdge[p] = Math.min(1, mag * 1.35) * subj[p];
+                    }
+                }
+            }
+            for (let y = 1; y < lh - 1; y++) {
+                const r0 = (y - 1) * lw, r1 = y * lw, r2 = (y + 1) * lw;
+                for (let x = 1; x < lw - 1; x++) {
+                    const p = r1 + x;
+                    if (subj[p] < 0.20) continue;
+                    edge[p] = (
+                        rawEdge[p] * 4 +
+                        (rawEdge[p - 1] + rawEdge[p + 1] + rawEdge[r0 + x] + rawEdge[r2 + x]) * 2 +
+                        rawEdge[r0 + x - 1] + rawEdge[r0 + x + 1] + rawEdge[r2 + x - 1] + rawEdge[r2 + x + 1]
+                    ) * 0.0625 * subj[p];
+                }
+            }
+            let sumW = 0, sumX = 0, sumY = 0;
+            for (let y = 0, p = 0; y < lh; y++) {
+                for (let x = 0; x < lw; x++, p++) {
+                    const sw = subj[p];
+                    if (sw > 0.25) { sumW += sw; sumX += x * sw; sumY += y * sw; }
+                }
+            }
+            cxS = sumW > 1 ? (sumX / sumW) / lw : 0.5;
+            cyS = sumW > 1 ? (sumY / sumW) / lh : 0.52;
+        } else {
+            subj.fill(1);
+        }
+
+        // 3. Analisis Adegan (Indoor Wall vs Outdoor Open-Sky + Komponen Multi-Subjek) + Proximity Bounce-Light Field
+        const scene = this._analyzeRelightScene(sd, lum, subj, lw, lh, hasMask);
+        const proxSpill = new Float32Array(n);
+        if (hasMask && subjectMaskCanvas) {
+            const pCv = this._getScratch('rlProxSpill', lw, lh);
+            const pCtx = pCv.getContext('2d', { willReadFrequently: true });
+            pCtx.clearRect(0, 0, lw, lh);
+            const blurR = Math.max(8, Math.round(Math.max(lw, lh) * 0.085));
+            pCtx.filter = `blur(${blurR}px)`;
+            pCtx.drawImage(subjectMaskCanvas, 0, 0, lw, lh);
+            pCtx.filter = 'none';
+            const pd = pCtx.getImageData(0, 0, lw, lh).data;
+            for (let p = 0, i = 0; p < n; p++, i += 4) proxSpill[p] = pd[i + 3] * 0.00392157;
+        }
+        const cache = {
+            key, lw, lh, nx, ny, nz, subj, edge, ex, ey, cxS, cyS, hasMask, proxSpill,
+            skyMask: scene.skyMask,
+            colHorizon: scene.colHorizon,
+            horizonY: scene.horizonY,
+            outdoorFactor: scene.outdoorFactor,
+            groundAccept: scene.groundAccept,
+            compLabels: scene.compLabels,
+            subjects: scene.subjects
+        };
+        this._relightCache = cache;
+        return cache;
+    },
+
+    /**
+     * Masker Alpha Subjek Resolusi Penuh (w x h) dengan Dekontaminasi Tepi Berbasis Warna
+     * (Boundary-Only Color-Guided Matte Decontamination) untuk mencegah halo langit/latar
+     * terang pada tepi rambut dan lengan tanpa merusak detail interior subjek.
+     */
+    _getFullResSubjectAlpha(subjectMaskCanvas, sourceCanvas, w, h, normalKey) {
+        if (!subjectMaskCanvas || !w || !h) return null;
+        const isNeural = !!subjectMaskCanvas._isNeural;
+        const key = `${normalKey || ''}|${w}x${h}|${isNeural ? 'N' : 'H'}|fa4`;
+        if (this._fullAlphaCache && this._fullAlphaCache.key === key) {
+            return this._fullAlphaCache.alpha;
+        }
+        const cv = this._getScratch('rlFullAlpha', w, h);
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.clearRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(subjectMaskCanvas, 0, 0, w, h);
+        const raw = ctx.getImageData(0, 0, w, h).data;
+        const n = w * h;
+        const rawA = new Uint8Array(n);
+        for (let p = 0, i = 3; p < n; p++, i += 4) {
+            rawA[p] = raw[i];
+        }
+
+        let sData = null;
+        if (sourceCanvas && sourceCanvas.width && sourceCanvas.height) {
+            try {
+                if (sourceCanvas.width === w && sourceCanvas.height === h) {
+                    const sCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+                    if (sCtx) sData = sCtx.getImageData(0, 0, w, h).data;
+                } else {
+                    const sCv = this._getScratch('rlSrcFull', w, h);
+                    const sCtx = sCv.getContext('2d', { willReadFrequently: true });
+                    sCtx.clearRect(0, 0, w, h);
+                    sCtx.drawImage(sourceCanvas, 0, 0, w, h);
+                    sData = sCtx.getImageData(0, 0, w, h).data;
+                }
+            } catch (_) {
+                sData = null;
+            }
+        }
+
+        const R = Math.max(3, Math.min(6, Math.round(Math.max(w, h) * 0.006)));
+        const R2 = Math.max(1, R >> 1);
+        const offsets = [-R, -R2, 0, R2, R];
+        const alpha = new Uint8Array(n);
+
+        for (let y = 0; y < h; y++) {
+            const yTop = y > R ? y - R : 0;
+            const yBot = y + R < h ? y + R : h - 1;
+            const yTop2 = y > R2 ? y - R2 : 0;
+            const yBot2 = y + R2 < h ? y + R2 : h - 1;
+            const row = y * w;
+            const rowTop = yTop * w;
+            const rowBot = yBot * w;
+            const rowTop2 = yTop2 * w;
+            const rowBot2 = yBot2 * w;
+
+            for (let x = 0; x < w; x++) {
+                const p = row + x;
+                const cA = rawA[p];
+                const xLeft = x > R ? x - R : 0;
+                const xRight = x + R < w ? x + R : w - 1;
+
+                const aT = rawA[rowTop + x];
+                const aB = rawA[rowBot + x];
+                const aL = rawA[row + xLeft];
+                const aR = rawA[row + xRight];
+
+                if (cA >= 246 && aT >= 246 && aB >= 246 && aL >= 246 && aR >= 246) {
+                    alpha[p] = 255;
+                    continue;
+                }
+                if (cA <= 25 && aT <= 25 && aB <= 25 && aL <= 25 && aR <= 25) {
+                    alpha[p] = 0;
+                    continue;
+                }
+
+                const xLeft2 = x > R2 ? x - R2 : 0;
+                const xRight2 = x + R2 < w ? x + R2 : w - 1;
+                let minA = rawA[rowTop2 + x];
+                const nB = rawA[rowBot2 + x];
+                const nL = rawA[row + xLeft2];
+                const nR = rawA[row + xRight2];
+                if (nB < minA) minA = nB;
+                if (nL < minA) minA = nL;
+                if (nR < minA) minA = nR;
+
+                const vIn = cA * 0.78 + minA * 0.22;
+                let baseA;
+                if (vIn <= 115) {
+                    baseA = 0;
+                } else if (vIn >= 236) {
+                    baseA = 1;
+                } else {
+                    const t = (vIn - 115) / 121;
+                    baseA = t * t * (3 - 2 * t);
+                }
+
+                if (baseA <= 0.002) {
+                    alpha[p] = 0;
+                    continue;
+                }
+
+                if (sData) {
+                    let fR = 0, fG = 0, fB = 0, fCnt = 0;
+                    let bR = 0, bG = 0, bB = 0, bCnt = 0;
+
+                    for (let oi = 0; oi < 5; oi++) {
+                        const sy = y + offsets[oi];
+                        if (sy < 0 || sy >= h) continue;
+                        const sRow = sy * w;
+                        for (let oj = 0; oj < 5; oj++) {
+                            const sx = x + offsets[oj];
+                            if (sx < 0 || sx >= w) continue;
+                            const sp = sRow + sx;
+                            const sa = rawA[sp];
+                            if (sa >= 240) {
+                                const si = sp * 4;
+                                fR += sData[si];
+                                fG += sData[si + 1];
+                                fB += sData[si + 2];
+                                fCnt++;
+                            } else if (sa <= 35) {
+                                const si = sp * 4;
+                                bR += sData[si];
+                                bG += sData[si + 1];
+                                bB += sData[si + 2];
+                                bCnt++;
+                            }
+                        }
+                    }
+
+                    if (fCnt >= 2 && bCnt >= 2) {
+                        const invF = 1 / (fCnt * 255);
+                        const invB = 1 / (bCnt * 255);
+                        const fr = fR * invF, fg = fG * invF, fb = fB * invF;
+                        const br = bR * invB, bg = bG * invB, bb = bB * invB;
+                        const dr = fr - br, dg = fg - bg, db = fb - bb;
+                        const d2 = dr * dr + dg * dg + db * db;
+
+                        if (d2 > 0.008) {
+                            const pi = p * 4;
+                            const pr = sData[pi] / 255 - br;
+                            const pg = sData[pi + 1] / 255 - bg;
+                            const pb = sData[pi + 2] / 255 - bb;
+                            let tProj = (pr * dr + pg * dg + pb * db) / d2;
+                            if (tProj < 0) tProj = 0;
+                            else if (tProj > 1) tProj = 1;
+
+                            const errR = pr - tProj * dr;
+                            const errG = pg - tProj * dg;
+                            const errB = pb - tProj * db;
+                            const perp2 = errR * errR + errG * errG + errB * errB;
+
+                            if (perp2 < 0.025) {
+                                const lumB = 0.2126 * br + 0.7152 * bg + 0.0722 * bb;
+                                const lumF = 0.2126 * fr + 0.7152 * fg + 0.0722 * fb;
+                                if (lumB > lumF + 0.05) {
+                                    const guide = Math.pow(tProj, 1.35);
+                                    if (guide < baseA) baseA = guide;
+                                } else {
+                                    baseA *= (0.45 + 0.55 * tProj);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                alpha[p] = (baseA * 255 + 0.5) | 0;
+            }
+        }
+
+        this._fullAlphaCache = { key, alpha };
+        return alpha;
+    },
+
+    /**
+     * Mesin Bayangan Adaptif (Scene-Aware Dual-Mode Cast Shadow):
+     * - Indoor / Dinding Dekat (outdoorFactor ≈ 0): Bayangan dinding 2-lapis lembut di belakang rambut/bahu per subjek.
+     * - Outdoor / Langit Terbuka (outdoorFactor ≈ 1): NOL bayangan di langit & pepohonan jauh! Sebagai gantinya,
+     *   memproyeksikan Contact AO di bawah sepatu/kaki + Bayangan Perspektif Tanah/Rumput untuk SETIAP subjek!
+     */
+    _getCastShadowField(subjectMaskCanvas, maps, lw, lh, L1, normalKey) {
+        if (!subjectMaskCanvas || !L1 || !maps) return null;
+        const { cxS, cyS, skyMask, outdoorFactor, groundAccept, compLabels, subjects, subj } = maps;
+        const maxSide = Math.max(lw, lh);
+        const isFrontFlash = L1.isClean > 0.25 || L1.D >= 0.55;
+        const sKey = `${normalKey || ''}|${lw}x${lh}|${L1.x.toFixed(3)},${L1.y.toFixed(3)}|${isFrontFlash ? 'F' : 'D'}|${outdoorFactor.toFixed(2)}|${subjectMaskCanvas._isNeural ? 'N' : 'H'}|sc3`;
+        if (this._rlShadowCache && this._rlShadowCache.key === sKey) {
+            return this._rlShadowCache.data;
+        }
+
+        const n = lw * lh;
+        const out = new Float32Array(n);
+        // Adegan outdoor langit terbuka (outdoorFactor >= 0.55) tidak memiliki dinding dekat — NOL bayangan dinding melayang di langit!
+        const wallW = outdoorFactor >= 0.55 ? 0 : Math.pow(1 - outdoorFactor / 0.55, 1.5);
+        const gndW = outdoorFactor >= 0.55 ? 1 : (outdoorFactor / 0.55);
+
+        // Helper: bangun kanvas siluet terisolasi untuk 1 subjek tertentu (agar multi-subjek punya bayangan akurat masing-masing)
+        const buildSubjectPartCanvas = (subId) => {
+            const partCv = this._getScratch('rlSubjPart', lw, lh);
+            const pCtx = partCv.getContext('2d', { willReadFrequently: true });
+            const pImg = pCtx.createImageData(lw, lh);
+            const pd = pImg.data;
+            for (let p = 0, i = 0; p < n; p++, i += 4) {
+                if (compLabels[p] === subId) {
+                    const a = (subj[p] * 255 + 0.5) | 0;
+                    if (a > 0) { pd[i + 3] = a; }
+                }
+            }
+            pCtx.putImageData(pImg, 0, 0);
+            return partCv;
+        };
+
+        // === MODE A: BAYANGAN DINDING DEKAT (INDOOR / STUDIO) ===
+        if (wallW > 0.04) {
+            const shCv = this._getScratch('rlCastShadow', lw, lh);
+            const sCtx = shCv.getContext('2d', { willReadFrequently: true });
+            sCtx.clearRect(0, 0, lw, lh);
+
+            const drawWallForTarget = (srcCv, tCx, tCy, tTopY) => {
+                const dxS = tCx - L1.x;
+                const dyS = tCy - L1.y;
+                const dMag = Math.hypot(dxS, dyS);
+                let ox = Math.max(-0.085, Math.min(0.085, dxS * 0.24));
+                let oy = Math.max(0.012, Math.min(0.090, dyS * 0.20 + 0.026));
+                if (dMag < 0.20) {
+                    const blend = 1 - dMag / 0.20;
+                    ox += 0.026 * blend;
+                    oy += 0.014 * blend;
+                }
+                const scaleOut = 1.010 + Math.min(0.020, dMag * 0.04);
+                const pivX = tCx * lw;
+                const pivY = Math.max(0.06, Math.min(tCy - 0.14, tTopY + 0.14)) * lh;
+                const drawProj = (blurPx, alpha, extraScale, multOff) => {
+                    sCtx.save();
+                    sCtx.globalAlpha = alpha;
+                    sCtx.filter = blurPx > 0.5 ? `blur(${blurPx.toFixed(2)}px)` : 'none';
+                    sCtx.translate(pivX + ox * multOff * lw, pivY + oy * multOff * lh);
+                    sCtx.scale(scaleOut * extraScale, scaleOut * extraScale);
+                    sCtx.drawImage(srcCv, -pivX, -pivY, lw, lh);
+                    sCtx.restore();
+                };
+                drawProj(Math.max(3.0, maxSide * 0.030), 0.68, 1.0, 0.95);
+                drawProj(Math.max(7.5, maxSide * 0.072), 0.44, 1.012, 1.40);
+            };
+
+            if (subjects.length >= 2) {
+                for (let k = 0; k < subjects.length; k++) {
+                    const s = subjects[k];
+                    drawWallForTarget(buildSubjectPartCanvas(s.id), s.cx, s.cy, s.minY);
+                }
+            } else {
+                const topY = subjects.length === 1 ? subjects[0].minY : Math.max(0.08, cyS - 0.24);
+                drawWallForTarget(subjectMaskCanvas, cxS, cyS, topY);
+            }
+
+            const wImg = sCtx.getImageData(0, 0, lw, lh).data;
+            for (let p = 0, i = 0; p < n; p++, i += 4) {
+                // Lindungi langit sekecil apa pun agar tidak kena bayangan dinding
+                const noSky = 1 - skyMask[p];
+                out[p] += (wImg[i + 3] * 0.00392157) * wallW * noSky;
+            }
+        }
+
+        // === MODE B: BAYANGAN PERSPEKTIF TANAH/RUMPUT + CONTACT AO (OUTDOOR LANGIT TERBUKA) ===
+        if (gndW > 0.04) {
+            const gCv = this._getScratch('rlGroundShadow', lw, lh);
+            const gCtx = gCv.getContext('2d', { willReadFrequently: true });
+            gCtx.clearRect(0, 0, lw, lh);
+
+            const targetList = subjects.length > 0
+                ? subjects
+                : [{ id: 0, cx: cxS, cy: cyS, minX: 0.2, maxX: 0.8, minY: 0.2, maxY: 0.92, w: 0.4, h: 0.65, feetX: cxS, feetY: 0.92, footMinX: cxS - 0.1, footMaxX: cxS + 0.1, touchesBottom: false }];
+
+            // Arah bayangan global yang konsisten untuk SELURUH subjek di pemandangan (seperti matahari / lampu utama tunggal!)
+            // Saat lampu di tengah-depan (flash kamera), beri bias perspektif alami halus ke kanan-belakang agar semua subjek konsisten.
+            const globalDx = 0.50 - L1.x;
+            const centerBias = Math.abs(globalDx) < 0.16 ? (1 - Math.abs(globalDx) / 0.16) * 0.24 : 0;
+
+            for (let k = 0; k < targetList.length; k++) {
+                const s = targetList[k];
+                const partCv = s.id > 0 ? buildSubjectPartCanvas(s.id) : subjectMaskCanvas;
+
+                // Gabungan arah global konsisten (80%) + paralaks lokal ringan (20%) agar 2 orang TIDAK punya bayangan berlawanan arah secara aneh!
+                const localDx = s.cx - L1.x;
+                let skewX = globalDx * 1.45 + centerBias + localDx * 0.22;
+                skewX = Math.max(-1.05, Math.min(1.05, skewX));
+
+                // Flash frontal / cahaya depan -> bayangan jatuh MUNDUR ke belakang kaki di rumput (squashY > 0);
+                // Matahari/lampu belakang-samping (non-flash, y < 0.30) -> bayangan jatuh sedikit ke depan/samping!
+                const isBackSun = !isFrontFlash && L1.y < 0.30;
+                const elevScale = 0.32 + Math.min(0.20, Math.max(0, (L1.y - 0.12) * 0.42));
+                const squashY = isBackSun ? -Math.min(0.36, elevScale * 0.85) : elevScale;
+
+                // Titik jangkar tanah: tepat di bawah sepatu (jika utuh) atau sedikit di bawah tepi foto (jika terpotong pinggang/paha)
+                const ax = s.feetX * lw;
+                const ay = (s.touchesBottom ? 1.06 : s.feetY) * lh;
+                const footSpanPx = Math.max(lw * 0.045, (s.footMaxX - s.footMinX) * lw);
+
+                // 1) Contact Ambient Occlusion pekat & alami tepat di bawah sepatu/telapak kaki (mengunci subjek menapak di rumput!)
+                if (!s.touchesBottom) {
+                    const aoRx = Math.max(lw * 0.065, footSpanPx * 1.25);
+                    const aoRy = Math.max(lh * 0.020, Math.min(lh * 0.044, s.h * lh * 0.068));
+                    const aoOffX = skewX * aoRy * 0.72;
+                    gCtx.save();
+                    gCtx.translate(ax + aoOffX, ay + aoRy * 0.10);
+                    gCtx.scale(1, aoRy / aoRx);
+                    const radG = gCtx.createRadialGradient(0, 0, aoRx * 0.08, 0, 0, aoRx);
+                    radG.addColorStop(0, 'rgba(0,0,0,0.96)');
+                    radG.addColorStop(0.50, 'rgba(0,0,0,0.68)');
+                    radG.addColorStop(1, 'rgba(0,0,0,0)');
+                    gCtx.fillStyle = radG;
+                    gCtx.beginPath();
+                    gCtx.arc(0, 0, aoRx, 0, Math.PI * 2);
+                    gCtx.fill();
+                    gCtx.restore();
+                }
+
+                // 2) Proyeksi Bayangan Siluet Perspektif 2-Lapis di Bidang Tanah (dekat kaki tegas, ujung kepala lembut meluruh!)
+                const drawGroundProj = (skMul, sqMul, blurPx, alpha, yBiasPx) => {
+                    gCtx.save();
+                    gCtx.globalAlpha = alpha;
+                    gCtx.filter = blurPx > 0.5 ? `blur(${blurPx.toFixed(2)}px)` : 'none';
+                    gCtx.translate(ax, ay + yBiasPx);
+                    gCtx.transform(1, 0, -(skewX * skMul), squashY * sqMul, 0, 0);
+                    gCtx.translate(-ax, -ay);
+                    gCtx.drawImage(partCv, 0, 0, lw, lh);
+                    gCtx.restore();
+                };
+
+                if (s.touchesBottom) {
+                    // Subjek dekat terpotong di bawah (mis. pria condong di rumput): bayangan lembut & terbaca di rumput di bawah/belakang tubuhnya
+                    drawGroundProj(0.88, 1.05, Math.max(4.8, maxSide * 0.028), 0.76, 0);
+                    drawGroundProj(1.14, 1.24, Math.max(10.0, maxSide * 0.060), 0.48, -lh * 0.012);
+                } else {
+                    // Subjek utuh berdiri di rumput (mis. wanita bertopi): bayangan dekat sepatu pekat & tajam, memanjang & melembut ke rumput
+                    drawGroundProj(0.94, 0.92, Math.max(2.2, maxSide * 0.013), 0.86, lh * 0.005);
+                    drawGroundProj(1.18, 1.22, Math.max(6.4, maxSide * 0.038), 0.56, -lh * 0.004);
+                }
+            }
+
+            const gImg = gCtx.getImageData(0, 0, lw, lh).data;
+            for (let y = 0, p = 0; y < lh; y++) {
+                const v = (y + 0.5) / lh;
+                for (let x = 0; x < lw; x++, p++) {
+                    const ga = groundAccept[p];
+                    if (ga <= 0.002) continue;
+                    const rawA = gImg[(p << 2) + 3] * 0.00392157;
+                    if (rawA <= 0.002) continue;
+                    // Peluruhan jarak lembut agar ujung terjauh bayangan melumer alami ke rumput
+                    const distFade = 0.62 + 0.38 * Math.min(1, Math.max(0, (v - maps.horizonY) / Math.max(0.25, 1 - maps.horizonY)));
+                    const vOut = out[p] + rawA * ga * distFade * gndW;
+                    out[p] = vOut > 1 ? 1 : vOut;
+                }
+            }
+        }
+
+        this._rlShadowCache = { key: sKey, data: out };
+        return out;
+    },
+
+    applyRelight(targetCanvas, subjectMaskCanvas, cfg) {
+        if (!cfg || !cfg.enabled) return;
+        const activeLights = (cfg.lights || []).filter((l) => l && l.on && (l.intensity || 0) > 0);
+        const ambient = cfg.ambient || 0;
+        if (!activeLights.length && !ambient) return;
+
+        const w = targetCanvas.width;
+        const h = targetCanvas.height;
+        const maxSide = Math.max(w, h);
+        const mapMax = cfg.fast ? 200 : 320;
+        const sc = Math.min(1, mapMax / maxSide);
+        const lw = Math.max(24, Math.round(w * sc));
+        const lh = Math.max(24, Math.round(h * sc));
+        const n = lw * lh;
+
+        const maps = this._getRelightMaps(targetCanvas, subjectMaskCanvas, lw, lh, cfg.normalKey);
+        const { nx, ny, nz, edge, ex, ey, hasMask, proxSpill, skyMask, horizonY, outdoorFactor, compLabels, subjects } = maps;
+        const fullAlpha = hasMask ? this._getFullResSubjectAlpha(subjectMaskCanvas, targetCanvas, w, h, cfg.normalKey) : null;
+
+        const nStr = Math.max(0, Math.min(1, (cfg.shading ?? 44) / 100));
+        const shadowAmt = Math.max(0, Math.min(1, (cfg.shadow ?? 60) / 100));
+        const rawAmb = Math.max(-0.92, Math.min(0.40, ambient / 100));
+        // Pada foto outdoor terang, redam penggelapan ekstrem ~22% agar subjek & suasana langit/rumput tetap menyatu alami
+        const amb = rawAmb < 0 ? rawAmb * (1 - outdoorFactor * 0.22) : rawAmb;
+        const aspectX = lw / Math.max(lw, lh);
+        const aspectY = lh / Math.max(lw, lh);
+
+        const parsedLights = activeLights.map((l) => {
+            const [r, g, b] = this._hexToRgb(l.color);
+            const rN = r / 255, gN = g / 255, bN = b / 255;
+            const cMax = Math.max(rN, gN, bN, 0.001);
+            const cMin = Math.min(rN, gN, bN);
+            const sat = (cMax - cMin) / cMax;
+            const sz = Math.max(0.15, Math.min(1, (l.size ?? 64) / 100));
+            const rad = 0.18 + sz * 0.70;
+            const nr = rN / cMax, ng = gN / cMax, nb = bN / cMax;
+            return {
+                x: l.x ?? 0.48,
+                y: l.y ?? 0.40,
+                nr, ng, nb,
+                rN, gN, bN,
+                sat,
+                isClean: sat < 0.20 ? (1 - sat / 0.20) : 0,
+                I: Math.max(0, Math.min(1, (l.intensity || 0) / 100)),
+                inv2Rad2: 1 / (2 * rad * rad),
+                zH: 0.38 + sz * 0.42,
+                D: Math.max(-1, Math.min(1, (l.depth ?? 84) / 100)),
+                rim: Math.max(0, Math.min(1, (l.rim ?? 0) / 100))
+            };
+        });
+
+        // 1. DUAL-FIELD SMOOTH LIGHTING MAPS (fSub vs fBg terpisah kontinu, lalu dicampur di resolusi penuh via fullAlpha!)
+        let fSubR = this._rlSubR, fSubG = this._rlSubG, fSubB = this._rlSubB;
+        let fBgR = this._rlBgR, fBgG = this._rlBgG, fBgB = this._rlBgB;
+        let fCr = this._rlCr, fCl = this._rlCl;
+        let fRR = this._rlRR, fRG = this._rlRG, fRB = this._rlRB;
+        if (!fSubR || fSubR.length < n) {
+            fSubR = this._rlSubR = new Float32Array(n);
+            fSubG = this._rlSubG = new Float32Array(n);
+            fSubB = this._rlSubB = new Float32Array(n);
+            fBgR = this._rlBgR = new Float32Array(n);
+            fBgG = this._rlBgG = new Float32Array(n);
+            fBgB = this._rlBgB = new Float32Array(n);
+            fCr = this._rlCr = new Float32Array(n);
+            fCl = this._rlCl = new Float32Array(n);
+            fRR = this._rlRR = new Float32Array(n);
+            fRG = this._rlRG = new Float32Array(n);
+            fRB = this._rlRB = new Float32Array(n);
+        }
+
+        const invLw = 1 / lw;
+        const invLh = 1 / lh;
+        const nLights = parsedLights.length;
+        const hasCleanLight = parsedLights.some((L) => L.isClean > 0.2);
+
+        const castShadow = (hasMask && shadowAmt > 0.01 && nLights > 0)
+            ? this._getCastShadowField(subjectMaskCanvas, maps, lw, lh, parsedLights[0], cfg.normalKey)
+            : null;
+        const shadowScale = 0.56 + outdoorFactor * 0.22;
+        const shadowStr = shadowAmt * shadowScale * (nLights > 0 ? Math.min(1, 0.35 + parsedLights[0].I * 0.85) : 0);
+
+        const subjById = new Map();
+        for (let k = 0; k < subjects.length; k++) subjById.set(subjects[k].id, subjects[k]);
+        const primaryL = nLights > 0 ? parsedLights[0] : null;
+        const horSafe = Math.max(0.24, horizonY);
+        const gndSpanSafe = Math.max(0.20, 1 - horizonY);
+
+        for (let y = 0, p = 0; y < lh; y++) {
+            const v = (y + 0.5) * invLh;
+            const skyGrad = 0.88 + 0.10 * Math.min(1, v / horSafe);
+            const groundGrad = 0.94 + 0.14 * Math.max(0, Math.min(1, (v - horizonY) / gndSpanSafe));
+
+            for (let x = 0; x < lw; x++, p++) {
+                const u = (x + 0.5) * invLw;
+                const sk = skyMask[p];
+                const eg = edge[p];
+                const prox = proxSpill[p];
+                const pnx = nx[p], pny = ny[p], pnz = nz[p];
+                const pex = ex[p], pey = ey[p];
+
+                const edgeR = Math.hypot((u - 0.5) * aspectX, (v - 0.44) * aspectY);
+                const indoorFall = (0.88 + 0.16 * v) * Math.max(0.72, 1.04 - edgeR * 0.32);
+                const outdoorBgFall = sk * skyGrad + (1 - sk) * groundGrad;
+                const bgFall = indoorFall * (1 - outdoorFactor) + outdoorBgFall * outdoorFactor;
+
+                // Pantulan cahaya halus eksklusif pada dinding/ruang indoor dekat (NOL aura pendar di foto outdoor/langit!)
+                const shHere = castShadow ? castShadow[p] : 0;
+                const bounceWrap = amb < 0 ? (-amb) * prox * (1 - outdoorFactor) * (1 - sk * 0.95) * (1 - shHere * 0.85) * 0.06 : 0;
+
+                let bgBase = amb < 0
+                    ? Math.min(1.02, (1 + amb) * bgFall + bounceWrap)
+                    : 1 + amb * 0.55;
+                if (shHere > 0.002) {
+                    bgBase *= (1 - shadowStr * shHere);
+                }
+                if (bgBase < 0.08) bgBase = 0.08;
+
+                let subBase = amb < 0
+                    ? (1 + amb * 0.04) * (0.94 + 0.06 * Math.max(0, 1 - edgeR * 0.95))
+                    : 1 + amb * 0.45;
+                if (subBase < 0.25) subBase = 0.25;
+
+                const bgCool = amb < 0 && hasCleanLight ? (-amb) * 0.045 : 0;
+                const skyCyanKeep = amb < 0 ? (-amb) * sk * outdoorFactor * 0.14 : 0;
+                let bR = bgBase * (1 - bgCool * 0.38 - skyCyanKeep * 0.46);
+                let bG = bgBase * (1 - bgCool * 0.06 + skyCyanKeep * 0.05);
+                let bB = bgBase * (1 + bgCool * 0.48 + skyCyanKeep * 0.42);
+
+                let sR = subBase, sG = subBase, sB = subBase;
+                let litSubSum = 0;
+                let cleanSubSum = 0;
+                let maxNdotL = 0;
+                let maxFall = 0;
+                let rmR = 0, rmG = 0, rmB = 0;
+
+                for (let li = 0; li < nLights; li++) {
+                    const L = parsedLights[li];
+                    const dx = (u - L.x) * aspectX;
+                    const dy = (v - L.y) * aspectY;
+                    const dist2 = dx * dx + dy * dy;
+                    const fall = Math.exp(-dist2 * L.inv2Rad2);
+                    if (fall > maxFall) maxFall = fall;
+
+                    const invLen = 1 / Math.sqrt(dist2 + L.zH * L.zH);
+                    const Lx = -dx * invLen;
+                    const Ly = -dy * invLen;
+                    const Lz = L.zH * invLen;
+
+                    let ndotl = pnx * Lx + pny * Ly + pnz * Lz;
+                    if (ndotl < 0) ndotl = 0;
+                    if (ndotl > maxNdotL) maxNdotL = ndotl;
+
+                    const isFrontalFlash = L.isClean > 0.35 && L.D >= 0.65 && hasMask;
+                    const baseFloor = (isFrontalFlash && subjects.length >= 2) ? 0.62 : 0.48;
+                    const effFall = isFrontalFlash ? (baseFloor + (1 - baseFloor) * fall) : fall;
+                    const shade = isFrontalFlash
+                        ? (0.89 + 0.17 * ndotl)
+                        : ((1 - nStr * 0.24) + nStr * 0.38 * ndotl);
+
+                    const dwSub = hasMask ? (L.D >= 0 ? 1 : (1 + L.D * 0.88)) : 1;
+                    const dwBg = hasMask
+                        ? (L.D >= 0 ? (1 - L.D * 0.86) * (1 - sk * 0.96) : 1)
+                        : 1;
+
+                    const litS = L.I * effFall * shade * dwSub;
+                    const litB = L.I * fall * shade * dwBg;
+                    litSubSum += litS;
+
+                    if (L.sat < 0.22) {
+                        const boostS = litS * (isFrontalFlash ? 0.20 : 0.34);
+                        const boostB = litB * (isFrontalFlash ? 0.18 : 0.30);
+                        const tintMix = 0.40;
+                        const tr = 1 - tintMix + tintMix * L.nr;
+                        const tg = 1 - tintMix + tintMix * L.ng;
+                        const tb = 1 - tintMix + tintMix * L.nb;
+                        sR += boostS * tr; sG += boostS * tg; sB += boostS * tb;
+                        bR += boostB * tr; bG += boostB * tg; bB += boostB * tb;
+                        cleanSubSum += litS * L.isClean;
+                    } else {
+                        const cPowS = litS * 0.66;
+                        const cPowB = litB * 0.58;
+                        const crR = 0.20 + 0.86 * L.nr, crG = 0.20 + 0.86 * L.ng, crB = 0.20 + 0.86 * L.nb;
+                        sR += cPowS * crR; sG += cPowS * crG; sB += cPowS * crB;
+                        bR += cPowB * crR; bG += cPowB * crG; bB += cPowB * crB;
+                        const subKS = litS * L.sat * 0.20;
+                        sR *= (1 - subKS * (1 - L.nr));
+                        sG *= (1 - subKS * (1 - L.ng));
+                        sB *= (1 - subKS * (1 - L.nb));
+                    }
+
+                    if (L.rim > 0.01 && hasMask && eg > 0.01) {
+                        const align = Math.max(0.20, (pex * Lx + pey * Ly) * 0.72 + 0.28);
+                        const rPow = L.rim * L.I * (0.35 + 0.65 * fall) * eg * align * 0.44;
+                        rmR += L.rN * rPow;
+                        rmG += L.gN * rPow;
+                        rmB += L.bN * rPow;
+                    }
+                }
+
+                // 3D Directional Wrap Self-Shading halus pada subjek outdoor
+                if (primaryL && outdoorFactor > 0.25 && nStr > 0.10) {
+                    const sObj = subjById.get(compLabels[p]);
+                    if (sObj && sObj.w > 0.04) {
+                        const relX = (u - sObj.cx) / (sObj.w * 0.55);
+                        const lightSide = Math.max(-1, Math.min(1, (primaryL.x - sObj.cx) * 2.4));
+                        const away = Math.max(0, -relX * lightSide);
+                        const wrapDark = 1 - Math.min(0.12, away * 0.10 * nStr * primaryL.I * outdoorFactor);
+                        sR *= wrapDark; sG *= wrapDark; sB *= wrapDark;
+                    }
+                }
+
+                if (nLights > 0 && nStr > 0.05 && !hasCleanLight) {
+                    const sideShadow = 1 - nStr * 0.14 * (1 - maxNdotL) * (1 - maxFall * 0.70);
+                    sR *= sideShadow; sG *= sideShadow; sB *= sideShadow;
+                }
+
+                const crisp = Math.min(1, litSubSum * (0.38 + 0.52 * nStr));
+
+                fSubR[p] = sR < 0.12 ? 0.12 : sR > 1.65 ? 1.65 : sR;
+                fSubG[p] = sG < 0.12 ? 0.12 : sG > 1.65 ? 1.65 : sG;
+                fSubB[p] = sB < 0.12 ? 0.12 : sB > 1.65 ? 1.65 : sB;
+                fBgR[p] = bR < 0.08 ? 0.08 : bR > 1.55 ? 1.55 : bR;
+                fBgG[p] = bG < 0.08 ? 0.08 : bG > 1.55 ? 1.55 : bG;
+                fBgB[p] = bB < 0.08 ? 0.08 : bB > 1.55 ? 1.55 : bB;
+                fCr[p] = crisp;
+                fCl[p] = cleanSubSum > 1 ? 1 : cleanSubSum;
+                fRR[p] = rmR > 0.55 ? 0.55 : rmR;
+                fRG[p] = rmG > 0.55 ? 0.55 : rmG;
+                fRB[p] = rmB > 0.55 ? 0.55 : rmB;
+            }
+        }
+
+        // 2. Terapkan Dual-Field dengan Full-Resolution Alpha Mask (100% bebas tepi kasar/staircasing!)
+        const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+        const img = ctx.getImageData(0, 0, w, h);
+        const d = img.data;
+
+        let ix0 = this._rlIx0, ix1 = this._rlIx1, fxArr = this._rlFx;
+        if (!ix0 || ix0.length < w) {
+            ix0 = this._rlIx0 = new Int32Array(w);
+            ix1 = this._rlIx1 = new Int32Array(w);
+            fxArr = this._rlFx = new Float32Array(w);
+        }
+        const sx = lw / w;
+        const sy = lh / h;
+        const lwM1 = lw - 1;
+        const lhM1 = lh - 1;
+        for (let x = 0; x < w; x++) {
+            let u = (x + 0.5) * sx - 0.5;
+            if (u < 0) u = 0;
+            else if (u > lwM1) u = lwM1;
+            const x0 = u | 0;
+            ix0[x] = x0;
+            ix1[x] = x0 < lwM1 ? x0 + 1 : lwM1;
+            fxArr[x] = u - x0;
+        }
+
+        const inv255 = 1 / 255;
+        for (let y = 0; y < h; y++) {
+            let v = (y + 0.5) * sy - 0.5;
+            if (v < 0) v = 0;
+            else if (v > lhM1) v = lhM1;
+            const y0 = v | 0;
+            const y1 = y0 < lhM1 ? y0 + 1 : lhM1;
+            const fy = v - y0;
+            const ify = 1 - fy;
+            const row0 = y0 * lw;
+            const row1 = y1 * lw;
+            const pixRow = y * w;
+            const imgRow = pixRow << 2;
+
+            for (let x = 0; x < w; x++) {
+                const pxIdx = pixRow + x;
+                const idx = imgRow + (x << 2);
+                if (d[idx + 3] === 0) continue;
+
+                const x0 = ix0[x], x1 = ix1[x], fx = fxArr[x], ifx = 1 - fx;
+                const w00 = ifx * ify, w10 = fx * ify, w01 = ifx * fy, w11 = fx * fy;
+                const p00 = row0 + x0, p10 = row0 + x1, p01 = row1 + x0, p11 = row1 + x1;
+
+                const sj = fullAlpha ? (fullAlpha[pxIdx] * inv255) : 1;
+                const bgR = fBgR[p00] * w00 + fBgR[p10] * w10 + fBgR[p01] * w01 + fBgR[p11] * w11;
+                const bgG = fBgG[p00] * w00 + fBgG[p10] * w10 + fBgG[p01] * w01 + fBgG[p11] * w11;
+                const bgB = fBgB[p00] * w00 + fBgB[p10] * w10 + fBgB[p01] * w01 + fBgB[p11] * w11;
+                const subR = fSubR[p00] * w00 + fSubR[p10] * w10 + fSubR[p01] * w01 + fSubR[p11] * w11;
+                const subG = fSubG[p00] * w00 + fSubG[p10] * w10 + fSubG[p01] * w01 + fSubG[p11] * w11;
+                const subB = fSubB[p00] * w00 + fSubB[p10] * w10 + fSubB[p01] * w01 + fSubB[p11] * w11;
+
+                // Monotonic zero-halo blending saat latar digelapkan (menghilangkan pendaran matte latar terang di tepi rambut & lengan!)
+                const bgL = bgR + bgG + bgB;
+                const subL = subR + subG + subB;
+                const sjG = (sj > 0 && sj < 1 && subL > bgL + 0.02) ? (sj * sj * (0.35 + 0.65 * sj)) : sj;
+
+                const gR = bgR + (subR - bgR) * sjG;
+                const gG = bgG + (subG - bgG) * sjG;
+                const gB = bgB + (subB - bgB) * sjG;
+                const cr = (fCr[p00] * w00 + fCr[p10] * w10 + fCr[p01] * w01 + fCr[p11] * w11) * (hasMask ? (0.10 + 0.90 * sjG) : 1);
+                const cl = (fCl[p00] * w00 + fCl[p10] * w10 + fCl[p01] * w01 + fCl[p11] * w11) * sjG;
+
+                const rn = d[idx] * inv255;
+                const gn = d[idx + 1] * inv255;
+                const bn = d[idx + 2] * inv255;
+                const lum = 0.299 * rn + 0.587 * gn + 0.114 * bn;
+
+                // 1) Eksposur Fisik Halus + Filmic Highlight Shoulder
+                let or = rn * gR;
+                let og = gn * gG;
+                let ob = bn * gB;
+
+                const gMax = gR > gG ? (gR > gB ? gR : gB) : (gG > gB ? gG : gB);
+                if (gMax > 1.0) {
+                    const shK = (gMax - 1.0) * 1.08;
+                    or = or / (1 + or * shK);
+                    og = og / (1 + og * shK);
+                    ob = ob / (1 + ob * shK);
+                }
+
+                // 2) Filmic Black-Point Toe lembut
+                if (cr > 0.01 && lum < 0.28) {
+                    const tToe = lum * 3.571;
+                    const sToe = tToe * tToe * (3 - 2 * tToe);
+                    const blackAnchor = 1 - cr * (1 - sToe) * 0.38;
+                    or *= blackAnchor;
+                    og *= blackAnchor;
+                    ob *= blackAnchor;
+                }
+
+                // 3) Filmic Micro-Contrast S-Curve halus & creamy
+                if (cr > 0.01) {
+                    const sK = cr * 0.24;
+                    if (or > 0 && or < 1) or += (or - 0.42) * or * (1 - or) * sK;
+                    if (og > 0 && og < 1) og += (og - 0.42) * og * (1 - og) * sK;
+                    if (ob > 0 && ob < 1) ob += (ob - 0.42) * ob * (1 - ob) * sK;
+                }
+
+                // 4) Clean Flash White-Balance halus
+                if (cl > 0.01) {
+                    const avg = (or + og + ob) * 0.333333;
+                    if (lum < 0.30) {
+                        const hairW = cl * (1 - lum * 3.333) * 0.68;
+                        or += (avg - or) * hairW;
+                        og += (avg - og) * hairW;
+                        ob += (avg - ob) * hairW;
+                    } else {
+                        const cHi = or > og ? (or > ob ? or : ob) : (og > ob ? og : ob);
+                        const cLo = or < og ? (or < ob ? or : ob) : (og < ob ? og : ob);
+                        const sat = cHi - cLo;
+                        if (sat < 0.36) {
+                            const skinGate = (1 - sat * 2.78) * Math.min(1, (lum - 0.28) * 2.4) * Math.max(0, Math.min(1, (0.86 - lum) * 4.4));
+                            if (skinGate > 0) {
+                                const glowLift = cl * skinGate * 0.044;
+                                or += glowLift * 0.78;
+                                og += glowLift * 1.02;
+                                ob += glowLift * 1.20;
+                                if (or > ob) {
+                                    const nK = cl * skinGate * 0.26;
+                                    ob += (avg - ob) * nK;
+                                    og += (avg - og) * (nK * 0.25);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 5) Directional Rim Light halus (dimodulasi tekstur asli & fullAlpha!)
+                const rmR = (fRR[p00] * w00 + fRR[p10] * w10 + fRR[p01] * w01 + fRR[p11] * w11) * sj;
+                const rmG = (fRG[p00] * w00 + fRG[p10] * w10 + fRG[p01] * w01 + fRG[p11] * w11) * sj;
+                const rmB = (fRB[p00] * w00 + fRB[p10] * w10 + fRB[p01] * w01 + fRB[p11] * w11) * sj;
+                if (rmR > 0.002 || rmG > 0.002 || rmB > 0.002) {
+                    const rimTex = 0.32 + 0.85 * Math.min(1, lum * 1.4);
+                    or = 1 - (1 - (or > 1 ? 1 : or)) * (1 - rmR * rimTex);
+                    og = 1 - (1 - (og > 1 ? 1 : og)) * (1 - rmG * rimTex);
+                    ob = 1 - (1 - (ob > 1 ? 1 : ob)) * (1 - rmB * rimTex);
+                }
+
+                d[idx] = or <= 0 ? 0 : or >= 1 ? 255 : (or * 255 + 0.5) | 0;
+                d[idx + 1] = og <= 0 ? 0 : og >= 1 ? 255 : (og * 255 + 0.5) | 0;
+                d[idx + 2] = ob <= 0 ? 0 : ob >= 1 ? 255 : (ob * 255 + 0.5) | 0;
+            }
+        }
+
+        // 3. Ketajaman mikro super-halus (hanya 0.08 agar foto tetap lembut & silky, TIDAK kasar/gritty!)
+        if (!cfg.fast && nStr > 0.35 && nLights > 0) {
+            const sharpGain = nStr * 0.08;
+            const totalPx = w * h;
+            let lumBuf = this._sharpLumBuf;
+            if (!lumBuf || lumBuf.length < totalPx) lumBuf = this._sharpLumBuf = new Float32Array(totalPx);
+            for (let p = 0, i = 0; p < totalPx; p++, i += 4) {
+                lumBuf[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            }
+            for (let y = 1; y < h - 1; y++) {
+                const row = y * w;
+                const rowU = row - w;
+                const rowD = row + w;
+                const fyIdx = Math.min(lhM1, (y * sy) | 0) * lw;
+                for (let x = 1; x < w - 1; x++) {
+                    const p = row + x;
+                    const idx = p << 2;
+                    if (d[idx + 3] === 0) continue;
+                    const sjW = fullAlpha ? fullAlpha[p] * inv255 : 1;
+                    if (sjW < 0.35) continue;
+                    const crW = fCr[fyIdx + ix0[x]] * sjW;
+                    if (crW < 0.20) continue;
+                    const lC = lumBuf[p];
+                    const lBlur = (
+                        lC * 4 +
+                        (lumBuf[p - 1] + lumBuf[p + 1] + lumBuf[rowU + x] + lumBuf[rowD + x]) * 2 +
+                        lumBuf[rowU + x - 1] + lumBuf[rowU + x + 1] + lumBuf[rowD + x - 1] + lumBuf[rowD + x + 1]
+                    ) * 0.0625;
+                    const diff = lC - lBlur;
+                    const ad = diff < 0 ? -diff : diff;
+                    if (ad < 2.4) continue;
+                    const add = diff * sharpGain * crW;
+                    d[idx] = d[idx] + add;
+                    d[idx + 1] = d[idx + 1] + add;
+                    d[idx + 2] = d[idx + 2] + add;
+                }
+            }
+        }
+
+        ctx.putImageData(img, 0, 0);
+    },
+
+    /**
+     * Mesin Filter Flash Optik Berbasis AI Subjek (v40 — Silky Dual-Field Full-Res Blending):
+     * - 100% bebas tepi potong kasar/staircasing (full-res alpha + proximity bounce-light spill!)
+     * - Rim Light organik berbasis tekstur & luminance rambut asli (NOL garis kapur/stiker putih buatan!)
+     * - Kurva filmic silky untuk kulit mulus, highlight berkilau tanpa pecah, & neon preservation cerdas!
+     */
+    applyOpticalFlashPreset(targetCanvas, subjectMaskCanvas, flashCfg, strength = 1, opts = {}) {
+        if (!flashCfg || strength <= 0) return;
+        const str = Math.min(1, Math.max(0, strength));
+        const w = targetCanvas.width;
+        const h = targetCanvas.height;
+        if (!w || !h) return;
+
+        const power = Math.min(1, Math.max(0, flashCfg.power ?? 0.62)) * str;
+        const rawBgDark = Math.min(0.92, Math.max(0, flashCfg.bgDark ?? (flashCfg.falloff ?? 0.50) * 0.65)) * str;
+        const keepLights = Math.min(1, Math.max(0, flashCfg.keepLights ?? 0.45));
+        const shadowAmt = Math.min(1, Math.max(0, flashCfg.shadow ?? 0)) * str;
+        const rimPower = Math.min(1, Math.max(0, flashCfg.rimPower ?? 0)) * str;
+        const skinGlow = Math.min(1, Math.max(0, flashCfg.skinGlow ?? 0.30)) * str;
+        const bloom = Math.min(1, Math.max(0, flashCfg.bloom ?? 0.28)) * str;
+        const bloomThresh = Math.min(0.90, Math.max(0.55, flashCfg.bloomThresh ?? 0.76));
+        const halation = Math.min(1, Math.max(0, flashCfg.halation ?? 0)) * str;
+        const rad = Math.min(0.95, Math.max(0.34, flashCfg.radius ?? 0.62));
+        const cx = flashCfg.cx ?? 0.50;
+        const cy = flashCfg.cy ?? 0.43;
+
+        const [fr, fg, fb] = this._hexToRgb(flashCfg.color || '#eef6ff');
+        const fMax = Math.max(fr, fg, fb, 1);
+        const fnr = fr / fMax, fng = fg / fMax, fnb = fb / fMax;
+        const fSat = (fMax - Math.min(fr, fg, fb)) / fMax;
+        const isCleanFlash = fSat < 0.24 ? (1 - fSat / 0.24) : 0;
+
+        const [rmColR, rmColG, rmColB] = this._hexToRgb(flashCfg.rimColor || '#ffecc8');
+        const rmRn = rmColR / 255, rmGn = rmColG / 255, rmBn = rmColB / 255;
+
+        const bgTint = Array.isArray(flashCfg.bgTint) && flashCfg.bgTint.length === 3 ? flashCfg.bgTint : null;
+        const bgTintStr = bgTint ? Math.min(1, Math.max(0, flashCfg.bgTintStr ?? 0.55)) * str : 0;
+        const bgTr = bgTint ? (1 + (bgTint[0] - 1) * bgTintStr) : 1;
+        const bgTg = bgTint ? (1 + (bgTint[1] - 1) * bgTintStr) : 1;
+        const bgTb = bgTint ? (1 + (bgTint[2] - 1) * bgTintStr) : 1;
+
+        const maxSide = Math.max(w, h);
+        const mapMax = opts.fast ? 180 : 300;
+        const sc = Math.min(1, mapMax / maxSide);
+        const lw = Math.max(24, Math.round(w * sc));
+        const lh = Math.max(24, Math.round(h * sc));
+        const n = lw * lh;
+
+        const maps = subjectMaskCanvas
+            ? this._getRelightMaps(targetCanvas, subjectMaskCanvas, lw, lh, opts.normalKey)
+            : null;
+        const hasMask = !!(maps && maps.hasMask);
+        const fullAlpha = hasMask ? this._getFullResSubjectAlpha(subjectMaskCanvas, targetCanvas, w, h, opts.normalKey) : null;
+        const skyMask = hasMask ? maps.skyMask : null;
+        const proxSpill = hasMask ? maps.proxSpill : null;
+        const outdoorFactor = hasMask ? maps.outdoorFactor : 0;
+        const horizonY = hasMask ? maps.horizonY : 0.48;
+        const bgDark = rawBgDark * (1 - outdoorFactor * 0.20);
+
+        const aspectX = lw / Math.max(lw, lh);
+        const aspectY = lh / Math.max(lw, lh);
+        const inv2Rad2 = 1 / (2 * (rad * 0.88) * (rad * 0.88));
+        const invLw = 1 / lw;
+        const invLh = 1 / lh;
+
+        const virtualL1 = { x: cx, y: cy, isClean: isCleanFlash, D: 0.86, I: Math.max(0.55, power) };
+        const castShadow = (hasMask && shadowAmt > 0.02)
+            ? this._getCastShadowField(subjectMaskCanvas, maps, lw, lh, virtualL1, opts.normalKey)
+            : null;
+        const shadowStr = shadowAmt * (0.58 + outdoorFactor * 0.18);
+
+        let fSubR = this._flSubR, fSubG = this._flSubG, fSubB = this._flSubB;
+        let fBgR = this._flBgR, fBgG = this._flBgG, fBgB = this._flBgB;
+        let fLit = this._flLit;
+        if (!fSubR || fSubR.length < n) {
+            fSubR = this._flSubR = new Float32Array(n);
+            fSubG = this._flSubG = new Float32Array(n);
+            fSubB = this._flSubB = new Float32Array(n);
+            fBgR = this._flBgR = new Float32Array(n);
+            fBgG = this._flBgG = new Float32Array(n);
+            fBgB = this._flBgB = new Float32Array(n);
+            fLit = this._flLit = new Float32Array(n);
+        }
+
+        const horSafe = Math.max(0.24, horizonY);
+        const gndSpanSafe = Math.max(0.20, 1 - horizonY);
+        const centerX = hasMask ? (maps.cxS * 0.65 + cx * 0.35) : cx;
+        const centerY = hasMask ? (Math.min(maps.cyS, 0.46) * 0.55 + cy * 0.45) : cy;
+
+        for (let y = 0, p = 0; y < lh; y++) {
+            const v = (y + 0.5) * invLh;
+            const skyGrad = 0.88 + 0.10 * Math.min(1, v / horSafe);
+            const groundGrad = 0.94 + 0.14 * Math.max(0, Math.min(1, (v - horizonY) / gndSpanSafe));
+
+            for (let x = 0; x < lw; x++, p++) {
+                const u = (x + 0.5) * invLw;
+                const dx = (u - centerX) * aspectX;
+                const dy = (v - centerY) * aspectY;
+                const dist2 = dx * dx + dy * dy;
+                const fall = Math.exp(-dist2 * inv2Rad2);
+
+                const sk = hasMask ? skyMask[p] : 0;
+                const prox = hasMask ? proxSpill[p] : fall;
+                const shHere = castShadow ? castShadow[p] : 0;
+
+                const edgeR = Math.hypot((u - 0.5) * aspectX, (v - 0.44) * aspectY);
+                const indoorFall = (0.90 + 0.14 * v) * Math.max(0.66, 1.05 - edgeR * 0.42);
+                const outdoorFall = sk * skyGrad + (1 - sk) * groundGrad;
+                const bgFall = indoorFall * (1 - outdoorFactor) + outdoorFall * outdoorFactor;
+
+                // Pantulan cahaya halus hanya pada dinding indoor lembut (NOL aura di foto outdoor atau latar obsidian gelap STUDIO RIM!)
+                const bounceWrap = (bgDark <= 0.72) ? (bgDark * prox * (1 - outdoorFactor) * (1 - sk * 0.95) * (1 - shHere * 0.85) * 0.07) : 0;
+                let bgBase = Math.min(1.04, (1 - bgDark) * bgFall + bounceWrap);
+                if (shHere > 0.002) {
+                    bgBase *= (1 - shadowStr * shHere);
+                }
+                if (bgBase < 0.03) bgBase = 0.03;
+
+                const bgSpill = hasMask ? (0.09 * (1 - bgDark * 0.85) * (1 - sk * 0.96) * fall * power) : (0.16 * fall * power);
+                const tintMix = fSat < 0.20 ? 0.40 : 0.74;
+                const tr = 1 - tintMix + tintMix * fnr;
+                const tg = 1 - tintMix + tintMix * fng;
+                const tb = 1 - tintMix + tintMix * fnb;
+
+                const bR = bgBase * bgTr + bgSpill * tr;
+                const bG = bgBase * bgTg + bgSpill * tg;
+                const bB = bgBase * bgTb + bgSpill * tb;
+
+                const effFall = hasMask ? (0.64 + 0.36 * fall) : fall;
+                const lit = power * effFall;
+                const boost = lit * (0.14 + skinGlow * 0.07);
+                const sR = 0.98 + boost * tr;
+                const sG = 0.98 + boost * tg;
+                const sB = 0.98 + boost * tb;
+
+                fSubR[p] = sR < 0.20 ? 0.20 : sR > 1.50 ? 1.50 : sR;
+                fSubG[p] = sG < 0.20 ? 0.20 : sG > 1.50 ? 1.50 : sG;
+                fSubB[p] = sB < 0.20 ? 0.20 : sB > 1.50 ? 1.50 : sB;
+                fBgR[p] = bR < 0.03 ? 0.03 : bR > 1.45 ? 1.45 : bR;
+                fBgG[p] = bG < 0.03 ? 0.03 : bG > 1.45 ? 1.45 : bG;
+                fBgB[p] = bB < 0.03 ? 0.03 : bB > 1.45 ? 1.45 : bB;
+                fLit[p] = lit;
+            }
+        }
+
+        // 2. Full-Res Pass: Dual-Field Blend + Neon Preserve + Silky Filmic Skin + Organic Hair Rim Light!
+        const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+        const img = ctx.getImageData(0, 0, w, h);
+        const d = img.data;
+        const inv255 = 1 / 255;
+
+        let avgBgLum = 0.5;
+        if (keepLights > 0.01 && fullAlpha) {
+            let bSum = 0, bCnt = 0;
+            const stepY = Math.max(2, (h / 48) | 0);
+            const stepX = Math.max(2, (w / 48) | 0);
+            for (let y = 0; y < h; y += stepY) {
+                const pRow = y * w;
+                const iRow = pRow << 2;
+                for (let x = 0; x < w; x += stepX) {
+                    if (fullAlpha[pRow + x] < 90) {
+                        const idx = iRow + (x << 2);
+                        bSum += (0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2]) * inv255;
+                        bCnt++;
+                    }
+                }
+            }
+            avgBgLum = bCnt > 12 ? (bSum / bCnt) : 0.5;
+        }
+        const darkNightGate = Math.max(0, Math.min(1, (0.48 - avgBgLum) / 0.16));
+
+        let ix0 = this._rlIx0, ix1 = this._rlIx1, fxArr = this._rlFx;
+        if (!ix0 || ix0.length < w) {
+            ix0 = this._rlIx0 = new Int32Array(w);
+            ix1 = this._rlIx1 = new Int32Array(w);
+            fxArr = this._rlFx = new Float32Array(w);
+        }
+        const sx = lw / w;
+        const sy = lh / h;
+        const lwM1 = lw - 1;
+        const lhM1 = lh - 1;
+        for (let x = 0; x < w; x++) {
+            let u = (x + 0.5) * sx - 0.5;
+            if (u < 0) u = 0; else if (u > lwM1) u = lwM1;
+            const x0 = u | 0;
+            ix0[x] = x0;
+            ix1[x] = x0 < lwM1 ? x0 + 1 : lwM1;
+            fxArr[x] = u - x0;
+        }
+
+        const rimStepY = Math.max(2, Math.min(5, Math.round(maxSide * 0.0032)));
+        const rimStepX = Math.max(1, Math.min(3, Math.round(maxSide * 0.0020)));
+        const useOrganicRim = rimPower > 0.03 && !!fullAlpha;
+        const invH = 1 / h;
+
+        for (let y = 0; y < h; y++) {
+            let v = (y + 0.5) * sy - 0.5;
+            if (v < 0) v = 0; else if (v > lhM1) v = lhM1;
+            const y0 = v | 0;
+            const y1 = y0 < lhM1 ? y0 + 1 : lhM1;
+            const fy = v - y0;
+            const ify = 1 - fy;
+            const row0 = y0 * lw;
+            const row1 = y1 * lw;
+            const pixRow = y * w;
+            const imgRow = pixRow << 2;
+            const yUpRow = Math.max(0, y - rimStepY) * w;
+            const vNorm = y * invH;
+            const rimYGate = useOrganicRim ? Math.max(0, Math.min(1, (0.68 - vNorm) / 0.28)) : 0;
+
+            for (let x = 0; x < w; x++) {
+                const pxIdx = pixRow + x;
+                const idx = imgRow + (x << 2);
+                if (d[idx + 3] === 0) continue;
+
+                const x0 = ix0[x], x1 = ix1[x], fx = fxArr[x], ifx = 1 - fx;
+                const w00 = ifx * ify, w10 = fx * ify, w01 = ifx * fy, w11 = fx * fy;
+                const p00 = row0 + x0, p10 = row0 + x1, p01 = row1 + x0, p11 = row1 + x1;
+
+                const subR = fSubR[p00] * w00 + fSubR[p10] * w10 + fSubR[p01] * w01 + fSubR[p11] * w11;
+                const subG = fSubG[p00] * w00 + fSubG[p10] * w10 + fSubG[p01] * w01 + fSubG[p11] * w11;
+                const subB = fSubB[p00] * w00 + fSubB[p10] * w10 + fSubB[p01] * w01 + fSubB[p11] * w11;
+                let bgR = fBgR[p00] * w00 + fBgR[p10] * w10 + fBgR[p01] * w01 + fBgR[p11] * w11;
+                let bgG = fBgG[p00] * w00 + fBgG[p10] * w10 + fBgG[p01] * w01 + fBgG[p11] * w11;
+                let bgB = fBgB[p00] * w00 + fBgB[p10] * w10 + fBgB[p01] * w01 + fBgB[p11] * w11;
+                const lit = fLit[p00] * w00 + fLit[p10] * w10 + fLit[p01] * w01 + fLit[p11] * w11;
+
+                const sj = fullAlpha ? (fullAlpha[pxIdx] * inv255) : Math.min(1, lit * 1.3);
+
+                const rn = d[idx] * inv255;
+                const gn = d[idx + 1] * inv255;
+                const bn = d[idx + 2] * inv255;
+                const lum = 0.299 * rn + 0.587 * gn + 0.114 * bn;
+
+                if (keepLights > 0.01 && sj < 0.90 && lum > 0.62) {
+                    const cHi0 = rn > gn ? (rn > bn ? rn : bn) : (gn > bn ? gn : bn);
+                    const cLo0 = rn < gn ? (rn < bn ? rn : bn) : (gn < bn ? gn : bn);
+                    const sat0 = cHi0 > 0.01 ? (cHi0 - cLo0) / cHi0 : 0;
+                    const neonSatGate = Math.max(0, Math.min(1, (sat0 - 0.24) * 3.0)) * Math.max(0, Math.min(1, (lum - 0.66) * 4.0));
+                    const emissiveGate = Math.max(darkNightGate, neonSatGate * 0.85);
+                    if (emissiveGate > 0.01) {
+                        const lt = (lum - 0.62) * 3.1;
+                        const ltc = lt > 1 ? 1 : lt;
+                        const ls = ltc * ltc * (3 - 2 * ltc) * keepLights * emissiveGate;
+                        bgR += (1.05 - bgR) * ls;
+                        bgG += (1.03 - bgG) * ls;
+                        bgB += (1.00 - bgB) * ls;
+                    }
+                }
+
+                const bgL = bgR + bgG + bgB;
+                const subL = subR + subG + subB;
+                const sjG = (sj > 0 && sj < 1 && subL > bgL + 0.02) ? (sj * sj * (0.35 + 0.65 * sj)) : sj;
+
+                const gR = bgR + (subR - bgR) * sjG;
+                const gG = bgG + (subG - bgG) * sjG;
+                const gB = bgB + (subB - bgB) * sjG;
+
+                let or = rn * gR;
+                let og = gn * gG;
+                let ob = bn * gB;
+
+                const gMax = gR > gG ? (gR > gB ? gR : gB) : (gG > gB ? gG : gB);
+                if (gMax > 1.0) {
+                    const shK = (gMax - 1.0) * 1.15;
+                    or = or / (1 + or * shK);
+                    og = og / (1 + og * shK);
+                    ob = ob / (1 + ob * shK);
+                }
+
+                const subLit = lit * sjG;
+                if (subLit > 0.02) {
+                    if (lum < 0.26) {
+                        const tToe = lum * 3.846;
+                        const sToe = tToe * tToe * (3 - 2 * tToe);
+                        const blackAnchor = 1 - subLit * (1 - sToe) * 0.30;
+                        or *= blackAnchor;
+                        og *= blackAnchor;
+                        ob *= blackAnchor;
+                    }
+                    if (skinGlow > 0.02 && lum > 0.28 && lum < 0.84) {
+                        const cHi = or > og ? (or > ob ? or : ob) : (og > ob ? og : ob);
+                        const cLo = or < og ? (or < ob ? or : ob) : (og < ob ? og : ob);
+                        const sat = cHi - cLo;
+                        if (sat < 0.36) {
+                            const gate = (1 - sat * 2.78) * Math.min(1, (lum - 0.28) * 2.6) * Math.max(0, Math.min(1, (0.84 - lum) * 4.5));
+                            if (gate > 0) {
+                                const lift = subLit * skinGlow * gate * 0.068;
+                                or += lift * (0.86 + 0.14 * fnr);
+                                og += lift * (0.96 + 0.04 * fng);
+                                ob += lift * (1.02 + 0.08 * fnb);
+                            }
+                        }
+                    }
+                }
+
+                // 3. ORGANIC INTERIOR HAIR & SHOULDER RIM LIGHT (eksklusif di DALAM piksel solid sj >= 0.82 — ZERO border stiker/dinding putih!)
+                if (rimYGate > 0.01 && sj >= 0.82) {
+                    const sjUp = fullAlpha[yUpRow + x] * inv255;
+                    const xL = x > rimStepX ? x - rimStepX : 0;
+                    const xR = x + rimStepX < w ? x + rimStepX : w - 1;
+                    const sjSide = 0.5 * (fullAlpha[pixRow + xL] + fullAlpha[pixRow + xR]) * inv255;
+                    const topIn = Math.max(0, 0.75 - sjUp);
+                    const sideIn = Math.max(0, 0.65 - sjSide) * 0.55;
+                    const edgeBand = Math.min(1, (topIn * 1.1 + sideIn) * 1.15);
+                    if (edgeBand > 0.02) {
+                        const realTex = 0.14 + 0.82 * Math.min(1, lum * 1.5);
+                        const rW = Math.min(0.32, rimPower * rimYGate * edgeBand * realTex * 0.36);
+                        or = 1 - (1 - (or > 1 ? 1 : or)) * (1 - rmRn * rW);
+                        og = 1 - (1 - (og > 1 ? 1 : og)) * (1 - rmGn * rW);
+                        ob = 1 - (1 - (ob > 1 ? 1 : ob)) * (1 - rmBn * rW);
+                    }
+                }
+
+                d[idx] = or <= 0 ? 0 : or >= 1 ? 255 : (or * 255 + 0.5) | 0;
+                d[idx + 1] = og <= 0 ? 0 : og >= 1 ? 255 : (og * 255 + 0.5) | 0;
+                d[idx + 2] = ob <= 0 ? 0 : ob >= 1 ? 255 : (ob * 255 + 0.5) | 0;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+
+        // 4. HIGHLIGHT-ONLY SPECULAR BLOOM & WARM NEON HALATION (halus & terkendali!)
+        if (bloom > 0.03 || halation > 0.03) {
+            const bSc = Math.min(0.28, 220 / maxSide);
+            const bw = Math.max(24, Math.round(w * bSc));
+            const bh = Math.max(24, Math.round(h * bSc));
+            const bCv = this._getScratch('flBloom', bw, bh);
+            const bCtx = bCv.getContext('2d', { willReadFrequently: true });
+            bCtx.clearRect(0, 0, bw, bh);
+            bCtx.drawImage(targetCanvas, 0, 0, bw, bh);
+            const bImg = bCtx.getImageData(0, 0, bw, bh);
+            const bd = bImg.data;
+            const invRange = 1 / Math.max(0.08, 1 - bloomThresh);
+
+            let hCv = null, hCtx = null, hImg = null, hd = null;
+            if (halation > 0.04) {
+                hCv = this._getScratch('flHalation', bw, bh);
+                hCtx = hCv.getContext('2d', { willReadFrequently: true });
+                hImg = hCtx.createImageData(bw, bh);
+                hd = hImg.data;
+            }
+
+            for (let i = 0; i < bd.length; i += 4) {
+                const r = bd[i] * inv255, g = bd[i + 1] * inv255, b = bd[i + 2] * inv255;
+                const l = 0.299 * r + 0.587 * g + 0.114 * b;
+                if (l > bloomThresh) {
+                    const t = Math.min(1, (l - bloomThresh) * invRange);
+                    const wt = t * t * t;
+                    bd[i] = Math.min(255, bd[i] * (0.80 + 0.20 * fnr) * wt);
+                    bd[i + 1] = Math.min(255, bd[i + 1] * (0.80 + 0.20 * fng) * wt);
+                    bd[i + 2] = Math.min(255, bd[i + 2] * (0.80 + 0.20 * fnb) * wt);
+                    bd[i + 3] = Math.round(255 * wt);
+                } else {
+                    bd[i] = bd[i + 1] = bd[i + 2] = bd[i + 3] = 0;
+                }
+                if (hd && l > 0.80) {
+                    const ht = Math.min(1, (l - 0.80) * 5.0);
+                    const hw = ht * ht;
+                    hd[i] = 255;
+                    hd[i + 1] = Math.round(92 + 48 * r);
+                    hd[i + 2] = 45;
+                    hd[i + 3] = Math.round(165 * hw);
+                }
+            }
+            bCtx.putImageData(bImg, 0, 0);
+
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            if (bloom > 0.03) {
+                const radPx = Math.max(3.5, maxSide * 0.011);
+                ctx.filter = `blur(${radPx.toFixed(1)}px)`;
+                ctx.globalAlpha = Math.min(0.34, bloom * 0.36);
+                ctx.drawImage(bCv, 0, 0, w, h);
+                ctx.filter = `blur(${(radPx * 2.2).toFixed(1)}px)`;
+                ctx.globalAlpha = Math.min(0.18, bloom * 0.16);
+                ctx.drawImage(bCv, 0, 0, w, h);
+            }
+            if (hCtx && hImg && halation > 0.04) {
+                hCtx.putImageData(hImg, 0, 0);
+                const hRad = Math.max(5, maxSide * 0.018);
+                ctx.filter = `blur(${hRad.toFixed(1)}px)`;
+                ctx.globalAlpha = Math.min(0.36, halation * 0.38);
+                ctx.drawImage(hCv, 0, 0, w, h);
+            }
+            ctx.restore();
+        }
+    },
+
+    // =========================================================================
+    // AI RELIGHT PRO — GENERATIVE CLOUD RELIGHTING (Google Gemini Image & Fal.ai IC-Light v2)
+    // =========================================================================
+    _buildGenerativeRelightPrompt(relightCfg) {
+        const preset = (relightCfg && relightCfg.preset) || 'flash_portrait';
+        const l1 = (relightCfg && relightCfg.lights && relightCfg.lights[0]) || { x: 0.48, y: 0.44, color: '#f0f6ff' };
+        const l2 = (relightCfg && relightCfg.lights && relightCfg.lights[1]) || null;
+
+        let dirText = 'from the front directly on-camera';
+        let initialLatent = 'None';
+        if (l1.x < 0.34) { dirText = 'from the left side'; initialLatent = 'Left'; }
+        else if (l1.x > 0.66) { dirText = 'from the right side'; initialLatent = 'Right'; }
+        else if (l1.y < 0.28) { dirText = 'from above'; initialLatent = 'Top'; }
+        else if (l1.y > 0.74) { dirText = 'from below'; initialLatent = 'Bottom'; }
+
+        const shadowNote = (relightCfg && (relightCfg.shadow ?? 74) > 25)
+            ? 'Cast physically accurate shadows of every subject strictly onto real nearby surfaces: soft drop shadows on a close wall behind them if indoors, OR realistic grounded perspective shadows anchored at their feet/shoes across the grass/ground plane if outdoors (NEVER cast floating shadows onto open sky or distant trees).'
+            : 'Keep shadows very soft and subtle, strictly respecting physical surfaces.';
+
+        let stylePrompt = '';
+        if (preset === 'flash_portrait' || preset === 'ccd_night') {
+            stylePrompt = `Apply crisp, realistic direct on-camera flash photography lighting ${dirText}. Illuminate the foreground subject (face, skin, clothing, and any held objects) cleanly and evenly with neutral cool-white camera flash light, producing clean luminous porcelain skin, deep glossy dark hair with crisp specular highlights, natural vivid colors on flowers/lips, and rich micro-contrast. Dramatically darken the background behind the subject by about 1.5 stops like real night/indoor direct flash falloff. ${shadowNote}`;
+        } else if (preset === 'studio_spot') {
+            stylePrompt = `Apply soft professional studio key spotlight lighting ${dirText}. Illuminate the foreground subject with flattering clean neutral-warm studio softbox light, gently sculpting 3D facial contours while dimming the background into a moody dark studio backdrop. ${shadowNote}`;
+        } else if (preset === 'soft_glow') {
+            stylePrompt = `Apply luminous diffused beauty front-flash / ring-light illumination ${dirText}. Brighten and clean skin tones naturally with soft dreamy highlights and gentle shadow falloff on the background.`;
+        } else if (preset === 'golden') {
+            stylePrompt = `Relight with warm golden hour sunset sunlight coming ${dirText} (warm amber-gold color ${l1.color}), adding warm directional highlights and subtle golden rim light along hair and shoulders while keeping the shadow side and background deeper and moody. ${shadowNote}`;
+        } else if (preset === 'rembrandt') {
+            stylePrompt = `Relight with dramatic classic Rembrandt studio portrait lighting coming ${dirText} (warm key light ${l1.color}), carving sculptural 3D light-and-shadow contrast across the face and deeply darkening the background. ${shadowNote}`;
+        } else if (preset === 'cyber' || (l2 && l2.on)) {
+            const c2 = l2 && l2.on ? l2.color : '#22d3ee';
+            stylePrompt = `Relight with cinematic dual-gel studio lighting: primary key light (${l1.color}) coming ${dirText} and secondary accent/rim light (${c2}) from the opposite side, with a deeply darkened atmospheric night background and realistic colored reflections on skin, hair, and clothing. ${shadowNote}`;
+        } else {
+            stylePrompt = `Relight this photograph with realistic studio light (${l1.color}) coming ${dirText}, cleanly illuminating the foreground subject with natural 3D shading while darkening the background naturally. ${shadowNote}`;
+        }
+
+        const strictGuard = 'CRITICAL: Preserve the exact person identity, face structure, expression, hair shape, clothing, held objects, background objects, framing, and composition 100% faithfully — ONLY change the lighting, exposure, color temperature of light, and cast shadows. Photorealistic high-resolution photograph, zero distortion.';
+        return {
+            geminiPrompt: `${stylePrompt} ${strictGuard}`,
+            falPrompt: `${stylePrompt} Photorealistic, detailed skin texture, natural camera lighting, sharp focus.`,
+            initialLatent
+        };
+    },
+
+    async runGenerativeRelight(sourceCanvas, relightCfg, apiCfg, onStatus = null) {
+        if (!apiCfg || !apiCfg.apiKey || !String(apiCfg.apiKey).trim()) {
+            throw new Error('API Key belum diisi. Buka pengaturan ⚙ AI KEY terlebih dahulu.');
+        }
+        const provider = apiCfg.provider === 'fal' ? 'fal' : 'gemini';
+        const apiKey = String(apiCfg.apiKey).trim();
+        const { geminiPrompt, falPrompt, initialLatent } = this._buildGenerativeRelightPrompt(relightCfg);
+
+        // Siapkan input JPEG ringkas (maks 1280px agar unggah cepat & kualitas tetap tajam)
+        const maxIn = 1280;
+        const sc = Math.min(1, maxIn / Math.max(sourceCanvas.width, sourceCanvas.height));
+        const iw = Math.max(32, Math.round(sourceCanvas.width * sc));
+        const ih = Math.max(32, Math.round(sourceCanvas.height * sc));
+        const inCv = document.createElement('canvas');
+        inCv.width = iw;
+        inCv.height = ih;
+        inCv.getContext('2d').drawImage(sourceCanvas, 0, 0, iw, ih);
+        const dataUrl = inCv.toDataURL('image/jpeg', 0.92);
+        const base64Data = dataUrl.split(',')[1];
+
+        const loadImgToCanvas = (srcUrl) => new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const out = document.createElement('canvas');
+                out.width = sourceCanvas.width;
+                out.height = sourceCanvas.height;
+                const oCtx = out.getContext('2d');
+                oCtx.imageSmoothingEnabled = true;
+                oCtx.imageSmoothingQuality = 'high';
+                // Cover-fit presisi jika rasio sedikit berbeda 1-2px
+                const srcAr = img.width / img.height;
+                const dstAr = out.width / out.height;
+                let sx = 0, sy = 0, sw = img.width, sh = img.height;
+                if (Math.abs(srcAr - dstAr) > 0.01) {
+                    if (srcAr > dstAr) { sw = img.height * dstAr; sx = (img.width - sw) / 2; }
+                    else { sh = img.width / dstAr; sy = (img.height - sh) / 2; }
+                }
+                oCtx.drawImage(img, sx, sy, sw, sh, 0, 0, out.width, out.height);
+                resolve(out);
+            };
+            img.onerror = () => reject(new Error('Gagal memuat gambar hasil AI ke kanvas.'));
+            img.src = srcUrl;
+        });
+
+        if (provider === 'gemini') {
+            if (onStatus) onStatus('Mengirim ke Google Gemini Image AI...');
+            const endpoint = (apiCfg.proxyUrl && apiCfg.proxyUrl.trim())
+                ? apiCfg.proxyUrl.trim()
+                : `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+                            { text: geminiPrompt }
+                        ]
+                    }],
+                    generationConfig: {
+                        responseModalities: ['TEXT', 'IMAGE']
+                    }
+                })
+            });
+
+            if (!resp.ok) {
+                let detail = '';
+                try {
+                    const errJson = await resp.json();
+                    detail = errJson.error?.message || JSON.stringify(errJson);
+                } catch (_) {
+                    detail = await resp.text();
+                }
+                if (resp.status === 400 || resp.status === 401 || resp.status === 403) {
+                    throw new Error(`Gemini API menolak kunci/permintaan (${resp.status}): ${detail.slice(0, 140)}`);
+                }
+                if (resp.status === 429) {
+                    throw new Error('Kuota gratis Gemini API sedang penuh (429). Coba lagi sebentar atau periksa billing Google AI Studio.');
+                }
+                throw new Error(`Gemini API error (${resp.status}): ${detail.slice(0, 140)}`);
+            }
+
+            if (onStatus) onStatus('Merender hasil Relight AI...');
+            const json = await resp.json();
+            const parts = json.candidates?.[0]?.content?.parts || [];
+            const imgPart = parts.find((pt) => pt.inlineData && pt.inlineData.data);
+            if (!imgPart) {
+                const txt = parts.find((pt) => pt.text)?.text || 'Model tidak mengembalikan gambar.';
+                throw new Error(`Gemini tidak menghasilkan gambar: ${txt.slice(0, 120)}`);
+            }
+            const mime = imgPart.inlineData.mimeType || 'image/png';
+            return await loadImgToCanvas(`data:${mime};base64,${imgPart.inlineData.data}`);
+        } else {
+            if (onStatus) onStatus('Mengirim ke Fal.ai IC-Light v2...');
+            const endpoint = (apiCfg.proxyUrl && apiCfg.proxyUrl.trim())
+                ? apiCfg.proxyUrl.trim()
+                : 'https://fal.run/fal-ai/iclight-v2';
+
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Key ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    prompt: falPrompt,
+                    image_url: dataUrl,
+                    initial_latent: initialLatent,
+                    background_threshold: 0.67,
+                    num_inference_steps: 28,
+                    guidance_scale: 5,
+                    num_images: 1,
+                    enable_safety_checker: true,
+                    output_format: 'jpeg'
+                })
+            });
+
+            if (!resp.ok) {
+                let detail = '';
+                try { detail = (await resp.json()).detail || ''; } catch (_) { detail = await resp.text(); }
+                if (resp.status === 401 || resp.status === 403) {
+                    throw new Error(`Fal.ai API Key tidak valid (${resp.status}). Periksa kembali kunci Anda di fal.ai/dashboard/keys.`);
+                }
+                throw new Error(`Fal.ai IC-Light error (${resp.status}): ${String(detail).slice(0, 140)}`);
+            }
+
+            if (onStatus) onStatus('Mengunduh hasil IC-Light v2...');
+            const json = await resp.json();
+            const outUrl = json.images?.[0]?.url || json.image?.url;
+            if (!outUrl) throw new Error('Fal.ai IC-Light tidak mengembalikan URL gambar.');
+            return await loadImgToCanvas(outUrl);
         }
     }
 };

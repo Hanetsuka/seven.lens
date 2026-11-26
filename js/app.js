@@ -92,6 +92,26 @@
         return !!(st && st.lensBlur && (st.lensBlur.amount || 0) > 0);
     }
 
+    function createDefaultRelight() {
+        return {
+            enabled: false,
+            preset: 'off',
+            ambient: -50,
+            shadow: 60,
+            shading: 44,
+            lights: [
+                { on: true, x: 0.48, y: 0.38, color: '#f2f7ff', intensity: 74, size: 80, depth: 86, rim: 0 },
+                { on: false, x: 0.82, y: 0.34, color: '#22d3ee', intensity: 58, size: 54, depth: 55, rim: 52 }
+            ]
+        };
+    }
+
+    function relightActive(st) {
+        if (!st || !st.relight || !st.relight.enabled) return false;
+        const hasLight = (st.relight.lights || []).some((l) => l && l.on && (l.intensity || 0) > 0);
+        return hasLight || (st.relight.ambient || 0) !== 0;
+    }
+
     function createDefaultGlitchState() {
         return {
             mode: 'none',
@@ -125,6 +145,14 @@
             st.hsl[c.key] = { ...hslDef[c.key], ...(hslIn[c.key] || {}) };
         });
         st.lensBlur = { ...createDefaultLensBlur(), ...(st.lensBlur || {}) };
+        const rlDef = createDefaultRelight();
+        const rlIn = st.relight || {};
+        const rlLights = Array.isArray(rlIn.lights) ? rlIn.lights : [];
+        st.relight = {
+            ...rlDef,
+            ...rlIn,
+            lights: rlDef.lights.map((dl, idx) => ({ ...dl, ...(rlLights[idx] || {}) }))
+        };
         const bcDef = createDefaultBlurCenters();
         const bc = st.blurCenters || {};
         st.blurCenters = {
@@ -182,6 +210,7 @@
             },
             hsl: createDefaultHSL(),
             lensBlur: createDefaultLensBlur(),
+            relight: createDefaultRelight(),
             blurCenters: createDefaultBlurCenters(),
             glitch: createDefaultGlitchState(),
             curves: createIdentityCurves(),
@@ -259,6 +288,7 @@
         { key: 'contrast', name: 'Contrast', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor"/>` },
         { key: 'highlights', name: 'Highlights', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M3 12a9 9 0 0 1 18 0Z" fill="currentColor"/>` },
         { key: 'shadows', name: 'Shadows', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="9"/><path d="M3 12a9 9 0 0 0 18 0Z" fill="currentColor"/>` },
+        { key: 'context_relight', name: 'Relight 3D', cat: 'light', isContext: 'relight', icon: `<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/><path d="M12 6v3M9 9l1.5 1.5M15 9l-1.5 1.5"/>` },
         { key: 'context_curves', name: 'Tone Curve', cat: 'light', isContext: 'curves', icon: `<rect x="3" y="3" width="18" height="18"/><path d="M3 21C9 21 9 3 21 3"/>` },
         { key: 'brightness', name: 'Brightness', cat: 'light', min: -100, max: 100, def: 0, icon: `<circle cx="12" cy="12" r="6"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>` },
         { key: 'fade', name: 'Fade', cat: 'light', min: 0, max: 100, def: 0, icon: `<rect x="3" y="5" width="18" height="14"/><line x1="3" y1="14" x2="21" y2="14"/>` },
@@ -487,7 +517,7 @@
     let lookClipboard = null, myLooks = [], toastTimer = 0, libSelectMode = false;
     const LOOK_OPT = { masks: false, texts: false };
     const libSelected = new Set();
-    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'hsl', 'lensBlur', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt', 'blurCenters', 'glitch'];
+    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'hsl', 'lensBlur', 'relight', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt', 'blurCenters', 'glitch'];
 
     function flashToast(msg, ms = 1900) {
         let t = document.getElementById('saveToast');
@@ -1227,6 +1257,7 @@
         lensBlurPreviewFocus = false;
         closeMaskUI();
         closeFocalUI();
+        closeRelightUI();
         resetCanvasZoom();
         selectedMaskId = null;
         maskCanvases.clear();
@@ -1302,6 +1333,7 @@
             !wheelsActive(state) &&
             !hslActive(state) &&
             !lensBlurActive(state) &&
+            !relightActive(state) &&
             !isGlitchActive(state) &&
             (!state.dustId || state.dustId === 'none_dust') &&
             !state.flipH && !state.flipV && !currentPixelEdited &&
@@ -1319,7 +1351,7 @@
     // Render dijadwalkan per frame (rAF) pada resolusi preview adaptif, lalu diulang tajam setelah jari dilepas/idle.
     let rcRaf = 0, rcIdle = 0, isSliderDragging = false;
     function isEditorInteracting() {
-        return isSliderDragging || !!focalDrag || !!maskDrag || curveDragIdx >= 0;
+        return isSliderDragging || !!focalDrag || !!relightDrag || !!maskDrag || curveDragIdx >= 0;
     }
     function scheduleGoodRefine(delay = 180) {
         clearTimeout(rcIdle);
@@ -1385,7 +1417,7 @@
         // 1-4. Resolusi preview adaptif (jauh lebih ringan di HP saat beberapa alat berat aktif sekaligus!)
         const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || Math.min(window.innerWidth || 1024, window.innerHeight || 768) < 700;
         const hasHeavy = !!(
-            lensBlurActive(state) || showLensPreview ||
+            lensBlurActive(state) || showLensPreview || relightActive(state) ||
             detSharp || detClarity || detTexture || detDenoise ||
             isGlitchActive(state) ||
             bj.blur || bj.motionBlur || bj.zoomBlur || bj.spinBlur || bj.tiltShift || bj.edgeBlur || bj.bokeh || bj.dreamGlow || bj.strobe ||
@@ -1616,7 +1648,19 @@
             });
         }
 
-        // Smart Portrait Lens Blur (AI Subject-Aware DSLR Bokeh — dijalankan setelah Detail agar bokeh latar tetap halus)
+        // 3D Relight Studio (Neural AI Subject Mask + Physical Portrait Flash + Directional Rim Light)
+        if (relightActive(state) && window.AITools && window.AITools.applyRelight) {
+            const rlMask = getLensBlurSubjectMask();
+            if (rlMask || !lensBlurWarming) {
+                window.AITools.applyRelight(gc, rlMask, {
+                    ...(state.relight || createDefaultRelight()),
+                    fast: fast === true,
+                    normalKey: getLensBlurCacheKey()
+                });
+            }
+        }
+
+        // Smart Portrait Lens Blur (AI Subject-Aware DSLR Bokeh — dijalankan setelah Detail & Relight agar bokeh latar tetap halus)
         if ((lensBlurActive(state) || showLensPreview) && window.AITools && window.AITools.applySmartLensBlur) {
             const subjMask = getLensBlurSubjectMask();
             if (subjMask) {
@@ -1643,6 +1687,19 @@
         // Multi-mode Non-Destructive Glitch Studio
         if (isGlitchActive(state) && window.AITools && window.AITools.applyGlitch) {
             window.AITools.applyGlitch(gc, state.glitch);
+        }
+
+        // Optical Direct-Flash Preset Pass (AI Subject-Aware Flash + Rim Light + Neon Preserve + Specular Bloom)
+        if (pParams.flash && pStrength > 0) {
+            if (window.AITools && window.AITools.applyOpticalFlashPreset) {
+                const flMask = getLensBlurSubjectMask();
+                window.AITools.applyOpticalFlashPreset(gc, flMask, pParams.flash, pStrength, {
+                    fast: fast === true,
+                    normalKey: getLensBlurCacheKey()
+                });
+            } else {
+                renderPresetFlashOverlay(gx, gw, gh, pParams.flash, pStrength);
+            }
         }
 
         const presetVig = pParams.vignette ? pParams.vignette * pStrength : 0;
@@ -2208,6 +2265,66 @@
     }
 
     /**
+     * Optical Direct-Flash Renderer (GPU-only radial passes, <1ms, zero readback):
+     * 1) Inverse-square background falloff (multiply)
+     * 2) Direct-flash frontal key illumination (soft-light)
+     * 3) Xenon specular highlight burst & soft bloom (screen)
+     */
+    function renderPresetFlashOverlay(targetCtx, w, h, flashCfg, strength = 1) {
+        if (!flashCfg || strength <= 0) return;
+        const str = Math.min(1, Math.max(0, strength));
+        const power = Math.min(1, Math.max(0, flashCfg.power ?? 0.65)) * str;
+        const falloff = Math.min(1, Math.max(0, flashCfg.falloff ?? 0.60)) * str;
+        const bloom = Math.min(1, Math.max(0, flashCfg.bloom ?? 0.32)) * str;
+        const rad = Math.min(0.95, Math.max(0.28, flashCfg.radius ?? 0.56));
+        const fx = (flashCfg.cx ?? 0.50) * w;
+        const fy = (flashCfg.cy ?? 0.44) * h;
+        const maxS = Math.max(w, h);
+        const coneR = maxS * rad;
+        const color = flashCfg.color || '#eef6ff';
+
+        targetCtx.save();
+
+        // 1. Inverse-square shadow drop-off around edges & background
+        if (falloff > 0.01) {
+            const innerR = coneR * 0.34;
+            const outerR = Math.max(innerR + 4, maxS * (0.64 + (1 - rad) * 0.25));
+            const fg = targetCtx.createRadialGradient(fx, fy, innerR, fx, fy, outerR);
+            fg.addColorStop(0, 'rgba(10, 12, 18, 0)');
+            fg.addColorStop(0.55, `rgba(10, 12, 18, ${(falloff * 0.28).toFixed(3)})`);
+            fg.addColorStop(1, `rgba(8, 10, 16, ${(falloff * 0.86).toFixed(3)})`);
+            targetCtx.globalCompositeOperation = 'multiply';
+            targetCtx.fillStyle = fg;
+            targetCtx.fillRect(0, 0, w, h);
+        }
+
+        // 2. Direct-flash frontal key pop (preserves rich contrast & skin tones)
+        if (power > 0.01) {
+            const kg = targetCtx.createRadialGradient(fx, fy, 0, fx, fy, coneR * 1.15);
+            kg.addColorStop(0, hexToRgbaStr(color, Math.min(0.92, power * 0.90)));
+            kg.addColorStop(0.48, hexToRgbaStr(color, Math.min(0.55, power * 0.38)));
+            kg.addColorStop(1, hexToRgbaStr(color, 0));
+            targetCtx.globalCompositeOperation = 'soft-light';
+            targetCtx.fillStyle = kg;
+            targetCtx.fillRect(0, 0, w, h);
+        }
+
+        // 3. Xenon specular burst + diffused highlight bloom
+        if (power > 0.01 || bloom > 0.01) {
+            const sg = targetCtx.createRadialGradient(fx, fy, 0, fx, fy, coneR * 0.92);
+            sg.addColorStop(0, hexToRgbaStr(color, Math.min(0.50, power * 0.28 + bloom * 0.24)));
+            sg.addColorStop(0.32, hexToRgbaStr(color, Math.min(0.28, power * 0.14 + bloom * 0.12)));
+            sg.addColorStop(0.68, hexToRgbaStr(color, Math.min(0.10, bloom * 0.06)));
+            sg.addColorStop(1, hexToRgbaStr(color, 0));
+            targetCtx.globalCompositeOperation = 'screen';
+            targetCtx.fillStyle = sg;
+            targetCtx.fillRect(0, 0, w, h);
+        }
+
+        targetCtx.restore();
+    }
+
+    /**
      * Merender Efek Light Leaks & Film Burns (03 EFFECTS) menggunakan Screen Blending
      */
     function renderAnalogEffectsOverlay(targetCtx, w, h, effectId, strength = 0.75) {
@@ -2465,11 +2582,12 @@
         const masterSliderBlock = document.getElementById('masterSliderBlock');
         const gestureHint = document.getElementById('gestureHintText');
 
-        // Matikan crop / brush / mask / focal overlay jika pindah tab utama
+        // Matikan crop / brush / mask / focal / relight overlay jika pindah tab utama
         if (tabName !== 'Tools') {
             closeCropOverlay();
             closeMaskUI();
             closeFocalUI();
+            closeRelightUI();
             if (lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
             resetCanvasZoom();
             wbPickActive = false;
@@ -2481,7 +2599,7 @@
 
         if (tabName === 'Presets') {
             masterSliderBlock.classList.remove('hidden');
-            gestureHint.textContent = 'HOLD PHOTO TO COMPARE · HOLD A PRESET TO FAVORITE';
+            gestureHint.textContent = 'TAHAN FOTO: BANDINGKAN · TAHAN PRESET: ★';
             renderPresetsStrip();
             syncMasterSliderForPreset();
         } else if (tabName === 'Tools') {
@@ -2520,6 +2638,9 @@
                 dummyState.presetStrength = 100;
                 applyColorPipelineToImageData(idata, 76, 76, dummyState);
                 cCtx.putImageData(idata, 0, 0);
+                if (preset.params && preset.params.flash) {
+                    renderPresetFlashOverlay(cCtx, 76, 76, preset.params.flash, 1);
+                }
                 if (preset.params && preset.params.vignette) {
                     const vs = preset.params.vignette / 100;
                     const vg = cCtx.createRadialGradient(38, 38, 18, 38, 38, 54);
@@ -2724,6 +2845,7 @@
         if (activeToolKey === 'context_glitch') mod = isGlitchActive(state);
         else if (activeToolKey === 'context_hsl') mod = hslActive(state);
         else if (activeToolKey === 'context_lensblur') mod = lensBlurActive(state);
+        else if (activeToolKey === 'context_relight') mod = relightActive(state);
         else if (activeToolKey === 'context_mask') mod = !!(state.masks && state.masks.length);
         else if (activeToolKey === 'context_wheels') mod = wheelsActive(state);
         else if (activeToolKey === 'context_curves') mod = !isCurvesIdentity(state.curves);
@@ -2749,11 +2871,13 @@
                         ? hslActive(state)
                         : tool.isContext === 'lensblur'
                             ? lensBlurActive(state)
-                            : tool.isContext === 'mask'
-                                ? !!(state.masks && state.masks.length)
-                                : tool.isContext === 'glitch'
-                                    ? isGlitchActive(state)
-                                    : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
+                            : tool.isContext === 'relight'
+                                ? relightActive(state)
+                                : tool.isContext === 'mask'
+                                    ? !!(state.masks && state.masks.length)
+                                    : tool.isContext === 'glitch'
+                                        ? isGlitchActive(state)
+                                        : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
 
             const btn = document.createElement('button');
             btn.className = `tool-icon-card ${isSelected ? 'active' : ''}`;
@@ -2778,6 +2902,7 @@
         if (tool.isContext !== 'crop') closeCropOverlay();
         if (tool.isContext !== 'mask') closeMaskUI();
         if (!FOCAL_BLUR_TOOLS.has(tool.key)) closeFocalUI();
+        if (tool.isContext !== 'relight') closeRelightUI();
         if (tool.isContext !== 'lensblur' && lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
         if (tool.isContext !== 'mask' && tool.isContext !== 'brush') resetCanvasZoom();
         if (tool.isContext !== 'wb') wbPickActive = false;
@@ -2800,9 +2925,17 @@
             return;
         }
 
-        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush, Mask, Glitch, Wheels, Curves, WB)
+        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush, Mask, Glitch, Wheels, Curves, WB, Relight)
         if (tool.isContext) {
             activeToolKey = tool.key;
+            if (tool.isContext === 'relight') {
+                const rl = ensureRelightState();
+                if (!rl.enabled) {
+                    applyRelightPreset('flash_portrait');
+                    renderEditorCanvas();
+                    pushHistory('Relight FLASH PORTRAIT', true);
+                }
+            }
             renderToolsStrip();
             openToolContextBar(tool.isContext, tool.name);
             return;
@@ -2816,7 +2949,7 @@
         let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
 
         // Context panel tertentu tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
-        if (tool.isContext === 'curves' || tool.isContext === 'glitch' || tool.isContext === 'mask' || tool.isContext === 'hsl' || tool.isContext === 'lensblur') {
+        if (tool.isContext === 'curves' || tool.isContext === 'glitch' || tool.isContext === 'mask' || tool.isContext === 'hsl' || tool.isContext === 'lensblur' || tool.isContext === 'relight') {
             activeToolKey = tool.key;
             renderToolsStrip();
             openToolContextBar(tool.isContext, tool.name);
@@ -2829,6 +2962,7 @@
         activeToolKey = tool.key;
         document.getElementById('curvesEditor').classList.add('hidden');
         document.getElementById('wheelsEditor').classList.add('hidden');
+        closeRelightUI();
 
         if (FOCAL_BLUR_TOOLS.has(tool.key)) {
             focalSubParam = 'amount';
@@ -3012,6 +3146,9 @@
             return;
         } else if (contextType === 'lensblur') {
             renderLensBlurContextBar(bar);
+            return;
+        } else if (contextType === 'relight') {
+            renderRelightContextBar(bar);
             return;
         } else if (contextType === 'mask') {
             renderMaskStudio(bar);
@@ -3700,6 +3837,7 @@
         document.getElementById('btnBackToLibrary').addEventListener('click', () => {
             closeMaskUI();
             closeFocalUI();
+            closeRelightUI();
             resetCanvasZoom();
             saveCurrentPhotoBackToLibrary();
             flashToast('✓ Tersimpan di Library');
@@ -3764,7 +3902,8 @@
                     : masterSliderMode === 'mask' ? formatMaskVal(maskAttr, val)
                         : masterSliderMode === 'hsl' ? `${val > 0 ? '+' : ''}${val}`
                             : masterSliderMode === 'lensblur' && lensBlurAttr === 'protect' ? `${val > 0 ? '+' : ''}${val}`
-                                : val;
+                                : masterSliderMode === 'relight' && (relightAttr === 'depth' || relightAttr === 'ambient') ? formatSignedVal(val)
+                                    : val;
 
             if (masterSliderMode === 'preset') {
                 state.presetStrength = val;
@@ -3791,6 +3930,10 @@
                 state.lensBlur[lensBlurAttr] = val;
                 updateLensBlurChipLabel(lensBlurAttr, val);
                 refreshToolDot();
+            } else if (masterSliderMode === 'relight') {
+                applyRelightSliderValue(val);
+                refreshToolDot();
+                drawRelightOverlay();
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
@@ -3817,7 +3960,7 @@
 
         masterSlider.addEventListener('change', () => {
             isSliderDragging = false;
-            if (masterSliderMode === 'tool' || masterSliderMode === 'focal' || masterSliderMode === 'glitch' || masterSliderMode === 'hsl' || masterSliderMode === 'lensblur') renderToolsStrip();
+            if (masterSliderMode === 'tool' || masterSliderMode === 'focal' || masterSliderMode === 'glitch' || masterSliderMode === 'hsl' || masterSliderMode === 'lensblur' || masterSliderMode === 'relight') renderToolsStrip();
             if (masterSliderMode === 'mask') refreshMaskBar();
             scheduleGoodRefine(120);
             pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`, true);
@@ -3858,6 +4001,13 @@
                 masterSlider.value = defVal;
                 updateLensBlurChipLabel(lensBlurAttr, defVal);
                 renderToolsStrip();
+            } else if (masterSliderMode === 'relight') {
+                const ra = RELIGHT_ATTRS.find((a) => a.key === relightAttr);
+                const defVal = ra ? ra.def : 0;
+                applyRelightSliderValue(defVal);
+                masterSlider.value = defVal;
+                drawRelightOverlay();
+                renderToolsStrip();
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = 100;
                 masterSlider.value = 100;
@@ -3875,7 +4025,11 @@
                 if (activeEffectCat === 'frames') state.frameStrength = 60; else state.effectStrength = 75;
                 masterSlider.value = activeEffectCat === 'frames' ? 60 : 75;
             }
-            document.getElementById('activeParamValue').textContent = masterSliderMode === 'glitch' && glitchAttr === 'angle' ? `${masterSlider.value}°` : masterSlider.value;
+            const sv = parseInt(masterSlider.value, 10);
+            document.getElementById('activeParamValue').textContent =
+                masterSliderMode === 'glitch' && glitchAttr === 'angle' ? `${sv}°`
+                    : masterSliderMode === 'relight' && (relightAttr === 'depth' || relightAttr === 'ambient') ? formatSignedVal(sv)
+                        : sv;
             renderEditorCanvas();
             pushHistory(`Reset ${document.getElementById('activeParamTitle').textContent}`, true);
         });
@@ -4049,6 +4203,7 @@
             lensBlurPreviewFocus = false;
             closeMaskUI();
             closeFocalUI();
+            closeRelightUI();
             resetCanvasZoom();
             state = createDefaultEditState();
             switchEditorMainTab(activeEditorMainTab);
@@ -4056,8 +4211,9 @@
             pushHistory('Reset All');
         });
 
-        // Export Modal
+        // Export & AI Relight Pro Modals
         bindExportModalEvents();
+        bindAiProModalEvents();
     }
 
     function getCanvasPt(e) {
@@ -5267,47 +5423,97 @@
         ].join('|');
     }
 
-    function getLensBlurSubjectMask(forceRedetect = false) {
+    function getLensBlurSubjectMask(forceRedetect = false, allowSyncFallback = false) {
         if (!window.AITools || !window.AITools.detectSubjectMask || !basePhotoCanvas.width) return null;
         const key = getLensBlurCacheKey();
         if (!forceRedetect && lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas) {
             return lensBlurSubjectCache.canvas;
         }
+        const fp = (state.lensBlur && state.lensBlur.focusPt) || null;
+        // Gunakan Neural AI (RMBG-1.4) secara otomatis & async untuk deteksi subjek tanpa fokus manual
+        if (!fp && !allowSyncFallback && window.AITools.detectSubjectMaskAI) {
+            if (!lensBlurWarming) warmLensBlurSubjectMask(forceRedetect);
+            return null;
+        }
         const src = renderAlignedSourceForAI();
         const sc = Math.min(1, 768 / Math.max(src.width, src.height));
         const mw = Math.max(16, Math.round(src.width * sc));
         const mh = Math.max(16, Math.round(src.height * sc));
-        const fp = (state.lensBlur && state.lensBlur.focusPt) || null;
         const maskCv = window.AITools.detectSubjectMask(src, mw, mh, fp);
         lensBlurSubjectCache = { key, canvas: maskCv };
         return maskCv;
     }
 
-    function warmLensBlurSubjectMask(force = false) {
-        if (lensBlurWarming || !window.AITools || !window.AITools.detectSubjectMask) return;
+    async function warmLensBlurSubjectMask(force = false) {
+        if (lensBlurWarming || !window.AITools || !window.AITools.detectSubjectMask || !basePhotoCanvas.width) return;
         const key = getLensBlurCacheKey();
-        if (!force && lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas) return;
+        const fp = (state.lensBlur && state.lensBlur.focusPt) || null;
+        if (!force && lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas && (lensBlurSubjectCache.canvas._isNeural || fp)) return;
+
         lensBlurWarming = true;
         const loading = document.getElementById('loadingToast');
         const loadingTxt = document.getElementById('loadingToastText');
-        if (loading && loadingTxt) {
-            loadingTxt.textContent = 'Mendeteksi subjek untuk Lens Blur...';
-            loading.classList.remove('hidden');
-        }
-        requestAnimationFrame(() => setTimeout(() => {
-            try {
-                getLensBlurSubjectMask(force);
-                if (activeToolKey === 'context_lensblur') {
-                    if (lensBlurActive(state) || lensBlurPreviewFocus) renderEditorCanvas();
-                    flashToast(force ? '↻ Deteksi subjek Lens Blur diperbarui' : '✓ Subjek terdeteksi — geser BLUR untuk bokeh DSLR', 2400);
-                }
-            } catch (err) {
-                console.warn('Lens blur subject detection error', err);
-            } finally {
-                lensBlurWarming = false;
-                if (loading) loading.classList.add('hidden');
+        const setMsg = (msg) => {
+            if (loading && loadingTxt) {
+                loadingTxt.textContent = msg;
+                loading.classList.remove('hidden');
             }
-        }, 16));
+        };
+        const hasFlashPreset = () => {
+            if (!state || state.activeCubeLutId || !state.presetId || state.presetId === 'original') return false;
+            const pr = window.FILM_PRESETS && window.FILM_PRESETS.find((p) => p.id === state.presetId);
+            return !!(pr && pr.params && pr.params.flash);
+        };
+        setMsg(activeToolKey === 'context_relight'
+            ? 'Mendeteksi subjek AI otomatis (RMBG-1.4)...'
+            : hasFlashPreset()
+                ? 'Mendeteksi subjek AI untuk Filter Flash...'
+                : 'Mendeteksi subjek AI untuk Lens Blur...');
+
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 16)));
+
+        let usedNeural = false;
+        try {
+            const src = renderAlignedSourceForAI();
+            const sc = Math.min(1, 1024 / Math.max(src.width, src.height));
+            const mw = Math.max(16, Math.round(src.width * sc));
+            const mh = Math.max(16, Math.round(src.height * sc));
+            let maskCv = null;
+
+            if (!fp && window.AITools.detectSubjectMaskAI) {
+                try {
+                    maskCv = await window.AITools.detectSubjectMaskAI(src, mw, mh, (msg) => setMsg(msg));
+                    usedNeural = !!(maskCv && maskCv._isNeural);
+                } catch (aiErr) {
+                    console.warn('Neural RMBG-1.4 fallback to offline heuristic:', aiErr);
+                }
+            }
+            if (!maskCv) {
+                maskCv = window.AITools.detectSubjectMask(src, Math.min(768, mw), Math.min(768, mh), fp);
+            }
+
+            // Hanya simpan jika foto & parameter alignment belum berubah selama proses AI berjalan
+            if (getLensBlurCacheKey() === key) {
+                lensBlurSubjectCache = { key, canvas: maskCv };
+                if (activeToolKey === 'context_lensblur') {
+                    if (lensBlurActive(state) || lensBlurPreviewFocus) renderEditorCanvasSync();
+                    flashToast(usedNeural ? '✓ Subjek AI (RMBG-1.4) terdeteksi — geser BLUR' : '✓ Subjek terdeteksi (Mode Offline)', 2400);
+                } else if (activeToolKey === 'context_relight') {
+                    if (relightActive(state)) renderEditorCanvasSync();
+                    flashToast(usedNeural ? '✓ Subjek AI terdeteksi otomatis (RMBG-1.4)' : '✓ Subjek terdeteksi (Mode Offline)', 2400);
+                } else if (relightActive(state) || lensBlurActive(state) || hasFlashPreset()) {
+                    renderEditorCanvasSync();
+                    if (hasFlashPreset()) {
+                        flashToast(usedNeural ? '✓ Filter Flash AI aktif (RMBG-1.4)' : '✓ Filter Flash aktif', 2000);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Subject detection error', err);
+        } finally {
+            lensBlurWarming = false;
+            if (loading) loading.classList.add('hidden');
+        }
     }
 
     function renderLensBlurContextBar(bar) {
@@ -5414,6 +5620,867 @@
         document.getElementById('activeParamTitle').textContent = meta.title;
         document.getElementById('activeParamValue').textContent = meta.key === 'protect' ? formatSignedVal(val) : val;
         document.getElementById('gestureHintText').textContent = 'TAP SUBJEK DI FOTO UNTUK KUNCI FOKUS · TAP 👁 CEK FOKUS UNTUK MELIHAT AREA TAJAM VS BLUR';
+    }
+
+    // ==========================================
+    // 3D RELIGHT STUDIO (Interactive Dual 3D Lights + Surface Normals + Directional Rim)
+    // ==========================================
+    const RELIGHT_PRESETS = [
+        { id: 'off', label: 'OFF', cfg: { enabled: false } },
+        {
+            id: 'flash_portrait', label: 'FLASH PORTRAIT',
+            cfg: {
+                enabled: true, ambient: -50, shadow: 60, shading: 44,
+                lights: [
+                    { on: true, x: 0.48, y: 0.38, color: '#f2f7ff', intensity: 74, size: 80, depth: 86, rim: 0 },
+                    { on: false, x: 0.82, y: 0.34, color: '#22d3ee', intensity: 58, size: 54, depth: 55, rim: 52 }
+                ]
+            }
+        },
+        {
+            id: 'studio_spot', label: 'STUDIO SPOT',
+            cfg: {
+                enabled: true, ambient: -52, shadow: 62, shading: 46,
+                lights: [
+                    { on: true, x: 0.45, y: 0.38, color: '#fff9f0', intensity: 74, size: 72, depth: 84, rim: 0 },
+                    { on: false, x: 0.82, y: 0.36, color: '#ff9f43', intensity: 52, size: 52, depth: 45, rim: 42 }
+                ]
+            }
+        },
+        {
+            id: 'soft_glow', label: 'SOFT GLOW',
+            cfg: {
+                enabled: true, ambient: -36, shadow: 40, shading: 38,
+                lights: [
+                    { on: true, x: 0.50, y: 0.42, color: '#fff7f2', intensity: 72, size: 86, depth: 78, rim: 0 },
+                    { on: false, x: 0.80, y: 0.32, color: '#ffd59c', intensity: 48, size: 58, depth: 45, rim: 22 }
+                ]
+            }
+        },
+        {
+            id: 'ccd_night', label: 'CCD NIGHT',
+            cfg: {
+                enabled: true, ambient: -68, shadow: 74, shading: 56,
+                lights: [
+                    { on: true, x: 0.50, y: 0.44, color: '#eef6ff', intensity: 82, size: 68, depth: 88, rim: 0 },
+                    { on: false, x: 0.20, y: 0.34, color: '#3b82f6', intensity: 48, size: 50, depth: 40, rim: 44 }
+                ]
+            }
+        },
+        {
+            id: 'golden', label: 'GOLDEN HOUR',
+            cfg: {
+                enabled: true, ambient: -34, shadow: 56, shading: 46,
+                lights: [
+                    { on: true, x: 0.80, y: 0.24, color: '#ffb35c', intensity: 74, size: 66, depth: 55, rim: 46 },
+                    { on: false, x: 0.18, y: 0.36, color: '#22d3ee', intensity: 52, size: 52, depth: 45, rim: 50 }
+                ]
+            }
+        },
+        {
+            id: 'rembrandt', label: 'REMBRANDT',
+            cfg: {
+                enabled: true, ambient: -54, shadow: 68, shading: 58,
+                lights: [
+                    { on: true, x: 0.22, y: 0.26, color: '#ffd49b', intensity: 74, size: 52, depth: 72, rim: 28 },
+                    { on: false, x: 0.82, y: 0.34, color: '#3b82f6', intensity: 46, size: 50, depth: 35, rim: 44 }
+                ]
+            }
+        },
+        {
+            id: 'cyber', label: 'CYBER DUO',
+            cfg: {
+                enabled: true, ambient: -50, shadow: 62, shading: 52,
+                lights: [
+                    { on: true, x: 0.16, y: 0.30, color: '#f43f8e', intensity: 72, size: 56, depth: 55, rim: 58 },
+                    { on: true, x: 0.84, y: 0.32, color: '#22d3ee', intensity: 70, size: 56, depth: 55, rim: 62 }
+                ]
+            }
+        }
+    ];
+
+    const RELIGHT_COLORS = ['#f0f6ff', '#ffffff', '#fff6e8', '#ffd59c', '#ff9f43', '#f43f8e', '#22d3ee', '#3b82f6'];
+
+    const RELIGHT_ATTRS = [
+        { key: 'intensity', label: 'CAHAYA', title: 'Intensitas Cahaya', min: 0, max: 100, def: 84, perLight: true },
+        { key: 'ambient', label: 'LATAR', title: 'Gelapkan Latar', min: -90, max: 30, def: -64, perLight: false },
+        { key: 'shadow', label: 'BAYANGAN', title: 'Bayangan Subjek', min: 0, max: 100, def: 78, perLight: false },
+        { key: 'size', label: 'UKURAN', title: 'Ukuran Sorotan', min: 15, max: 100, def: 78, perLight: true },
+        { key: 'depth', label: 'FOKUS SUBJEK', title: 'Fokus Subjek / Latar', min: -100, max: 100, def: 92, perLight: true },
+        { key: 'shading', label: 'KONTRAS', title: 'Kontras & Detail 3D', min: 0, max: 100, def: 66, perLight: false },
+        { key: 'rim', label: 'RIM LIGHT', title: 'Cahaya Tepi (Rim)', min: 0, max: 100, def: 0, perLight: true }
+    ];
+
+    let relightUiActive = false;
+    let relightBound = false;
+    let relightRO = null;
+    let relightDrag = null;
+    let relightLightIdx = 0;
+    let relightAttr = 'intensity';
+    let relightShowGuide = true;
+    let relightColorTrayOpen = false;
+
+    function ensureRelightState() {
+        if (!state.relight || !Array.isArray(state.relight.lights) || state.relight.lights.length < 2) {
+            state.relight = createDefaultRelight();
+        }
+        return state.relight;
+    }
+
+    function applyRelightPreset(presetId, customPos = null) {
+        const pr = RELIGHT_PRESETS.find((p) => p.id === presetId) || RELIGHT_PRESETS[0];
+        const rl = ensureRelightState();
+        if (pr.id === 'off') {
+            rl.enabled = false;
+            rl.preset = 'off';
+            return;
+        }
+        rl.enabled = true;
+        rl.preset = pr.id;
+        rl.ambient = pr.cfg.ambient;
+        rl.shadow = pr.cfg.shadow ?? 74;
+        rl.shading = pr.cfg.shading;
+        rl.lights = pr.cfg.lights.map((l) => ({ ...l }));
+        if (customPos && rl.lights[0]) {
+            rl.lights[0].x = customPos.x;
+            rl.lights[0].y = customPos.y;
+            rl.preset = 'custom';
+        }
+        if (!rl.lights[relightLightIdx] || !rl.lights[relightLightIdx].on) {
+            relightLightIdx = 0;
+        }
+    }
+
+    function openRelightUI() {
+        relightUiActive = true;
+        const sh = document.getElementById('editorShell');
+        if (sh) sh.classList.add('relight-focus-mode');
+        bindRelightEvents();
+        const ov = document.getElementById('relightOverlay');
+        if (ov) {
+            ov.classList.remove('hidden');
+            ov.style.pointerEvents = relightShowGuide ? 'auto' : 'none';
+        }
+        drawRelightOverlay();
+        if (!relightRO && window.ResizeObserver) {
+            relightRO = new ResizeObserver(() => { if (relightUiActive) drawRelightOverlay(); });
+            relightRO.observe(mainCanvas);
+        }
+    }
+
+    function closeRelightUI() {
+        relightUiActive = false;
+        relightDrag = null;
+        const sh = document.getElementById('editorShell');
+        if (sh) sh.classList.remove('relight-focus-mode');
+        const ov = document.getElementById('relightOverlay');
+        if (ov) ov.classList.add('hidden');
+    }
+
+    function exitRelightMode() {
+        closeRelightUI();
+        document.getElementById('toolContextExtras').classList.add('hidden');
+        selectToolKey('exposure');
+    }
+
+    function hexToRgbaStr(hex, alpha) {
+        const s = String(hex || '#ff9f43').replace('#', '');
+        const full = s.length === 3 ? s[0] + s[0] + s[1] + s[1] + s[2] + s[2] : s;
+        const v = parseInt(full, 16);
+        const r = Number.isFinite(v) ? (v >> 16) & 255 : 255;
+        const g = Number.isFinite(v) ? (v >> 8) & 255 : 159;
+        const b = Number.isFinite(v) ? v & 255 : 67;
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function hexTextContrast(hex) {
+        const s = String(hex || '#ff9f43').replace('#', '');
+        const full = s.length === 3 ? s[0] + s[0] + s[1] + s[1] + s[2] + s[2] : s;
+        const v = parseInt(full, 16);
+        const r = Number.isFinite(v) ? (v >> 16) & 255 : 255;
+        const g = Number.isFinite(v) ? (v >> 8) & 255 : 159;
+        const b = Number.isFinite(v) ? v & 255 : 67;
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 145 ? '#1c1917' : '#ffffff';
+    }
+
+    function drawRelightOverlay() {
+        if (!relightUiActive || activeToolKey !== 'context_relight') return;
+        const ov = document.getElementById('relightOverlay');
+        if (!ov) return;
+        ov.style.pointerEvents = relightShowGuide ? 'auto' : 'none';
+
+        const cw = Math.max(1, mainCanvas.clientWidth);
+        const ch = Math.max(1, mainCanvas.clientHeight);
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const pw = Math.round(cw * dpr), ph = Math.round(ch * dpr);
+        if (ov.width !== pw || ov.height !== ph) { ov.width = pw; ov.height = ph; }
+
+        const c = ov.getContext('2d');
+        c.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.clearRect(0, 0, cw, ch);
+
+        const rl = ensureRelightState();
+        if (!relightShowGuide || !rl.enabled) return;
+
+        const minS = Math.min(cw, ch);
+        const drawOrder = relightLightIdx === 0 ? [1, 0] : [0, 1];
+
+        drawOrder.forEach((idx) => {
+            const l = rl.lights[idx];
+            if (!l || !l.on) return;
+            const isSel = idx === relightLightIdx;
+            const lx = (l.x ?? 0.5) * cw;
+            const ly = (l.y ?? 0.3) * ch;
+            const haloR = (isSel ? 46 : 32) + ((l.size ?? 55) / 100) * 34;
+
+            // 1. Soft colored halo glow around light source
+            c.save();
+            const grad = c.createRadialGradient(lx, ly, 4, lx, ly, haloR);
+            grad.addColorStop(0, hexToRgbaStr(l.color, isSel ? 0.36 : 0.20));
+            grad.addColorStop(0.55, hexToRgbaStr(l.color, isSel ? 0.12 : 0.05));
+            grad.addColorStop(1, hexToRgbaStr(l.color, 0));
+            c.fillStyle = grad;
+            c.beginPath();
+            c.arc(lx, ly, haloR, 0, Math.PI * 2);
+            c.fill();
+
+            // 2. Dashed softbox spread ring on active light
+            if (isSel) {
+                const spreadR = Math.max(24, (0.07 + ((l.size ?? 55) / 100) * 0.22) * minS);
+                c.strokeStyle = hexToRgbaStr(l.color, 0.72);
+                c.lineWidth = 1.4;
+                c.setLineDash([6, 5]);
+                c.beginPath();
+                c.arc(lx, ly, spreadR, 0, Math.PI * 2);
+                c.stroke();
+                c.setLineDash([]);
+            }
+
+            // 3. Crisp draggable 3D bulb handle with number 1 / 2
+            const r = isSel ? 13 : 10;
+            c.shadowColor = 'rgba(0, 0, 0, 0.65)';
+            c.shadowBlur = 10;
+            c.fillStyle = l.color || '#ff9f43';
+            c.beginPath();
+            c.arc(lx, ly, r, 0, Math.PI * 2);
+            c.fill();
+
+            c.shadowBlur = 0;
+            c.lineWidth = isSel ? 2.5 : 1.8;
+            c.strokeStyle = isSel ? '#ffffff' : 'rgba(244, 241, 234, 0.72)';
+            c.stroke();
+
+            c.lineWidth = 1.2;
+            c.strokeStyle = 'rgba(20, 18, 16, 0.55)';
+            c.beginPath();
+            c.arc(lx, ly, r + 1.5, 0, Math.PI * 2);
+            c.stroke();
+
+            c.fillStyle = hexTextContrast(l.color);
+            c.font = `700 ${isSel ? 11 : 9.5}px Inter, sans-serif`;
+            c.textAlign = 'center';
+            c.textBaseline = 'middle';
+            c.fillText(String(idx + 1), lx, ly + 0.5);
+
+            // 4. Floating coordinate readout while dragging
+            if (relightDrag && relightDrag.idx === idx) {
+                const txt = `L${idx + 1} · ${Math.round(l.x * 100)}% · ${Math.round(l.y * 100)}%`;
+                c.font = '600 11px Inter, sans-serif';
+                const tw = c.measureText(txt).width + 14;
+                const bx = Math.min(cw - tw - 6, Math.max(6, lx - tw / 2));
+                const by = Math.max(8, ly - 38);
+                c.fillStyle = 'rgba(24, 21, 19, 0.88)';
+                c.beginPath();
+                c.roundRect(bx, by, tw, 22, 99);
+                c.fill();
+                c.fillStyle = '#f4f1ea';
+                c.fillText(txt, bx + tw / 2, by + 11.5);
+            }
+            c.restore();
+        });
+    }
+
+    function bindRelightEvents() {
+        if (relightBound) return;
+        relightBound = true;
+        const ov = document.getElementById('relightOverlay');
+        if (!ov) return;
+
+        const norm = (e) => {
+            const r = ov.getBoundingClientRect();
+            return {
+                x: Math.min(0.98, Math.max(0.02, (e.clientX - r.left) / Math.max(1, r.width))),
+                y: Math.min(0.98, Math.max(0.02, (e.clientY - r.top) / Math.max(1, r.height))),
+                w: Math.max(1, r.width),
+                h: Math.max(1, r.height)
+            };
+        };
+
+        ov.addEventListener('pointerdown', (e) => {
+            if (!relightUiActive || activeToolKey !== 'context_relight') return;
+            e.preventDefault();
+            try { ov.setPointerCapture(e.pointerId); } catch (_) {}
+            const p = norm(e);
+            const rl = ensureRelightState();
+
+            // Jika Relight masih OFF, langsung aktifkan Flash Portrait tepat di posisi ketukan!
+            if (!rl.enabled) {
+                relightLightIdx = 0;
+                applyRelightPreset('flash_portrait', { x: p.x, y: p.y });
+                relightDrag = { idx: 0, moved: true };
+                renderRelightContextBar(document.getElementById('toolContextExtras'));
+                refreshToolDot();
+                drawRelightOverlay();
+                renderEditorCanvas();
+                return;
+            }
+
+            // Cek apakah menyentuh salah satu titik lampu (prioritaskan yang paling dekat)
+            let hitIdx = -1;
+            let bestDist = 42;
+            rl.lights.forEach((l, idx) => {
+                if (!l || !l.on) return;
+                const d = Math.hypot((p.x - l.x) * p.w, (p.y - l.y) * p.h);
+                if (d < bestDist) { bestDist = d; hitIdx = idx; }
+            });
+
+            if (hitIdx >= 0) {
+                if (relightLightIdx !== hitIdx) {
+                    relightLightIdx = hitIdx;
+                    renderRelightContextBar(document.getElementById('toolContextExtras'));
+                }
+            } else {
+                const act = rl.lights[relightLightIdx];
+                if (!act || !act.on) relightLightIdx = 0;
+                rl.lights[relightLightIdx].on = true;
+                rl.lights[relightLightIdx].x = p.x;
+                rl.lights[relightLightIdx].y = p.y;
+                rl.preset = 'custom';
+            }
+
+            relightDrag = { idx: relightLightIdx, moved: hitIdx < 0 };
+            drawRelightOverlay();
+            renderEditorCanvas();
+        });
+
+        ov.addEventListener('pointermove', (e) => {
+            if (!relightDrag) return;
+            const p = norm(e);
+            const rl = ensureRelightState();
+            const l = rl.lights[relightDrag.idx];
+            if (!l) return;
+            l.x = p.x;
+            l.y = p.y;
+            rl.preset = 'custom';
+            relightDrag.moved = true;
+            drawRelightOverlay();
+            renderEditorCanvas();
+        });
+
+        const endDrag = () => {
+            if (!relightDrag) return;
+            const moved = relightDrag.moved;
+            relightDrag = null;
+            drawRelightOverlay();
+            if (moved) {
+                scheduleGoodRefine(120);
+                renderToolsStrip();
+                pushHistory('Relight 3D Position', true);
+            }
+        };
+        ov.addEventListener('pointerup', endDrag);
+        ov.addEventListener('pointercancel', endDrag);
+    }
+
+    function getRelightAttrVal(attrKey) {
+        const rl = ensureRelightState();
+        const meta = RELIGHT_ATTRS.find((a) => a.key === attrKey) || RELIGHT_ATTRS[0];
+        if (!meta.perLight) return rl[meta.key] ?? meta.def;
+        const l = rl.lights[relightLightIdx] || rl.lights[0];
+        return (l && l[meta.key] !== undefined) ? l[meta.key] : meta.def;
+    }
+
+    function formatRelightChipText(meta, val) {
+        if (meta.key === 'depth' || meta.key === 'ambient') return `${meta.label} ${formatSignedVal(val)}`;
+        return `${meta.label} ${val}`;
+    }
+
+    function applyRelightSliderValue(val) {
+        const rl = ensureRelightState();
+        const meta = RELIGHT_ATTRS.find((a) => a.key === relightAttr) || RELIGHT_ATTRS[0];
+        if (!meta.perLight) {
+            rl[meta.key] = val;
+        } else {
+            const l = rl.lights[relightLightIdx] || rl.lights[0];
+            if (l) {
+                l.on = true;
+                l[meta.key] = val;
+            }
+        }
+        rl.preset = 'custom';
+        updateRelightChipLabel(meta.key, val);
+    }
+
+    function updateRelightChipLabel(attrKey, val) {
+        const btn = document.querySelector(`#toolContextExtras [data-relight-attr="${attrKey}"]`);
+        const meta = RELIGHT_ATTRS.find((a) => a.key === attrKey);
+        if (btn && meta) btn.textContent = formatRelightChipText(meta, val);
+    }
+
+    function renderRelightContextBar(bar) {
+        if (!bar) return;
+        const rl = ensureRelightState();
+        if (rl.enabled && (!rl.lights[relightLightIdx] || !rl.lights[relightLightIdx].on)) {
+            relightLightIdx = 0;
+        }
+        bar.innerHTML = '';
+        openRelightUI();
+
+        const panel = document.createElement('div');
+        panel.className = 'relight-panel';
+
+        // Row 1 (Clean Studio Action Bar — 100% muat tanpa scroll di HP 320px!)
+        const topWrap = document.createElement('div');
+        topWrap.className = 'relight-action-bar';
+
+        const leftCluster = document.createElement('div');
+        leftCluster.className = 'relight-action-cluster';
+
+        const aiProBtn = document.createElement('button');
+        aiProBtn.className = 'dark-chip chip-ai-pro';
+        aiProBtn.innerHTML = aiProRunning
+            ? '<span>AI...</span>'
+            : '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.1 6.4L20.5 10.5l-6.4 2.1L12 19l-2.1-6.4L3.5 10.5l6.4-2.1L12 2zm7 13l1.1 3.2L23.3 19.3l-3.2 1.1L19 23.6l-1.1-3.2-3.2-1.1 3.2-1.1L19 15z"/></svg><span>AI PRO</span>';
+        aiProBtn.disabled = aiProRunning;
+        aiProBtn.title = 'AI Relight Pro — pencahayaan studio otomatis';
+        aiProBtn.addEventListener('click', () => {
+            const cur = loadAiProConfig();
+            if (!cur.apiKey && !cur.proxyUrl) {
+                flashToast('Fitur AI Pro sedang tidak tersedia. Gunakan preset Relight 3D lokal.', 3200);
+                return;
+            }
+            runAiProRelightOnCurrentPhoto();
+        });
+        leftCluster.appendChild(aiProBtn);
+        topWrap.appendChild(leftCluster);
+
+        const rightCluster = document.createElement('div');
+        rightCluster.className = 'relight-action-cluster';
+
+        if (rl.enabled) {
+            const guideBtn = document.createElement('button');
+            guideBtn.className = `relight-icon-btn ${relightShowGuide ? 'active' : ''}`.trim();
+            guideBtn.title = relightShowGuide ? 'Sembunyikan Panduan Lampu' : 'Tampilkan Panduan Lampu';
+            guideBtn.setAttribute('aria-label', 'Panduan Lampu');
+            guideBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+            guideBtn.addEventListener('click', () => {
+                relightShowGuide = !relightShowGuide;
+                renderRelightContextBar(bar);
+                drawRelightOverlay();
+            });
+            rightCluster.appendChild(guideBtn);
+
+            const resetBtn = document.createElement('button');
+            resetBtn.className = 'relight-icon-btn';
+            resetBtn.title = 'Reset Relight';
+            resetBtn.setAttribute('aria-label', 'Reset Relight');
+            resetBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+            resetBtn.addEventListener('click', () => {
+                state.relight = createDefaultRelight();
+                relightLightIdx = 0;
+                relightColorTrayOpen = false;
+                renderRelightContextBar(bar);
+                renderEditorCanvas();
+                renderToolsStrip();
+                drawRelightOverlay();
+                pushHistory('Reset Relight 3D', true);
+            });
+            rightCluster.appendChild(resetBtn);
+        }
+
+        const doneBtn = document.createElement('button');
+        doneBtn.className = 'mask-done-btn relight-done-btn';
+        doneBtn.textContent = '✓ SELESAI';
+        doneBtn.addEventListener('click', exitRelightMode);
+        rightCluster.appendChild(doneBtn);
+
+        topWrap.appendChild(rightCluster);
+        panel.appendChild(topWrap);
+
+        // Row 2: Full-width Scrollable 8 Studio Presets
+        const rPresets = document.createElement('div');
+        rPresets.className = 'relight-row';
+        RELIGHT_PRESETS.forEach((pr) => {
+            const isAct = pr.id === 'off' ? !rl.enabled : (rl.enabled && rl.preset === pr.id);
+            const b = document.createElement('button');
+            b.className = `dark-chip ${pr.id !== 'off' ? 'chip-relight' : ''} ${isAct ? 'active' : ''}`.trim();
+            b.textContent = pr.label;
+            b.addEventListener('click', () => {
+                applyRelightPreset(pr.id);
+                renderRelightContextBar(bar);
+                renderEditorCanvas();
+                renderToolsStrip();
+                drawRelightOverlay();
+                pushHistory(`Relight ${pr.label}`, true);
+            });
+            rPresets.appendChild(b);
+        });
+        panel.appendChild(rPresets);
+
+        if (rl.enabled) {
+            const l1 = rl.lights[0];
+            const l2 = rl.lights[1];
+            const activeLight = rl.lights[relightLightIdx] || l1;
+
+            // Row 3: Clean Parameter Sliders OR 1-Tap Color & Light Switcher Tray (rapi & 100% bebas tumpang tindih!)
+            const r3 = document.createElement('div');
+            r3.className = 'relight-row';
+
+            if (relightColorTrayOpen) {
+                const backSliders = document.createElement('button');
+                backSliders.className = 'dark-chip active';
+                backSliders.textContent = '← SLIDER';
+                backSliders.addEventListener('click', () => {
+                    relightColorTrayOpen = false;
+                    renderRelightContextBar(bar);
+                });
+                r3.appendChild(backSliders);
+
+                const bL1 = document.createElement('button');
+                bL1.className = `dark-chip ${relightLightIdx === 0 ? 'active' : ''}`;
+                bL1.innerHTML = `<span class="relight-light-dot" style="background:${l1.color}"></span>L1`;
+                bL1.addEventListener('click', () => {
+                    l1.on = true;
+                    relightLightIdx = 0;
+                    renderRelightContextBar(bar);
+                    drawRelightOverlay();
+                });
+                r3.appendChild(bL1);
+
+                const bL2 = document.createElement('button');
+                bL2.className = `dark-chip ${l2.on && relightLightIdx === 1 ? 'active' : ''} ${!l2.on ? 'chip-ai' : ''}`.trim();
+                bL2.innerHTML = l2.on
+                    ? `<span class="relight-light-dot" style="background:${l2.color}"></span>L2`
+                    : '+ LAMPU 2';
+                bL2.addEventListener('click', () => {
+                    const wasOff = !l2.on;
+                    l2.on = true;
+                    relightLightIdx = 1;
+                    if (wasOff) {
+                        rl.preset = 'custom';
+                        renderEditorCanvas();
+                        pushHistory('Relight Enable Light 2', true);
+                    }
+                    renderRelightContextBar(bar);
+                    drawRelightOverlay();
+                });
+                r3.appendChild(bL2);
+
+                if (l2.on) {
+                    const bOff2 = document.createElement('button');
+                    bOff2.className = 'dark-chip';
+                    bOff2.title = 'Matikan Lampu 2';
+                    bOff2.textContent = '✕ L2';
+                    bOff2.addEventListener('click', () => {
+                        l2.on = false;
+                        rl.preset = 'custom';
+                        if (relightLightIdx === 1) relightLightIdx = 0;
+                        renderRelightContextBar(bar);
+                        renderEditorCanvas();
+                        drawRelightOverlay();
+                        pushHistory('Relight Disable Light 2', true);
+                    });
+                    r3.appendChild(bOff2);
+                }
+
+                const sepC = document.createElement('span');
+                sepC.className = 'relight-sep';
+                r3.appendChild(sepC);
+
+                RELIGHT_COLORS.forEach((hex) => {
+                    const sw = document.createElement('button');
+                    const match = String(activeLight.color || '').toLowerCase() === hex.toLowerCase();
+                    sw.className = `relight-swatch-btn ${match ? 'active' : ''}`.trim();
+                    sw.style.background = hex;
+                    sw.title = hex;
+                    sw.setAttribute('aria-label', `Warna cahaya ${hex}`);
+                    sw.addEventListener('click', () => {
+                        activeLight.color = hex;
+                        rl.preset = 'custom';
+                        renderRelightContextBar(bar);
+                        renderEditorCanvas();
+                        drawRelightOverlay();
+                        pushHistory('Relight Color', true);
+                    });
+                    r3.appendChild(sw);
+                });
+
+                const cp = document.createElement('input');
+                cp.type = 'color';
+                cp.className = 'relight-color-pick';
+                cp.value = /^#[0-9a-f]{6}$/i.test(activeLight.color) ? activeLight.color : '#f0f6ff';
+                cp.title = 'Pilih Warna Cahaya Bebas';
+                cp.addEventListener('input', () => {
+                    activeLight.color = cp.value;
+                    rl.preset = 'custom';
+                    const dot = r3.querySelectorAll('.relight-light-dot')[relightLightIdx];
+                    if (dot) dot.style.background = cp.value;
+                    drawRelightOverlay();
+                    renderEditorCanvas();
+                });
+                cp.addEventListener('change', () => {
+                    scheduleGoodRefine(120);
+                    renderRelightContextBar(bar);
+                    pushHistory('Relight Custom Color', true);
+                });
+                r3.appendChild(cp);
+            } else {
+                const colBtn = document.createElement('button');
+                colBtn.className = 'dark-chip';
+                colBtn.innerHTML = `<span class="relight-light-dot" style="background:${activeLight.color}"></span>L${relightLightIdx + 1} · WARNA`;
+                colBtn.addEventListener('click', () => {
+                    relightColorTrayOpen = true;
+                    renderRelightContextBar(bar);
+                });
+                r3.appendChild(colBtn);
+
+                RELIGHT_ATTRS.forEach((meta) => {
+                    const val = getRelightAttrVal(meta.key);
+                    const b = document.createElement('button');
+                    b.className = `dark-chip ${relightAttr === meta.key ? 'active' : ''}`;
+                    b.dataset.relightAttr = meta.key;
+                    b.textContent = formatRelightChipText(meta, val);
+                    b.addEventListener('click', () => {
+                        relightAttr = meta.key;
+                        renderRelightContextBar(bar);
+                    });
+                    r3.appendChild(b);
+                });
+            }
+            panel.appendChild(r3);
+        }
+
+        bar.appendChild(panel);
+        syncMasterSliderForRelight();
+        drawRelightOverlay();
+        warmLensBlurSubjectMask(false);
+    }
+
+    function syncMasterSliderForRelight() {
+        const slider = document.getElementById('masterSlider');
+        const rl = ensureRelightState();
+        if (!rl.enabled) {
+            masterSliderMode = 'context';
+            slider.disabled = true;
+            document.getElementById('activeParamCategory').textContent = '3D RELIGHT STUDIO';
+            document.getElementById('activeParamTitle').textContent = 'Pilih Preset atau Tap Foto';
+            document.getElementById('activeParamValue').textContent = 'OFF';
+            document.getElementById('gestureHintText').textContent = 'PILIH PRESET CAHAYA DI BAWAH ATAU KETUK LANGSUNG DI FOTO UNTUK MENARUH LAMPU 3D';
+            return;
+        }
+        const meta = RELIGHT_ATTRS.find((a) => a.key === relightAttr) || RELIGHT_ATTRS[0];
+        relightAttr = meta.key;
+        const val = getRelightAttrVal(meta.key);
+        masterSliderMode = 'relight';
+        slider.disabled = false;
+        slider.min = meta.min;
+        slider.max = meta.max;
+        slider.value = val;
+        document.getElementById('activeParamCategory').textContent = meta.perLight
+            ? `RELIGHT 3D · LAMPU ${relightLightIdx + 1}`
+            : 'RELIGHT 3D · GLOBAL';
+        document.getElementById('activeParamTitle').textContent = meta.title;
+        document.getElementById('activeParamValue').textContent =
+            (meta.key === 'depth' || meta.key === 'ambient') ? formatSignedVal(val) : val;
+        document.getElementById('gestureHintText').textContent = relightShowGuide
+            ? 'GESER LAMPU · TAP 👁 BANDINGKAN · ✨ AI PRO'
+            : 'TAHAN FOTO = BANDINGKAN · TAP 👁 GESER LAMPU';
+    }
+
+    // ==========================================
+    // AI RELIGHT PRO (BYOK Cloud Generative Relight: Gemini Image & Fal.ai IC-Light v2)
+    // ==========================================
+    const AI_PRO_STORAGE_KEY = 'svnlens_ai_pro_cfg';
+    let aiProRunning = false;
+    let aiProRunAfterSave = false;
+
+    function loadAiProConfig() {
+        try {
+            const raw = localStorage.getItem(AI_PRO_STORAGE_KEY);
+            if (!raw) return { provider: 'gemini', apiKey: '', proxyUrl: '' };
+            const parsed = JSON.parse(raw);
+            return {
+                provider: parsed.provider === 'fal' ? 'fal' : 'gemini',
+                apiKey: String(parsed.apiKey || ''),
+                proxyUrl: String(parsed.proxyUrl || '')
+            };
+        } catch (_) {
+            return { provider: 'gemini', apiKey: '', proxyUrl: '' };
+        }
+    }
+
+    function saveAiProConfig(cfg) {
+        try {
+            localStorage.setItem(AI_PRO_STORAGE_KEY, JSON.stringify({
+                provider: cfg.provider === 'fal' ? 'fal' : 'gemini',
+                apiKey: String(cfg.apiKey || '').trim(),
+                proxyUrl: String(cfg.proxyUrl || '').trim()
+            }));
+        } catch (_) {}
+    }
+
+    function updateAiProHintText(provider) {
+        const hint = document.getElementById('aiProKeyHint');
+        if (!hint) return;
+        hint.textContent = provider === 'fal'
+            ? 'Dapatkan Fal.ai Key di fal.ai/dashboard/keys (model spesialis IC-Light v2).'
+            : 'Buat API Key di Google AI Studio: aistudio.google.com/apikey (model gemini-2.5-flash-image).';
+    }
+
+    function openAiProModal(runAfterSave = false) {
+        aiProRunAfterSave = !!runAfterSave;
+        const modal = document.getElementById('aiProModal');
+        if (!modal) return;
+        const cfg = loadAiProConfig();
+        const provEl = document.getElementById('aiProProvider');
+        const keyEl = document.getElementById('aiProApiKey');
+        const proxyEl = document.getElementById('aiProProxyUrl');
+        const saveBtn = document.getElementById('btnSaveAiProKey');
+        if (provEl) provEl.value = cfg.provider;
+        if (keyEl) { keyEl.value = cfg.apiKey; keyEl.type = 'password'; }
+        if (proxyEl) proxyEl.value = cfg.proxyUrl;
+        if (saveBtn) saveBtn.textContent = runAfterSave ? 'SIMPAN & JALANKAN ✨ AI PRO' : 'SIMPAN PENGATURAN AI';
+        updateAiProHintText(cfg.provider);
+        modal.classList.remove('hidden');
+    }
+
+    function bindAiProModalEvents() {
+        const modal = document.getElementById('aiProModal');
+        if (!modal) return;
+        const provEl = document.getElementById('aiProProvider');
+        const keyEl = document.getElementById('aiProApiKey');
+        const proxyEl = document.getElementById('aiProProxyUrl');
+
+        document.getElementById('btnCloseAiProModal')?.addEventListener('click', () => {
+            modal.classList.add('hidden');
+        });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.classList.add('hidden');
+        });
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+                modal.classList.add('hidden');
+            }
+            // Akses rahasia pemilik (Desktop): Ctrl+Shift+K / Cmd+Shift+K
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                openAiProModal(false);
+            }
+        });
+        // Akses rahasia pemilik (HP & Desktop): ketuk cepat 5× pada label "RELIGHT 3D · ..."
+        const relightCatLabel = document.getElementById('activeParamCategory');
+        if (relightCatLabel) {
+            let tapCount = 0;
+            let tapResetTimer = 0;
+            relightCatLabel.addEventListener('click', () => {
+                if (!relightUiActive) return;
+                tapCount++;
+                clearTimeout(tapResetTimer);
+                if (tapCount >= 5) {
+                    tapCount = 0;
+                    openAiProModal(false);
+                    return;
+                }
+                tapResetTimer = setTimeout(() => { tapCount = 0; }, 1600);
+            });
+        }
+        // Akses rahasia pemilik (URL): ?ai-setup=1 (langsung dibersihkan dari address bar)
+        try {
+            const sp = new URLSearchParams(window.location.search);
+            if (sp.get('ai-setup') === '1') {
+                sp.delete('ai-setup');
+                const cleanSearch = sp.toString();
+                const cleanUrl = window.location.pathname + (cleanSearch ? `?${cleanSearch}` : '') + window.location.hash;
+                if (window.history && window.history.replaceState) window.history.replaceState(null, '', cleanUrl);
+                setTimeout(() => openAiProModal(false), 300);
+            }
+        } catch (_) {}
+        provEl?.addEventListener('change', () => updateAiProHintText(provEl.value));
+        document.getElementById('btnToggleAiKeyVis')?.addEventListener('click', () => {
+            if (!keyEl) return;
+            keyEl.type = keyEl.type === 'password' ? 'text' : 'password';
+        });
+        document.getElementById('btnClearAiProKey')?.addEventListener('click', () => {
+            saveAiProConfig({ provider: provEl ? provEl.value : 'gemini', apiKey: '', proxyUrl: '' });
+            if (keyEl) keyEl.value = '';
+            if (proxyEl) proxyEl.value = '';
+            if (relightUiActive) renderRelightContextBar(document.getElementById('toolContextExtras'));
+            flashToast('✓ API Key dihapus dari perangkat');
+        });
+        document.getElementById('btnSaveAiProKey')?.addEventListener('click', () => {
+            const key = (keyEl ? keyEl.value : '').trim();
+            const provider = provEl ? provEl.value : 'gemini';
+            const proxyUrl = (proxyEl ? proxyEl.value : '').trim();
+            if (!key && !proxyUrl) {
+                flashToast('Masukkan API Key terlebih dahulu');
+                if (keyEl) keyEl.focus();
+                return;
+            }
+            saveAiProConfig({ provider, apiKey: key, proxyUrl });
+            modal.classList.add('hidden');
+            if (relightUiActive) renderRelightContextBar(document.getElementById('toolContextExtras'));
+            if (aiProRunAfterSave) {
+                runAiProRelightOnCurrentPhoto();
+            } else {
+                flashToast(`✓ Kunci AI Pro (${provider === 'fal' ? 'Fal.ai IC-Light' : 'Gemini Image'}) tersimpan lokal`);
+            }
+        });
+    }
+
+    async function runAiProRelightOnCurrentPhoto() {
+        if (aiProRunning || !window.AITools || !window.AITools.runGenerativeRelight || !basePhotoCanvas.width) return;
+        const apiCfg = loadAiProConfig();
+        if (!apiCfg.apiKey && !apiCfg.proxyUrl) {
+            flashToast('Fitur AI Pro sedang tidak tersedia. Gunakan preset Relight 3D lokal.', 3200);
+            return;
+        }
+        aiProRunning = true;
+        if (relightUiActive) renderRelightContextBar(document.getElementById('toolContextExtras'));
+
+        const loading = document.getElementById('loadingToast');
+        const loadingTxt = document.getElementById('loadingToastText');
+        const setMsg = (msg) => {
+            if (loading && loadingTxt) {
+                loadingTxt.textContent = msg;
+                loading.classList.remove('hidden');
+            }
+        };
+        setMsg('Memulai AI Relight Pro...');
+
+        try {
+            const rlSnap = JSON.parse(JSON.stringify(ensureRelightState()));
+            const outCv = await window.AITools.runGenerativeRelight(basePhotoCanvas, rlSnap, apiCfg, (msg) => setMsg(msg));
+            basePhotoCanvas.width = outCv.width;
+            basePhotoCanvas.height = outCv.height;
+            basePhotoCtx.clearRect(0, 0, outCv.width, outCv.height);
+            basePhotoCtx.drawImage(outCv, 0, 0);
+
+            // Nonaktifkan Relight lokal setelah hasil AI Pro diterapkan agar efek tidak bertumpuk ganda
+            state.relight = createDefaultRelight();
+            invalidateLensBlurCache();
+            renderEditorCanvasSync();
+            if (relightUiActive) renderRelightContextBar(document.getElementById('toolContextExtras'));
+            renderToolsStrip();
+            pushHistory('AI Relight Pro');
+            flashToast('✓ AI Relight Pro selesai — tahan foto untuk bandingkan, atau ↶ Undo', 3200);
+        } catch (err) {
+            console.error('AI Relight Pro error:', err);
+            flashToast(`⚠ ${err.message || 'Gagal menjalankan AI Relight Pro'}`, 4200);
+        } finally {
+            aiProRunning = false;
+            if (loading) loading.classList.add('hidden');
+            if (relightUiActive) renderRelightContextBar(document.getElementById('toolContextExtras'));
+        }
     }
 
     // ==========================================
@@ -5959,17 +7026,48 @@
         return c;
     }
 
-    function runAutoMaskDetection(kind) {
+    function invertMaskCanvasAlpha(srcCv) {
+        const w = srcCv.width, h = srcCv.height;
+        const out = createBlankCanvas(w, h);
+        const oCtx = out.getContext('2d', { willReadFrequently: true });
+        oCtx.drawImage(srcCv, 0, 0);
+        const id = oCtx.getImageData(0, 0, w, h);
+        const d = id.data;
+        for (let i = 0; i < d.length; i += 4) {
+            d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+            d[i + 3] = 255 - d[i + 3];
+        }
+        oCtx.putImageData(id, 0, 0);
+        return out;
+    }
+
+    async function runAutoMaskDetectionAsync(kind, onProgress = null) {
         const src = renderAlignedSourceForAI();
         const sc = Math.min(1, 1024 / Math.max(src.width, src.height));
         const mw = Math.max(16, Math.round(src.width * sc));
         const mh = Math.max(16, Math.round(src.height * sc));
-        if (kind === 'ai_subject') return window.AITools.detectSubjectMask(src, mw, mh);
-        if (kind === 'ai_background') return window.AITools.detectBackgroundMask(src, mw, mh);
+        if (kind === 'ai_subject' || kind === 'ai_background') {
+            const key = getLensBlurCacheKey();
+            let subjCv = null;
+            if (lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas && lensBlurSubjectCache.canvas._isNeural) {
+                subjCv = createBlankCanvas(mw, mh);
+                subjCv.getContext('2d').drawImage(lensBlurSubjectCache.canvas, 0, 0, mw, mh);
+                subjCv._isNeural = true;
+            } else if (window.AITools.detectSubjectMaskAI) {
+                try {
+                    subjCv = await window.AITools.detectSubjectMaskAI(src, mw, mh, onProgress);
+                    lensBlurSubjectCache = { key, canvas: subjCv };
+                } catch (err) {
+                    console.warn('Auto mask neural fallback:', err);
+                }
+            }
+            if (!subjCv) subjCv = window.AITools.detectSubjectMask(src, mw, mh);
+            return kind === 'ai_background' ? invertMaskCanvasAlpha(subjCv) : cloneCanvas(subjCv);
+        }
         return window.AITools.detectSkyMask(src, mw, mh);
     }
 
-    function addAutoMask(kind) {
+    async function addAutoMask(kind) {
         if (state.masks.length >= 8) {
             flashToast('Maksimal 8 mask per foto');
             return;
@@ -5978,67 +7076,84 @@
         const label = maskTypeShortLabel(kind);
         const loading = document.getElementById('loadingToast');
         const loadingTxt = document.getElementById('loadingToastText');
-        if (loading && loadingTxt) {
-            loadingTxt.textContent = `Mendeteksi ${label.toLowerCase()}...`;
-            loading.classList.remove('hidden');
-        }
-        requestAnimationFrame(() => setTimeout(() => {
-            try {
-                const autoCanvas = runAutoMaskDetection(kind);
-                const m = {
-                    id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
-                    type: kind,
-                    label,
-                    feather: 12,
-                    invert: false,
-                    exposure: 0,
-                    contrast: 0,
-                    highlights: 0,
-                    shadows: 0,
-                    whites: 0,
-                    blacks: 0,
-                    saturation: 0,
-                    warmth: 0,
-                    tint: 0,
-                    clarity: 0,
-                    dehaze: 0,
-                    blur: 0,
-                    size: 8
-                };
-                maskCanvases.set(m.id, autoCanvas);
-                maskVer++;
-                state.masks.push(m);
-                selectedMaskId = m.id;
-                maskPickerOpen = false;
-                maskGroupTab = kind === 'ai_background' ? 'effects' : 'light';
-                maskAttr = kind === 'ai_background' ? 'blur' : 'exposure';
-                maskErase = false;
-                maskShow = true;
-                refreshMaskBar();
-                drawMaskOverlay();
-                renderEditorCanvas();
-                renderToolsStrip();
-                pushHistory(`Auto Mask ${label}`, true);
-                flashToast(`✓ Auto Mask ${label} siap — atur slider atau kuas untuk perhalus`, 2600);
-            } catch (err) {
-                console.warn('Auto mask error', err);
-                flashToast('Gagal mendeteksi area otomatis');
-            } finally {
-                if (loading) loading.classList.add('hidden');
+        const setMsg = (msg) => {
+            if (loading && loadingTxt) {
+                loadingTxt.textContent = msg;
+                loading.classList.remove('hidden');
             }
-        }, 16));
+        };
+        setMsg(`Mendeteksi ${label.toLowerCase()} AI...`);
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 16)));
+        try {
+            const autoCanvas = await runAutoMaskDetectionAsync(kind, (msg) => setMsg(msg));
+            const m = {
+                id: 'mk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5),
+                type: kind,
+                label,
+                feather: 12,
+                invert: false,
+                exposure: 0,
+                contrast: 0,
+                highlights: 0,
+                shadows: 0,
+                whites: 0,
+                blacks: 0,
+                saturation: 0,
+                warmth: 0,
+                tint: 0,
+                clarity: 0,
+                dehaze: 0,
+                blur: 0,
+                size: 8
+            };
+            maskCanvases.set(m.id, autoCanvas);
+            maskVer++;
+            state.masks.push(m);
+            selectedMaskId = m.id;
+            maskPickerOpen = false;
+            maskGroupTab = kind === 'ai_background' ? 'effects' : 'light';
+            maskAttr = kind === 'ai_background' ? 'blur' : 'exposure';
+            maskErase = false;
+            maskShow = true;
+            refreshMaskBar();
+            drawMaskOverlay();
+            renderEditorCanvas();
+            renderToolsStrip();
+            pushHistory(`Auto Mask ${label}`, true);
+            flashToast(`✓ Auto Mask ${label} siap — atur slider atau kuas untuk perhalus`, 2600);
+        } catch (err) {
+            console.warn('Auto mask error', err);
+            flashToast('Gagal mendeteksi area otomatis');
+        } finally {
+            if (loading) loading.classList.add('hidden');
+        }
     }
 
-    function redetectAutoMask(m) {
+    async function redetectAutoMask(m) {
         if (!m || !m.type || !m.type.startsWith('ai_')) return;
-        const autoCanvas = runAutoMaskDetection(m.type);
-        maskCanvases.set(m.id, autoCanvas);
-        maskVer++;
-        maskShow = true;
-        drawMaskOverlay();
-        renderEditorCanvas();
-        pushHistory(`Redetect ${m.label || maskTypeShortLabel(m.type)}`, true);
-        flashToast(`↻ Mask ${m.label || maskTypeShortLabel(m.type)} dideteksi ulang`);
+        const loading = document.getElementById('loadingToast');
+        const loadingTxt = document.getElementById('loadingToastText');
+        const setMsg = (msg) => {
+            if (loading && loadingTxt) {
+                loadingTxt.textContent = msg;
+                loading.classList.remove('hidden');
+            }
+        };
+        setMsg(`Mendeteksi ulang ${m.label || maskTypeShortLabel(m.type)}...`);
+        try {
+            const autoCanvas = await runAutoMaskDetectionAsync(m.type, (msg) => setMsg(msg));
+            maskCanvases.set(m.id, autoCanvas);
+            maskVer++;
+            maskShow = true;
+            drawMaskOverlay();
+            renderEditorCanvas();
+            pushHistory(`Redetect ${m.label || maskTypeShortLabel(m.type)}`, true);
+            flashToast(`↻ Mask ${m.label || maskTypeShortLabel(m.type)} dideteksi ulang`);
+        } catch (err) {
+            console.warn('Redetect mask error', err);
+        } finally {
+            if (loading) loading.classList.add('hidden');
+        }
     }
 
     function addMask(type, over) {
@@ -6541,6 +7656,7 @@
         invalidateLensBlurCache();
         if (maskUiActive) refreshMaskBar();
         if (focalUiActive) { renderFocalContextBar(activeToolKey); drawFocalOverlay(); }
+        if (relightUiActive) { renderRelightContextBar(document.getElementById('toolContextExtras')); drawRelightOverlay(); }
         if (!document.getElementById('wheelsEditor').classList.contains('hidden')) syncWheelsUI();
 
         switchEditorMainTab(activeEditorMainTab);
@@ -6663,6 +7779,9 @@
             applyColorPipelineToImageData(idata, tw, th, item.editState);
             tCtx.putImageData(idata, 0, 0);
             const pr = window.FILM_PRESETS.find((p) => p.id === item.editState.presetId);
+            if (pr && pr.params && pr.params.flash) {
+                renderPresetFlashOverlay(tCtx, tw, th, pr.params.flash, 1);
+            }
             if (pr && pr.params && pr.params.vignette) {
                 const vs = pr.params.vignette / 100;
                 const vg = tCtx.createRadialGradient(tw / 2, th / 2, Math.min(tw, th) * 0.24, tw / 2, th / 2, Math.max(tw, th) * 0.72);
@@ -6700,6 +7819,12 @@
             st.adjust.exposure = evAdjust || 0;
             st.adjust.grain = grain || 0;
             applyColorPipelineToImageData(imgData, w, h, st);
+        },
+        renderPresetOverlay: (targetCtx, w, h, presetId, strength = 1) => {
+            const pr = window.FILM_PRESETS.find((p) => p.id === presetId);
+            if (pr && pr.params && pr.params.flash) {
+                renderPresetFlashOverlay(targetCtx, w, h, pr.params.flash, strength);
+            }
         }
     };
 
@@ -7030,7 +8155,7 @@ async function exportAll(pano) {
    Geser strip horizontal dengan mouse (drag) & scroll wheel
    ========================================== */
 (() => {
-  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,.mask-layers-scroll,.mask-manual-row,.mask-params-row,.mask-manage-row,.mask-group-tabs,.glitch-row,.hsl-swatch-row,.hsl-param-row,.lensblur-row,.cam-tray-scroll,.cam-lcd-strip,.cam-top-pills,#fontCatRow';
+  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,.mask-layers-scroll,.mask-manual-row,.mask-params-row,.mask-manage-row,.mask-group-tabs,.glitch-row,.hsl-swatch-row,.hsl-param-row,.lensblur-row,.relight-row,.cam-tray-scroll,.cam-lcd-strip,.cam-top-pills,#fontCatRow';
   let el = null, sx = 0, sl = 0, moved = false;
   document.addEventListener('pointerdown', e => {
     moved = false; if (e.pointerType !== 'mouse' || e.button !== 0) return;

@@ -1116,14 +1116,134 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['x_ac17', 'ROLLEI', 'Pocket Rollei 35', 'analogcam', 'ANALOG CAM', { contrast: 18, saturation: 4, warmth: 2, fade: 6, grain: 12 }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
+// FLASH — Optical Direct-Flash Presets (Night CCD, Studio Rim, Fuji 98, Contax T2, Paparazzi, Soft, Warm, Club, Y2K Pink, Polaroid, B&W)
+[
+    ['fl_ccd', 'NIGHT CCD', 'Night Street CCD Flash', 'flash', 'CCD FLASH', {
+        exposure: 1, contrast: 8, highlights: -6, shadows: -10, blacks: -4,
+        warmth: -5, tint: 2, saturation: 4, vibrance: 8, clarity: 2, grain: 8,
+        shadowsTint: [10, 16, 26], highlightsTint: [246, 250, 255], splitStrength: 0.14,
+        hsl: { red: { h: 2, s: 10, l: 2 }, orange: { h: -2, s: -5, l: 5 } },
+        curve: { rgb: [[0, 4], [60, 52], [198, 204], [255, 250]] },
+        flash: {
+            power: 0.64, bgDark: 0.54, keepLights: 0.92, skinGlow: 0.58, shadow: 0.28,
+            radius: 0.64, falloff: 0.56, color: '#f2f7ff', bloom: 0.32, bloomThresh: 0.76, halation: 0.30, cx: 0.50, cy: 0.42
+        }
+    }],
+    ['fl_rim', 'STUDIO RIM', 'Obsidian Rim Flash', 'flash', 'RIM FLASH', {
+        exposure: 0, contrast: 12, highlights: -8, shadows: -14, blacks: -8,
+        warmth: 3, tint: 1, saturation: -4, vibrance: 6, clarity: 4, grain: 14,
+        shadowsTint: [8, 8, 10], highlightsTint: [255, 246, 232], splitStrength: 0.12,
+        curve: { rgb: [[0, 2], [58, 46], [198, 204], [255, 250]] },
+        flash: {
+            power: 0.58, bgDark: 0.84, keepLights: 0.04, skinGlow: 0.14, shadow: 0.42,
+            rimPower: 0.82, rimColor: '#ffecc8',
+            radius: 0.58, falloff: 0.82, color: '#fff6e8', bloom: 0.22, bloomThresh: 0.80, halation: 0.06, cx: 0.50, cy: 0.42
+        }
+    }],
+    ['fl_disp', 'FUJI 98', 'Y2K Green Disposable Flash', 'flash', 'DISPOSABLE', {
+        exposure: 1, contrast: 10, highlights: -6, shadows: -10, fade: 8,
+        warmth: 6, tint: -8, saturation: 6, vibrance: 6, clarity: 2, grain: 16,
+        shadowsTint: [14, 34, 28], highlightsTint: [255, 245, 218], splitStrength: 0.22,
+        hsl: { orange: { h: -2, s: 5, l: 4 }, green: { h: 6, s: 5, l: -3 } },
+        curve: { rgb: [[0, 10], [60, 52], [198, 204], [255, 248]] },
+        flash: {
+            power: 0.58, bgDark: 0.26, keepLights: 0.28, skinGlow: 0.24, shadow: 0.68,
+            bgTint: [0.84, 1.06, 0.99], bgTintStr: 0.74,
+            radius: 0.62, falloff: 0.54, color: '#fff1d8', bloom: 0.22, bloomThresh: 0.78, halation: 0.14, cx: 0.48, cy: 0.42
+        }
+    }],
+    ['fl_t2', 'CONTAX T2', 'Point & Shoot T2 Flash', 'flash', 'DIRECT FLASH', {
+        exposure: 1, contrast: 10, highlights: -4, shadows: -10, fade: 5,
+        warmth: 5, tint: 2, saturation: 5, vibrance: 7, clarity: 3, grain: 9,
+        shadowsTint: [20, 18, 22], highlightsTint: [255, 246, 232], splitStrength: 0.14,
+        hsl: { orange: { h: -2, s: -2, l: 4 } },
+        curve: { rgb: [[0, 6], [58, 50], [198, 204], [255, 250]] },
+        flash: {
+            power: 0.58, bgDark: 0.44, keepLights: 0.70, skinGlow: 0.34, shadow: 0.56,
+            radius: 0.64, falloff: 0.52, color: '#fff6e8', bloom: 0.24, bloomThresh: 0.78, halation: 0.16, cx: 0.50, cy: 0.43
+        }
+    }],
+    ['fl_papa', 'PAPARAZZI', 'Paparazzi Night Flash', 'flash', 'HARD FLASH', {
+        exposure: 1, contrast: 14, highlights: -6, shadows: -14, blacks: -8,
+        warmth: -6, saturation: -8, clarity: 5, grain: 10,
+        shadowsTint: [10, 14, 22], highlightsTint: [244, 248, 255], splitStrength: 0.14,
+        curve: { rgb: [[0, 2], [56, 44], [196, 205], [255, 250]] },
+        flash: {
+            power: 0.66, bgDark: 0.72, keepLights: 0.66, skinGlow: 0.36, shadow: 0.58,
+            rimPower: 0.32, rimColor: '#eef6ff',
+            radius: 0.54, falloff: 0.74, color: '#f4f8ff', bloom: 0.28, bloomThresh: 0.78, halation: 0.14, cx: 0.50, cy: 0.42
+        }
+    }],
+    ['fl_soft', 'SOFT FLASH', 'Diffused Beauty Flash', 'flash', 'BOUNCE FLASH', {
+        exposure: 2, contrast: 4, highlights: -4, shadows: 6, fade: 8,
+        warmth: 4, tint: 3, saturation: -4, vibrance: 6, clarity: 0, grain: 6,
+        shadowsTint: [26, 22, 26], highlightsTint: [255, 248, 242], splitStrength: 0.12,
+        hsl: { orange: { h: -2, s: -4, l: 5 } },
+        flash: {
+            power: 0.54, bgDark: 0.28, keepLights: 0.68, skinGlow: 0.54, shadow: 0.28,
+            radius: 0.74, falloff: 0.32, color: '#fff8f2', bloom: 0.30, bloomThresh: 0.76, halation: 0.10, cx: 0.50, cy: 0.42
+        }
+    }],
+    ['fl_warm', 'WARM FLASH', 'Golden Tungsten Flash', 'flash', 'WARM FLASH', {
+        exposure: 1, contrast: 10, highlights: -5, shadows: -10, fade: 5,
+        warmth: 16, tint: 3, saturation: 6, vibrance: 6, clarity: 2, grain: 10,
+        shadowsTint: [30, 18, 12], highlightsTint: [255, 230, 190], splitStrength: 0.18,
+        flash: {
+            power: 0.58, bgDark: 0.48, keepLights: 0.76, skinGlow: 0.28, shadow: 0.52,
+            radius: 0.62, falloff: 0.56, color: '#ffd59c', bloom: 0.26, bloomThresh: 0.76, halation: 0.22, cx: 0.50, cy: 0.43
+        }
+    }],
+    ['fl_club', 'CLUB STROBE', 'Night Club Flash', 'flash', 'PARTY FLASH', {
+        exposure: 1, contrast: 12, highlights: -5, shadows: -12,
+        warmth: -10, tint: 10, saturation: 14, clarity: 4, grain: 14,
+        shadowsTint: [12, 22, 48], highlightsTint: [246, 224, 255], splitStrength: 0.24,
+        flash: {
+            power: 0.62, bgDark: 0.64, keepLights: 0.90, skinGlow: 0.32, shadow: 0.42,
+            rimPower: 0.46, rimColor: '#d8b4fe',
+            radius: 0.56, falloff: 0.68, color: '#f5dcff', bloom: 0.32, bloomThresh: 0.75, halation: 0.26, cx: 0.48, cy: 0.42
+        }
+    }],
+    ['fl_y2kpink', 'Y2K PINK', 'Cyber Rose Flash', 'flash', 'PARTY FLASH', {
+        exposure: 2, contrast: 8, highlights: -4, shadows: -8, fade: 6,
+        warmth: 2, tint: 14, saturation: 10, vibrance: 7, clarity: 0, grain: 9,
+        shadowsTint: [34, 16, 38], highlightsTint: [255, 224, 238], splitStrength: 0.20,
+        flash: {
+            power: 0.56, bgDark: 0.42, keepLights: 0.78, skinGlow: 0.42, shadow: 0.34,
+            rimPower: 0.28, rimColor: '#fbcfe8',
+            radius: 0.64, falloff: 0.50, color: '#ffcae2', bloom: 0.34, bloomThresh: 0.74, halation: 0.20, cx: 0.50, cy: 0.43
+        }
+    }],
+    ['fl_pola', 'POLA FLASH', 'Instant Polaroid Flash', 'flash', 'INSTANT FLASH', {
+        exposure: 1, contrast: 6, highlights: -4, shadows: -6, fade: 16,
+        warmth: 9, tint: -5, saturation: -6, clarity: 0, grain: 12,
+        shadowsTint: [18, 36, 34], highlightsTint: [255, 246, 226], splitStrength: 0.20,
+        curve: { rgb: [[0, 16], [64, 58], [196, 204], [255, 244]] },
+        flash: {
+            power: 0.54, bgDark: 0.38, keepLights: 0.40, skinGlow: 0.22, shadow: 0.60,
+            bgTint: [0.87, 1.04, 1.00], bgTintStr: 0.54,
+            radius: 0.60, falloff: 0.54, color: '#fff5e0', bloom: 0.22, bloomThresh: 0.78, halation: 0.12, cx: 0.50, cy: 0.44
+        }
+    }],
+    ['fl_bw', 'FLASH B&W', 'Hard Flash Mono', 'flash', 'MONO FLASH', {
+        exposure: 1, contrast: 16, highlights: -5, shadows: -16, blacks: -8,
+        saturation: -100, clarity: 5, grain: 16,
+        curve: { rgb: [[0, 2], [56, 40], [196, 206], [255, 250]] },
+        flash: {
+            power: 0.64, bgDark: 0.80, keepLights: 0.28, skinGlow: 0.16, shadow: 0.48,
+            rimPower: 0.62, rimColor: '#ffffff',
+            radius: 0.54, falloff: 0.74, color: '#ffffff', bloom: 0.24, bloomThresh: 0.78, cx: 0.50, cy: 0.42
+        }
+    }]
+].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
+
 // STROBE / FLASH
 [
-    ['x_st1', 'FLASHBURST', 'Hard Flash', 'strobe', 'STROBE FLASH', { exposure: 12, contrast: 34, saturation: 6, highlights: 20, shadows: -28, grain: 12 }],
-    ['x_st2', 'CLUB', 'Club Strobe', 'strobe', 'STROBE FLASH', { contrast: 28, saturation: 26, tint: 14, warmth: -14, shadows: -14, highlights: 14, curve: { b: [[0, 18], [255, 255]] } }],
-    ['x_st3', 'DISCO', 'Disco Lights', 'strobe', 'STROBE FLASH', { saturation: 40, contrast: 24, tint: 18, warmth: 10, highlights: 12, shadows: -10 }],
-    ['x_st4', 'RAVE UV', 'Rave UV', 'strobe', 'STROBE FLASH', { warmth: -24, tint: 18, saturation: 34, contrast: 30, shadows: -20, curve: { r: [[0, 10], [255, 255]] } }],
-    ['x_st5', 'PAPARAZZI', 'Paparazzi Flash', 'strobe', 'STROBE FLASH', { exposure: 16, contrast: 30, saturation: -6, highlights: 24, shadows: -30, grain: 8 }],
-    ['x_st6', 'LIGHTBURST', 'Night Burst', 'strobe', 'STROBE FLASH', { exposure: 8, contrast: 22, warmth: 8, tint: 6, saturation: 22, highlights: 16, shadows: -22 }]
+    ['x_st1', 'FLASHBURST', 'Hard Flash', 'strobe', 'STROBE FLASH', { exposure: 12, contrast: 34, saturation: 6, highlights: 20, shadows: -28, grain: 12, flash: { power: 0.72, radius: 0.48, falloff: 0.72, color: '#f4f8ff', bloom: 0.36 } }],
+    ['x_st2', 'CLUB', 'Club Strobe', 'strobe', 'STROBE FLASH', { contrast: 28, saturation: 26, tint: 14, warmth: -14, shadows: -14, highlights: 14, curve: { b: [[0, 18], [255, 255]] }, flash: { power: 0.62, radius: 0.52, falloff: 0.64, color: '#e6d6ff', bloom: 0.30 } }],
+    ['x_st3', 'DISCO', 'Disco Lights', 'strobe', 'STROBE FLASH', { saturation: 40, contrast: 24, tint: 18, warmth: 10, highlights: 12, shadows: -10, flash: { power: 0.56, radius: 0.58, falloff: 0.52, color: '#ffd8f0', bloom: 0.32 } }],
+    ['x_st4', 'RAVE UV', 'Rave UV', 'strobe', 'STROBE FLASH', { warmth: -24, tint: 18, saturation: 34, contrast: 30, shadows: -20, curve: { r: [[0, 10], [255, 255]] }, flash: { power: 0.58, radius: 0.52, falloff: 0.66, color: '#c4b5fd', bloom: 0.34 } }],
+    ['x_st5', 'PAPARAZZI', 'Paparazzi Flash', 'strobe', 'STROBE FLASH', { exposure: 16, contrast: 30, saturation: -6, highlights: 24, shadows: -30, grain: 8, flash: { power: 0.78, radius: 0.46, falloff: 0.78, color: '#f2f7ff', bloom: 0.40 } }],
+    ['x_st6', 'LIGHTBURST', 'Night Burst', 'strobe', 'STROBE FLASH', { exposure: 8, contrast: 22, warmth: 8, tint: 6, saturation: 22, highlights: 16, shadows: -22, flash: { power: 0.64, radius: 0.54, falloff: 0.62, color: '#ffe8c2', bloom: 0.32 } }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
 // EDITORIAL SUN — hangat, kontras kuat, hitam terangkat tipis (potret golden hour & wisuda editorial)

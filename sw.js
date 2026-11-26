@@ -4,7 +4,7 @@
  * dan fallback ke Cache perangkat saat offline 100%.
  */
 
-const CACHE_NAME = 'svnlens-studio-offline-v23';
+const CACHE_NAME = 'svnlens-studio-offline-v43';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -45,6 +45,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
+    // Biarkan CDN eksternal & model AI HuggingFace (RMBG-1.4) di-cache permanen oleh transformers-cache secara langsung
+    const reqUrl = new URL(event.request.url);
+    if (reqUrl.origin !== self.location.origin) return;
 
     event.respondWith(
         fetch(event.request)
