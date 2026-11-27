@@ -96,11 +96,11 @@
         return {
             enabled: false,
             preset: 'off',
-            ambient: -50,
-            shadow: 60,
-            shading: 44,
+            ambient: -44,
+            shadow: 54,
+            shading: 48,
             lights: [
-                { on: true, x: 0.48, y: 0.38, color: '#f2f7ff', intensity: 74, size: 80, depth: 86, rim: 0 },
+                { on: true, x: 0.48, y: 0.36, color: '#f4f8ff', intensity: 74, size: 82, depth: 74, rim: 0 },
                 { on: false, x: 0.82, y: 0.34, color: '#22d3ee', intensity: 58, size: 54, depth: 55, rim: 52 }
             ]
         };
@@ -132,6 +132,18 @@
         return type === 'brush' || type === 'ai_subject' || type === 'ai_background' || type === 'ai_sky';
     }
 
+    function createDefaultRetouch() {
+        return { smooth: 0, brighten: 0, blemish: 0, eyePop: 0, lipTint: 0 };
+    }
+    function retouchActive(st) {
+        const r = st && st.retouch;
+        return !!(r && ((r.smooth || 0) > 0 || (r.brighten || 0) > 0 || (r.blemish || 0) > 0 || (r.eyePop || 0) > 0 || (r.lipTint || 0) > 0));
+    }
+    function colorMatchActive(st) {
+        const cm = st && st.colorMatch;
+        return !!(cm && cm.profile && (cm.strength || 0) > 0);
+    }
+
     function ensureStateDefaults(st) {
         const def = createDefaultEditState();
         st.adjust = { ...def.adjust, ...(st.adjust || {}) };
@@ -153,6 +165,9 @@
             ...rlIn,
             lights: rlDef.lights.map((dl, idx) => ({ ...dl, ...(rlLights[idx] || {}) }))
         };
+        st.retouch = { ...createDefaultRetouch(), ...(st.retouch || {}) };
+        st.colorMatch = { profile: null, strength: 0, label: '', ...(st.colorMatch || {}) };
+        if (!Array.isArray(st.healStrokes)) st.healStrokes = [];
         const bcDef = createDefaultBlurCenters();
         const bc = st.blurCenters || {};
         st.blurCenters = {
@@ -211,6 +226,9 @@
             hsl: createDefaultHSL(),
             lensBlur: createDefaultLensBlur(),
             relight: createDefaultRelight(),
+            retouch: createDefaultRetouch(),
+            colorMatch: { profile: null, strength: 0, label: '' },
+            healStrokes: [],
             blurCenters: createDefaultBlurCenters(),
             glitch: createDefaultGlitchState(),
             curves: createIdentityCurves(),
@@ -226,7 +244,7 @@
             masks: [],
             wheels: defaultWheels(),
             wheelsAmt: 100,
-            texts: [], // { id, text, x, y, font, fontName, size, color, opacity, rotate, bold, italic, shadow, outline, align }
+            texts: [], // { id, text, x, y, font, fontName, size, color, opacity, rotate, bold, italic, shadow, outline, align, behindSubject }
             selectedTextId: null
         };
     }
@@ -343,10 +361,11 @@
         { key: 'action_flip_h', name: 'Flip Horiz', cat: 'geo', isAction: true, icon: `<path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><line x1="12" y1="3" x2="12" y2="21" stroke-dasharray="2 2"/>` },
         { key: 'action_flip_v', name: 'Flip Vert', cat: 'geo', isAction: true, icon: `<path d="m7 3 5 5 5-5H7"/><path d="m7 21 5-5 5 5H7"/><line x1="3" y1="12" x2="21" y2="12" stroke-dasharray="2 2"/>` },
 
-        // AI & BG REMOVAL & BRUSH
+        // AI & BG REMOVAL & COLOR MATCH & BRUSH
+        { key: 'context_colormatch', name: 'Color Match', cat: 'color', isContext: 'colormatch', icon: `<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/><path d="M12 8.2a5 5 0 0 1 0 7.6"/>` },
         { key: 'action_ai_enhance', name: 'AI Enhance', cat: 'ai', isAction: true, icon: `<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/>` },
-        { key: 'action_auto_bg', name: 'Auto Hapus BG', cat: 'ai', isAction: true, icon: `<rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="4"/>` },
-        { key: 'context_wand_bg', name: 'Magic Wand BG', cat: 'ai', isContext: 'wand', icon: `<path d="m15 4-1 4 4 1-4 1-1 4-1-4-4-1 4-1 1-4Z"/><line x1="4" y1="20" x2="13" y2="11"/>` },
+        { key: 'action_auto_bg', name: 'Hapus BG AI', cat: 'ai', isAction: true, icon: `<rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="4"/>` },
+        { key: 'context_wand_bg', name: 'Hapus BG Manual', cat: 'ai', isContext: 'wand', icon: `<path d="m15 4-1 4 4 1-4 1-1 4-1-4-4-1 4-1 1-4Z"/><line x1="4" y1="20" x2="13" y2="11"/>` },
         { key: 'context_bg_color', name: 'Warna Latar', cat: 'ai', isContext: 'bgcolor', icon: `<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 15h18"/>` },
         { key: 'context_brush', name: 'Brush Doodle', cat: 'ai', isContext: 'brush', icon: `<path d="m18 5-3-3-9 9v3h3l9-9Z"/><path d="M5 19h14"/>` }
     ];
@@ -437,7 +456,7 @@
             if (!photo._origBlob) photo._origBlob = await encodeCanvas(photo.originalCanvas);
             const meta = {
                 id: photo.id, title: photo.title, createdAt: photo.createdAt || Date.now(), isEdited: !!photo.isEdited, pixelEdited: !!photo.pixelEdited,
-                editState: photo.editState, thumbUrl: photo.thumbUrl, editedThumbUrl: photo.editedThumbUrl
+                editState: photo.editState, thumbUrl: photo.thumbUrl, editedThumbUrl: photo.editedThumbUrl, exif: photo.exif || null
             };
             const blobs = {
                 id: photo.id, original: photo._origBlob, base: await encodeCanvas(photo.workingBaseCanvas),
@@ -469,7 +488,7 @@
         metas.forEach((r) => {
             libraryPhotos.push({
                 id: r.id, title: r.title, createdAt: r.createdAt, isEdited: r.isEdited, pixelEdited: r.pixelEdited, editState: r.editState,
-                thumbUrl: r.thumbUrl, editedThumbUrl: r.editedThumbUrl, _lazy: true
+                thumbUrl: r.thumbUrl, editedThumbUrl: r.editedThumbUrl, exif: r.exif || null, _lazy: true
             });
         });
         currentPhotoId = libraryPhotos[0] ? libraryPhotos[0].id : null;
@@ -517,7 +536,7 @@
     let lookClipboard = null, myLooks = [], toastTimer = 0, libSelectMode = false;
     const LOOK_OPT = { masks: false, texts: false };
     const libSelected = new Set();
-    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'hsl', 'lensBlur', 'relight', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt', 'blurCenters', 'glitch'];
+    const LOOK_KEYS = ['presetId', 'presetStrength', 'activeCubeLutId', 'curves', 'hsl', 'lensBlur', 'relight', 'retouch', 'colorMatch', 'effectId', 'effectStrength', 'dustId', 'dustStrength', 'frameId', 'frameStrength', 'wheels', 'wheelsAmt', 'blurCenters', 'glitch'];
 
     function flashToast(msg, ms = 1900) {
         let t = document.getElementById('saveToast');
@@ -668,7 +687,7 @@
         const row = document.createElement('div');
         row.id = 'libActions';
         row.className = 'lib-actions';
-        row.innerHTML = '<button id="btnLibSelect" class="link-underlined">PILIH FOTO</button><span id="libSelInfo" class="meta-label"></span><button id="btnLibPaste" class="link-underlined hidden">TEMPEL EDIT →</button>';
+        row.innerHTML = '<button id="btnLibSelect" class="link-underlined">PILIH FOTO</button><span id="libSelInfo" class="meta-label"></span><div style="display:flex;align-items:center;gap:10px;"><button id="btnLibPaste" class="link-underlined hidden">TEMPEL EDIT →</button><button id="btnLibBatchExport" class="link-underlined hidden">EXPORT MASSAL →</button></div>';
         grid.parentNode.insertBefore(row, grid);
         document.getElementById('btnLibSelect').addEventListener('click', () => {
             libSelectMode = !libSelectMode;
@@ -676,17 +695,29 @@
             renderLibraryGrid();
         });
         document.getElementById('btnLibPaste').addEventListener('click', () => batchPasteLook([...libSelected]));
+        document.getElementById('btnLibBatchExport').addEventListener('click', () => batchExportPhotos([...libSelected]));
     }
 
     function updateLibActions() {
         const sel = document.getElementById('btnLibSelect');
         if (!sel) return;
         sel.textContent = libSelectMode ? 'SELESAI' : 'PILIH FOTO';
-        const info = document.getElementById('libSelInfo'), paste = document.getElementById('btnLibPaste');
-        if (!libSelectMode) { info.textContent = ''; paste.classList.add('hidden'); return; }
-        info.textContent = lookClipboard ? `${libSelected.size} DIPILIH` : 'SALIN EDIT DULU DI EDITOR (IKON ⧉ DI ATAS)';
+        const info = document.getElementById('libSelInfo');
+        const paste = document.getElementById('btnLibPaste');
+        const bExp = document.getElementById('btnLibBatchExport');
+        if (!libSelectMode) {
+            info.textContent = '';
+            paste.classList.add('hidden');
+            if (bExp) bExp.classList.add('hidden');
+            return;
+        }
+        info.textContent = `${libSelected.size} DIPILIH` + (lookClipboard ? '' : ' · (atau salin edit ⧉ dulu)');
         paste.textContent = `TEMPEL EDIT (${libSelected.size}) →`;
         paste.classList.toggle('hidden', !(lookClipboard && libSelected.size));
+        if (bExp) {
+            bExp.textContent = `EXPORT (${libSelected.size}) →`;
+            bExp.classList.toggle('hidden', libSelected.size === 0);
+        }
     }
 
     async function batchPasteLook(ids) {
@@ -708,6 +739,43 @@
         switchStudioView('viewLibrary');
         renderLibraryGrid();
         flashToast(`✓ Edit diterapkan & tersimpan di ${done} foto`);
+    }
+
+    async function batchExportPhotos(ids) {
+        if (!ids.length) return;
+        let done = 0;
+        const wasSplit = typeof splitCompareActive !== 'undefined' ? splitCompareActive : false;
+        const wasHist = typeof histogramActive !== 'undefined' ? histogramActive : false;
+        if (typeof splitCompareActive !== 'undefined') splitCompareActive = false;
+        if (typeof histogramActive !== 'undefined') histogramActive = false;
+        try {
+            for (const id of ids) {
+                const p = libraryPhotos.find((x) => x.id === id);
+                if (!p) continue;
+                flashToast(`Mengekspor ${++done}/${ids.length}…`, 60000);
+                try { await hydratePhoto(p); } catch (err) { continue; }
+                openPhotoInEditorNow(p.id, 'Presets');
+                renderEditorCanvasSync(false);
+                const out = createBlankCanvas(mainCanvas.width, mainCanvas.height);
+                const oCtx = out.getContext('2d');
+                oCtx.fillStyle = '#f4f1ea';
+                oCtx.fillRect(0, 0, out.width, out.height);
+                oCtx.drawImage(mainCanvas, 0, 0);
+                const a = document.createElement('a');
+                a.download = `svnlens-batch-${String(done).padStart(2, '0')}.jpg`;
+                a.href = out.toDataURL('image/jpeg', 0.94);
+                a.click();
+                await new Promise((r) => setTimeout(r, 180));
+            }
+        } finally {
+            if (typeof splitCompareActive !== 'undefined') splitCompareActive = wasSplit;
+            if (typeof histogramActive !== 'undefined') histogramActive = wasHist;
+        }
+        libSelectMode = false;
+        libSelected.clear();
+        switchStudioView('viewLibrary');
+        renderLibraryGrid();
+        flashToast(`✓ ${done} foto berhasil diekspor`);
     }
 
     function init() {
@@ -813,7 +881,7 @@
         return tc.toDataURL('image/jpeg', 0.82);
     }
 
-    function addPhotoToLibrary(canvasEl, title, markEdited = false) {
+    function addPhotoToLibrary(canvasEl, title, markEdited = false, exifData = null) {
         const thumbUrl = generateThumbnailDataUrl(canvasEl, 480);
         const editState = createDefaultEditState();
 
@@ -826,6 +894,7 @@
             thumbUrl,
             editedThumbUrl: thumbUrl,
             isEdited: markEdited,
+            exif: exifData || (window.ProStudio ? window.ProStudio.formatDefaultExif() : null),
             createdAt: Date.now(),
             editState
         };
@@ -1072,8 +1141,12 @@
             try {
                 for (const file of files) {
                     try {
+                        let exif = null;
+                        if (window.ProStudio && window.ProStudio.parseJpegExif && (/\.jpe?g$/i.test(file.name) || file.type === 'image/jpeg')) {
+                            try { exif = window.ProStudio.parseJpegExif(await file.arrayBuffer()); } catch (_) {}
+                        }
                         const canvas = await loadImageFileToCanvas(file);
-                        lastAdded = addPhotoToLibrary(canvas, file.name);
+                        lastAdded = addPhotoToLibrary(canvas, file.name, false, exif);
                     } catch (err) {
                         errorMessages.push(err.message || `Gagal memuat ${file.name}`);
                     }
@@ -1294,8 +1367,22 @@
         historyIndex = -1;
         pushHistory('Open Photo');
 
+        if (state.texts && state.texts.length) ensureExtraFontsLoaded();
+
         switchEditorMainTab(initialTab);
         renderEditorCanvas();
+    }
+
+    let splitCompareActive = false, splitComparePos = 0.5, splitDragging = false;
+    let histogramActive = false;
+    let extraFontsInjected = false;
+    function ensureExtraFontsLoaded() {
+        if (extraFontsInjected) return;
+        extraFontsInjected = true;
+        const l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = 'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bodoni+Moda&family=Lora&family=Libre+Baskerville&family=Fraunces&family=Yeseva+One&family=Cinzel&family=Italiana&family=Marcellus&family=Prata&family=Gloock&family=Rozha+One&family=Young+Serif&family=Montserrat&family=Poppins&family=Raleway&family=Josefin+Sans&family=DM+Sans&family=Space+Grotesk&family=Syne&family=League+Spartan&family=Archivo+Black&family=Anton&family=Unbounded&family=Lexend&family=Outfit&family=Monoton&family=Bungee&family=Righteous&family=Rubik+Mono+One&family=Shrikhand&family=Lobster&family=Bowlby+One&family=Alfa+Slab+One&family=Fredoka&family=Pacifico&family=Satisfy&family=Sacramento&family=Allura&family=Parisienne&family=Yellowtail&family=Kaushan+Script&family=Mrs+Saint+Delafield&family=Alex+Brush&family=Tangerine&family=Shadows+Into+Light&family=Permanent+Marker&family=Rock+Salt&family=Reenie+Beanie&family=Gloria+Hallelujah&family=Indie+Flower&family=Amatic+SC&family=Nanum+Pen+Script&family=Covered+By+Your+Grace&family=Homemade+Apple&family=VT323&family=Press+Start+2P&family=Special+Elite&family=Courier+Prime&family=IBM+Plex+Mono&family=Major+Mono+Display&family=Orbitron&family=Audiowide&family=Silkscreen&family=DotGothic16&display=swap';
+        document.head.appendChild(l);
     }
 
     function saveCurrentPhotoBackToLibrary() {
@@ -1306,11 +1393,15 @@
         photo.workingBaseCanvas = cloneCanvas(basePhotoCanvas);
         photo.workingBrushCanvas = cloneCanvas(brushCanvas);
 
-        // Render thumbnail tanpa border seleksi teks & tanpa overlay peta fokus
+        // Render thumbnail tanpa border seleksi teks, overlay peta fokus, & garis split compare
         const prevSel = state.selectedTextId;
         const prevLbPreview = lensBlurPreviewFocus;
+        const prevSplit = splitCompareActive;
+        const prevHist = histogramActive;
         state.selectedTextId = null;
         lensBlurPreviewFocus = false;
+        splitCompareActive = false;
+        histogramActive = false;
         renderEditorCanvasSync('good');
         photo.editedThumbUrl = generateThumbnailDataUrl(mainCanvas, 480);
         // Salinan hasil edit (maks 2160px) agar bisa dipakai di Templates
@@ -1322,6 +1413,9 @@
         photo.pixelEdited = currentPixelEdited;
         state.selectedTextId = prevSel;
         lensBlurPreviewFocus = prevLbPreview;
+        splitCompareActive = prevSplit;
+        histogramActive = prevHist;
+        if (prevSplit || prevHist) renderEditorCanvas();
 
         // Tandai edited jika ada perubahan dari default
         const isDefault =
@@ -1334,6 +1428,9 @@
             !hslActive(state) &&
             !lensBlurActive(state) &&
             !relightActive(state) &&
+            !retouchActive(state) &&
+            !colorMatchActive(state) &&
+            (!state.healStrokes || !state.healStrokes.length) &&
             !isGlitchActive(state) &&
             (!state.dustId || state.dustId === 'none_dust') &&
             !state.flipH && !state.flipV && !currentPixelEdited &&
@@ -1401,6 +1498,8 @@
         if (isHoldingCompare) {
             ctx.clearRect(0, 0, w, h);
             ctx.drawImage(photo.originalCanvas, 0, 0, w, h);
+            const sb = document.getElementById('splitCompareBar');
+            if (sb) sb.classList.add('hidden');
             return;
         }
 
@@ -1417,7 +1516,8 @@
         // 1-4. Resolusi preview adaptif (jauh lebih ringan di HP saat beberapa alat berat aktif sekaligus!)
         const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || Math.min(window.innerWidth || 1024, window.innerHeight || 768) < 700;
         const hasHeavy = !!(
-            lensBlurActive(state) || showLensPreview || relightActive(state) ||
+            lensBlurActive(state) || showLensPreview || relightActive(state) || retouchActive(state) ||
+            (state.healStrokes && state.healStrokes.length) ||
             detSharp || detClarity || detTexture || detDenoise ||
             isGlitchActive(state) ||
             bj.blur || bj.motionBlur || bj.zoomBlur || bj.spinBlur || bj.tiltShift || bj.edgeBlur || bj.bokeh || bj.dreamGlow || bj.strobe ||
@@ -1637,6 +1737,16 @@
             });
         }
 
+        // Color Match dari Foto Referensi & Portrait Beauty AI (Kulit Halus Alami, Noda, Cerah, Mata, Bibir)
+        if (colorMatchActive(state) && window.ProStudio && window.ProStudio.applyColorMatch) {
+            window.ProStudio.applyColorMatch(gc, state.colorMatch.profile, (state.colorMatch.strength || 0) / 100);
+        }
+
+        if (retouchActive(state) && window.ProStudio && window.ProStudio.applyPortraitRetouch) {
+            const rtMask = getLensBlurSubjectMask();
+            window.ProStudio.applyPortraitRetouch(gc, rtMask, { ...(state.retouch || createDefaultRetouch()), fast: fast === true });
+        }
+
         // Global Detail Engine (Edge-Preserving Denoise, Clarity, Texture, Real Unsharp Mask Sharpness)
         if ((detSharp || detClarity || detTexture || detDenoise) && window.AITools && window.AITools.applyDetailEnhancements) {
             window.AITools.applyDetailEnhancements(gc, {
@@ -1660,14 +1770,15 @@
             }
         }
 
-        // Smart Portrait Lens Blur (AI Subject-Aware DSLR Bokeh — dijalankan setelah Detail & Relight agar bokeh latar tetap halus)
+        // Smart Portrait Lens Blur (AI Subject-Aware DSLR Bokeh + 3D Depth Map)
         if ((lensBlurActive(state) || showLensPreview) && window.AITools && window.AITools.applySmartLensBlur) {
             const subjMask = getLensBlurSubjectMask();
             if (subjMask) {
                 window.AITools.applySmartLensBlur(gc, subjMask, {
                     ...(state.lensBlur || createDefaultLensBlur()),
                     previewFocus: showLensPreview,
-                    fast: fast === true
+                    fast: fast === true,
+                    normalKey: getLensBlurCacheKey()
                 });
             }
         }
@@ -1727,22 +1838,60 @@
 
         ctx.drawImage(gc, 0, 0, w, h);
 
-        // 6. Analog Effects (Light Leaks, Film Burns, Vintage Dust)
+        // 6. Analog Effects (Light Leaks, Film Burns, Vintage Dust, EXIF Gallery Frames)
         renderAnalogEffectsOverlay(ctx, w, h, state.effectId, state.effectStrength / 100);
         renderDustOverlay(ctx, w, h, state.dustId, state.dustStrength / 100);
-        renderFrameOverlay(ctx, w, h, state.frameId, (state.frameStrength ?? 60) / 100);
+        renderFrameOverlay(ctx, w, h, state.frameId, (state.frameStrength ?? 60) / 100, photo.exif);
 
         // 7. Layer Brush / Doodle
         ctx.drawImage(brushCanvas, 0, 0);
 
-        // 8. Layer Teks & Stiker (mendukung multi-baris untuk kredit editorial)
-        state.texts.forEach((t) => {
+        // 8. Layer Teks & Stiker (mendukung Teks Di Belakang Subjek otomatis + stiker grafis transparan)
+        const getStickerImg = (src) => {
+            if (!window._svnStickerCache) window._svnStickerCache = new Map();
+            let im = window._svnStickerCache.get(src);
+            if (!im) {
+                im = new Image();
+                im.onload = () => renderEditorCanvas();
+                im.src = src;
+                window._svnStickerCache.set(src, im);
+            }
+            return im;
+        };
+
+        const drawTextLayerItem = (t, drawBody, drawSel) => {
             ctx.save();
             ctx.translate(t.x, t.y);
-            if (t.rotate) {
-                ctx.rotate((t.rotate * Math.PI) / 180);
-            }
+            if (t.rotate) ctx.rotate((t.rotate * Math.PI) / 180);
             ctx.globalAlpha = (t.opacity ?? 100) / 100;
+
+            if (t.imgSrc) {
+                const im = getStickerImg(t.imgSrc);
+                const maxDim = Math.max(40, (t.size || 56) * 2.2);
+                const nw = im.naturalWidth || 160;
+                const nh = im.naturalHeight || 160;
+                const asp = nw / Math.max(1, nh);
+                const dw = asp >= 1 ? maxDim : maxDim * asp;
+                const dh = asp >= 1 ? maxDim / asp : maxDim;
+                if (drawBody && im.complete && nw > 0) {
+                    if (t.shadow) {
+                        ctx.shadowColor = 'rgba(0,0,0,0.34)';
+                        ctx.shadowBlur = Math.max(6, maxDim * 0.08);
+                        ctx.shadowOffsetY = Math.max(2, maxDim * 0.025);
+                    }
+                    ctx.drawImage(im, -dw / 2, -dh / 2, dw, dh);
+                }
+                if (drawSel && t.id === state.selectedTextId) {
+                    ctx.shadowColor = 'transparent';
+                    ctx.globalAlpha = 1;
+                    ctx.strokeStyle = 'rgba(244, 241, 234, 0.85)';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([5, 4]);
+                    ctx.strokeRect(-dw / 2 - 8, -dh / 2 - 8, dw + 16, dh + 16);
+                }
+                ctx.restore();
+                return;
+            }
 
             const weight = t.bold ? '700' : '400';
             const style = t.italic ? 'italic' : 'normal';
@@ -1754,18 +1903,16 @@
             const lineH = t.size * (t.lineHeight || 1.28);
             const totalH = lineH * lines.length;
 
-            if (t.shadow) {
+            if (drawBody && t.shadow) {
                 ctx.shadowColor = 'rgba(0,0,0,0.45)';
                 ctx.shadowBlur = Math.max(4, t.size * 0.14);
                 ctx.shadowOffsetY = 2;
             }
-
-            if (t.outline) {
+            if (drawBody && t.outline) {
                 ctx.lineWidth = Math.max(2, t.size * 0.06);
                 ctx.strokeStyle = '#1c1917';
                 lines.forEach((ln, idx) => {
-                    const ly = (idx - (lines.length - 1) / 2) * lineH;
-                    ctx.strokeText(ln, 0, ly);
+                    ctx.strokeText(ln, 0, (idx - (lines.length - 1) / 2) * lineH);
                 });
             }
 
@@ -1773,27 +1920,82 @@
             let maxW = 0;
             lines.forEach((ln, idx) => {
                 const ly = (idx - (lines.length - 1) / 2) * lineH;
-                ctx.fillText(ln, 0, ly);
+                if (drawBody) ctx.fillText(ln, 0, ly);
                 const mw = ctx.measureText(ln).width;
                 if (mw > maxW) maxW = mw;
             });
 
-            // Dashed white selection rectangle
-            if (t.id === state.selectedTextId) {
+            if (drawSel && t.id === state.selectedTextId) {
                 const bw = Math.max(60, maxW + 28);
                 const bh = Math.max(t.size * 1.32, totalH + 12);
                 let boxX = -bw / 2;
                 if (t.align === 'left') boxX = -14;
                 if (t.align === 'right') boxX = -bw + 14;
-
                 ctx.shadowColor = 'transparent';
+                ctx.globalAlpha = 1;
                 ctx.strokeStyle = 'rgba(244, 241, 234, 0.85)';
                 ctx.lineWidth = 1.5;
                 ctx.setLineDash([5, 4]);
                 ctx.strokeRect(boxX, -bh / 2, bw, bh);
             }
             ctx.restore();
+        };
+
+        const behindTexts = state.texts.filter((t) => !!t.behindSubject);
+        const frontTexts = state.texts.filter((t) => !t.behindSubject);
+
+        if (behindTexts.length) {
+            behindTexts.forEach((t) => drawTextLayerItem(t, true, false));
+            const txtSubjMask = getLensBlurSubjectMask();
+            if (txtSubjMask && window.AITools && window.AITools._getFullResSubjectAlpha) {
+                const alpha = window.AITools._getFullResSubjectAlpha(txtSubjMask, gc, gw, gh, getLensBlurCacheKey());
+                if (alpha) {
+                    const fgCv = window.AITools._getScratch('txtSubjFg', gw, gh);
+                    const fgCtx = fgCv.getContext('2d', { willReadFrequently: true });
+                    fgCtx.clearRect(0, 0, gw, gh);
+                    fgCtx.drawImage(gc, 0, 0, gw, gh);
+                    const fImg = fgCtx.getImageData(0, 0, gw, gh);
+                    const fd = fImg.data;
+                    for (let p = 0, i = 3; p < alpha.length; p++, i += 4) fd[i] = alpha[p];
+                    fgCtx.putImageData(fImg, 0, 0);
+                    ctx.drawImage(fgCv, 0, 0, w, h);
+                }
+            }
+        }
+        frontTexts.forEach((t) => drawTextLayerItem(t, true, true));
+        behindTexts.forEach((t) => {
+            if (t.id === state.selectedTextId) drawTextLayerItem(t, false, true);
         });
+
+        // 9. Split-Screen Wipe Before/After & Live RGB Histogram HUD
+        const splitBarEl = document.getElementById('splitCompareBar');
+        if (splitCompareActive) {
+            const splitX = Math.max(0, Math.min(w, w * splitComparePos));
+            const origSrc = (photo.originalCanvas && photo.originalCanvas.width === w && photo.originalCanvas.height === h)
+                ? photo.originalCanvas
+                : basePhotoCanvas;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, 0, splitX, h);
+            ctx.clip();
+            ctx.drawImage(origSrc, 0, 0, w, h);
+            ctx.restore();
+            if (splitBarEl) {
+                splitBarEl.classList.remove('hidden');
+                splitBarEl.style.left = `${(splitComparePos * 100).toFixed(2)}%`;
+            }
+        } else if (splitBarEl) {
+            splitBarEl.classList.add('hidden');
+        }
+
+        if (histogramActive && window.ProStudio && window.ProStudio.computeHistogram) {
+            const hc = document.getElementById('histogramCanvas');
+            const hm = document.getElementById('histogramMeta');
+            const hStats = window.ProStudio.computeHistogram(mainCanvas, hc);
+            if (hm) {
+                hm.innerHTML = `<span class="${hStats.shClipPct > 3 ? 'clip-sh' : ''}">SH ${hStats.shClipPct.toFixed(1)}%</span><span>RGB</span><span class="${hStats.hiClipPct > 1.5 ? 'clip-hi' : ''}">HI ${hStats.hiClipPct.toFixed(1)}%</span>`;
+            }
+        }
     }
 
     function defaultWheels() {
@@ -2375,6 +2577,10 @@
 
     const FRAMES = [
         { id: 'none_frame', code: 'NONE', name: 'No Frame' },
+        { id: 'frm_exif_leica', code: 'EXIF LEICA', name: 'EXIF Gallery White' },
+        { id: 'frm_exif_dark', code: 'EXIF DARK', name: 'EXIF Obsidian Bar' },
+        { id: 'frm_exif_fuji', code: 'EXIF FUJI', name: 'EXIF Film Sheet' },
+        { id: 'frm_exif_pola', code: 'EXIF POLA', name: 'EXIF Polaroid Sign' },
         { id: 'frm_polaroid', code: 'POLAROID', name: 'Polaroid Frame' },
         { id: 'frm_instax', code: 'INSTAX', name: 'Instax Frame' },
         { id: 'frm_film', code: 'FILM STRIP', name: 'Film Strip' },
@@ -2385,8 +2591,12 @@
         { id: 'frm_ccd', code: 'DIGICAM UI', name: 'Digicam UI' }
     ];
 
-    function renderFrameOverlay(c, w, h, id, k) {
+    function renderFrameOverlay(c, w, h, id, k, exifData = null) {
         if (!id || id === 'none_frame') return;
+        if (id.startsWith('frm_exif_') && window.ProStudio && window.ProStudio.renderExifFrame) {
+            window.ProStudio.renderExifFrame(c, w, h, id, k, exifData);
+            return;
+        }
         const m = Math.min(w, h), t = m * (0.02 + k * 0.08);
         const bars = (col, top, right, bottom, left) => {
             c.fillStyle = col;
@@ -2569,6 +2779,10 @@
     // ==========================================
     // 7. EDITOR UI TABS & LIVE THUMBNAIL STRIPS
     // ==========================================
+    let universalZoomSticky = false;
+    let wandTolerance = 26, wandMode = 'tap', wandBrushSize = 36, wandDrawing = false, lastWandPt = null;
+    let retouchAttr = 'smooth';
+
     function switchEditorMainTab(tabName) {
         activeEditorMainTab = tabName;
 
@@ -2589,10 +2803,11 @@
             closeFocalUI();
             closeRelightUI();
             if (lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
-            resetCanvasZoom();
+            if (!universalZoomSticky) resetCanvasZoom();
             wbPickActive = false;
             document.getElementById('wheelsEditor').classList.add('hidden');
             magicWandActive = false;
+            wandDrawing = false;
             brushModeActive = false;
             mainCanvas.style.cursor = 'default';
         }
@@ -2607,12 +2822,19 @@
             gestureHint.textContent = 'HOLD TO COMPARE · DOUBLE-CLICK SLIDER TO RESET';
             renderToolsStrip();
             selectToolKey(activeToolKey);
+        } else if (tabName === 'Beauty') {
+            masterSliderBlock.classList.remove('hidden');
+            gestureHint.textContent = 'TAHAN FOTO: BANDINGKAN · PILIH FITUR RETOUCH DI BAWAH';
+            renderBeautyPanel();
+            syncMasterSliderForRetouch();
+            warmLensBlurSubjectMask(false);
         } else if (tabName === 'Effects') {
             masterSliderBlock.classList.remove('hidden');
             gestureHint.textContent = 'HOLD TO COMPARE · ADJUST ANALOG EFFECT STRENGTH';
             renderEffectsStrip();
             syncMasterSliderForEffect();
         } else if (tabName === 'Text') {
+            ensureExtraFontsLoaded();
             masterSliderBlock.classList.add('hidden');
             gestureHint.textContent = 'DRAG TEXT ON PHOTO TO MOVE · SELECT FONT BELOW';
             renderTextTabUI();
@@ -2846,6 +3068,7 @@
         else if (activeToolKey === 'context_hsl') mod = hslActive(state);
         else if (activeToolKey === 'context_lensblur') mod = lensBlurActive(state);
         else if (activeToolKey === 'context_relight') mod = relightActive(state);
+        else if (activeToolKey === 'context_colormatch') mod = colorMatchActive(state);
         else if (activeToolKey === 'context_mask') mod = !!(state.masks && state.masks.length);
         else if (activeToolKey === 'context_wheels') mod = wheelsActive(state);
         else if (activeToolKey === 'context_curves') mod = !isCurvesIdentity(state.curves);
@@ -2873,11 +3096,13 @@
                             ? lensBlurActive(state)
                             : tool.isContext === 'relight'
                                 ? relightActive(state)
-                                : tool.isContext === 'mask'
-                                    ? !!(state.masks && state.masks.length)
-                                    : tool.isContext === 'glitch'
-                                        ? isGlitchActive(state)
-                                        : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
+                                : tool.isContext === 'colormatch'
+                                    ? colorMatchActive(state)
+                                    : tool.isContext === 'mask'
+                                        ? !!(state.masks && state.masks.length)
+                                        : tool.isContext === 'glitch'
+                                            ? isGlitchActive(state)
+                                            : !tool.isAction && !tool.isContext && (state.adjust[tool.key] ?? 0) !== 0;
 
             const btn = document.createElement('button');
             btn.className = `tool-icon-card ${isSelected ? 'active' : ''}`;
@@ -2904,10 +3129,10 @@
         if (!FOCAL_BLUR_TOOLS.has(tool.key)) closeFocalUI();
         if (tool.isContext !== 'relight') closeRelightUI();
         if (tool.isContext !== 'lensblur' && lensBlurPreviewFocus) { lensBlurPreviewFocus = false; renderEditorCanvas(); }
-        if (tool.isContext !== 'mask' && tool.isContext !== 'brush') resetCanvasZoom();
+        if (tool.isContext !== 'mask' && tool.isContext !== 'brush' && !(tool.isContext === 'wand' && wandMode !== 'tap') && !universalZoomSticky) resetCanvasZoom();
         if (tool.isContext !== 'wb') wbPickActive = false;
         if (tool.isContext !== 'wheels') document.getElementById('wheelsEditor').classList.add('hidden');
-        if (tool.isContext !== 'wand') magicWandActive = false;
+        if (tool.isContext !== 'wand') { magicWandActive = false; wandDrawing = false; }
         if (tool.isContext !== 'brush') brushModeActive = false;
         if (tool.isContext !== 'curves') document.getElementById('curvesEditor').classList.add('hidden');
         mainCanvas.style.cursor = 'default';
@@ -2925,7 +3150,7 @@
             return;
         }
 
-        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush, Mask, Glitch, Wheels, Curves, WB, Relight)
+        // Jika tool membuka sub-bar kontekstual (Crop, Magic Wand, Warna Latar, Brush, Mask, Glitch, Wheels, Curves, WB, Relight, Beauty, Heal, Color Match)
         if (tool.isContext) {
             activeToolKey = tool.key;
             if (tool.isContext === 'relight') {
@@ -2949,7 +3174,7 @@
         let tool = TOOLS_CONFIG.find((t) => t.key === key) || TOOLS_CONFIG[0];
 
         // Context panel tertentu tetap terbuka (mis. setelah Undo/Redo atau pindah tab)
-        if (tool.isContext === 'curves' || tool.isContext === 'glitch' || tool.isContext === 'mask' || tool.isContext === 'hsl' || tool.isContext === 'lensblur' || tool.isContext === 'relight') {
+        if (tool.isContext === 'curves' || tool.isContext === 'glitch' || tool.isContext === 'mask' || tool.isContext === 'hsl' || tool.isContext === 'lensblur' || tool.isContext === 'relight' || tool.isContext === 'retouch' || tool.isContext === 'heal' || tool.isContext === 'colormatch') {
             activeToolKey = tool.key;
             renderToolsStrip();
             openToolContextBar(tool.isContext, tool.name);
@@ -2992,7 +3217,65 @@
         renderToolsStrip();
     }
 
+    let autoBgBusy = false;
+    async function runAutoRemoveBackgroundAI() {
+        if (autoBgBusy || !window.AITools) return;
+        autoBgBusy = true;
+        const loading = document.getElementById('loadingBadge');
+        const setMsg = (m) => {
+            if (!loading) return;
+            loading.textContent = m || 'HAPUS BG AI...';
+            loading.classList.remove('hidden');
+        };
+        setMsg('Menyiapkan AI Hapus BG (RMBG-1.4)...');
+        try {
+            const key = getLensBlurCacheKey();
+            let usedNeural = false;
+            if (lensBlurSubjectCache.key === key && lensBlurSubjectCache.canvas && lensBlurSubjectCache.canvas._isNeural) {
+                window.AITools.applySubjectCutoutAlpha(basePhotoCanvas, lensBlurSubjectCache.canvas);
+                usedNeural = true;
+            } else if (window.AITools.removeBackgroundAI) {
+                const res = await window.AITools.removeBackgroundAI(basePhotoCanvas, setMsg);
+                usedNeural = !!(res && res.usedNeural);
+                if (res && res.maskCanvas) {
+                    lensBlurSubjectCache = { key, canvas: res.maskCanvas };
+                }
+            } else {
+                const maskCv = window.AITools.autoRemoveBackground(basePhotoCanvas);
+                if (maskCv) lensBlurSubjectCache = { key, canvas: maskCv };
+            }
+            renderEditorCanvasSync();
+            renderToolsStrip();
+            pushHistory('Hapus BG AI');
+            flashToast(usedNeural ? '✓ Background dihapus (AI RMBG-1.4)' : '✓ Background dihapus (Mode Offline)', 2400);
+        } catch (err) {
+            console.warn('Auto BG removal error:', err);
+            flashToast('Gagal menghapus background otomatis', 2200);
+        } finally {
+            autoBgBusy = false;
+            if (loading) loading.classList.add('hidden');
+        }
+    }
+
+    function restoreBasePhotoOriginalBg() {
+        const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+        if (!photo || !photo.originalCanvas) return;
+        basePhotoCanvas.width = photo.originalCanvas.width;
+        basePhotoCanvas.height = photo.originalCanvas.height;
+        basePhotoCtx.clearRect(0, 0, basePhotoCanvas.width, basePhotoCanvas.height);
+        basePhotoCtx.drawImage(photo.originalCanvas, 0, 0);
+        invalidateLensBlurCache();
+        renderEditorCanvasSync();
+        renderToolsStrip();
+        pushHistory('Pulihkan Background Asli');
+        flashToast('✓ Background asli dipulihkan', 1800);
+    }
+
     function executeInstantToolAction(actionKey) {
+        if (actionKey === 'action_auto_bg') {
+            runAutoRemoveBackgroundAI();
+            return;
+        }
         if (actionKey === 'action_rot_left') {
             rotateBaseCanvas(-1);
         } else if (actionKey === 'action_rot_right') {
@@ -3013,9 +3296,6 @@
             state.adjust.vibrance = 22;
             state.adjust.sharpness = 16;
             selectToolKey('exposure');
-        } else if (actionKey === 'action_auto_bg') {
-            window.AITools.autoRemoveBackground(basePhotoCanvas, 34, 16);
-            invalidateLensBlurCache();
         } else if (actionKey === 'action_halation') {
             window.AITools.applyFilmHalation(basePhotoCanvas);
         } else if (actionKey === 'action_bokeh') {
@@ -3108,16 +3388,43 @@
         } else if (contextType === 'wand') {
             magicWandActive = true;
             mainCanvas.style.cursor = 'crosshair';
-            document.getElementById('gestureHintText').textContent = 'KLIK WARNA BACKGROUND DI FOTO UNTUK MENGHAPUSNYA';
-            const autoBtn = document.createElement('button');
-            autoBtn.className = 'dark-chip active';
-            autoBtn.textContent = '✨ AUTO HAPUS TEPI';
-            autoBtn.addEventListener('click', () => {
-                window.AITools.autoRemoveBackground(basePhotoCanvas, 34, 16);
-                renderEditorCanvas();
-                pushHistory('Auto Remove BG');
-            });
-            bar.appendChild(autoBtn);
+            if (wandMode !== 'tap') enableCanvasZoom(true);
+
+            const mkBtn = (label, active, fn, cls = '') => {
+                const b = document.createElement('button');
+                b.className = `dark-chip ${cls} ${active ? 'active' : ''}`.trim();
+                b.textContent = label;
+                b.addEventListener('click', fn);
+                bar.appendChild(b);
+            };
+            mkBtn('✨ AI HAPUS BG', false, () => runAutoRemoveBackgroundAI(), 'chip-ai');
+            mkBtn('🪄 TAP WARNA', wandMode === 'tap', () => { wandMode = 'tap'; if (!universalZoomSticky) resetCanvasZoom(); openToolContextBar('wand', 'Hapus BG Manual'); });
+            mkBtn('🖌 KUAS HAPUS', wandMode === 'erase', () => { wandMode = 'erase'; openToolContextBar('wand', 'Hapus BG Manual'); });
+            mkBtn('🖌 KUAS PULIHKAN', wandMode === 'restore', () => { wandMode = 'restore'; openToolContextBar('wand', 'Hapus BG Manual'); });
+            mkBtn('↺ PULIHKAN ASLI', false, () => restoreBasePhotoOriginalBg());
+
+            masterSliderMode = 'wand';
+            masterSlider.disabled = false;
+            if (wandMode === 'tap') {
+                masterSlider.min = 10;
+                masterSlider.max = 60;
+                masterSlider.value = wandTolerance;
+                document.getElementById('activeParamCategory').textContent = 'HAPUS BG MANUAL';
+                document.getElementById('activeParamTitle').textContent = 'TOLERANSI WARNA';
+                document.getElementById('activeParamValue').textContent = wandTolerance;
+                document.getElementById('gestureHintText').textContent = 'KLIK AREA BACKGROUND UNTUK MENGHAPUS · ATUR TOLERANSI DI SLIDER';
+            } else {
+                masterSlider.min = 10;
+                masterSlider.max = 120;
+                masterSlider.value = wandBrushSize;
+                document.getElementById('activeParamCategory').textContent = 'KUAS BG MANUAL';
+                document.getElementById('activeParamTitle').textContent = wandMode === 'erase' ? 'UKURAN KUAS HAPUS' : 'UKURAN KUAS PULIHKAN';
+                document.getElementById('activeParamValue').textContent = wandBrushSize;
+                document.getElementById('gestureHintText').textContent = wandMode === 'erase'
+                    ? 'USAP BAGIAN BACKGROUND YANG MASIH TERSISA UNTUK DIHAPUS'
+                    : 'USAP BAGIAN OBJEK YANG IKUT TERHAPUS AGAR KEMBALI UTUH';
+            }
+            document.getElementById('masterSliderBlock')?.classList.remove('hidden');
         } else if (contextType === 'bgcolor') {
             const colors = [
                 { label: 'TRANSPARENT', val: 'transparent' },
@@ -3149,6 +3456,9 @@
             return;
         } else if (contextType === 'relight') {
             renderRelightContextBar(bar);
+            return;
+        } else if (contextType === 'colormatch') {
+            renderColorMatchContextBar(bar);
             return;
         } else if (contextType === 'mask') {
             renderMaskStudio(bar);
@@ -3471,6 +3781,38 @@
      * Persis seperti Screenshot 5 (Light Leak 01..05 dengan preview langsung di atas awan/foto!)
      */
     let lastEffectCat = null;
+    let activeStickerCat = 'all';
+
+    function addStickerLayerToPhoto(stk) {
+        if (!stk || !stk.src || !basePhotoCanvas.width) return;
+        const baseMin = Math.min(basePhotoCanvas.width, basePhotoCanvas.height);
+        const item = {
+            id: 'stk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            text: stk.name || 'Stiker',
+            imgSrc: stk.src,
+            stickerName: stk.name || 'Stiker',
+            font: 'sans-serif',
+            fontName: stk.name || 'Stiker',
+            color: '#ffffff',
+            size: Math.max(26, Math.min(180, Math.round(baseMin * 0.13))),
+            opacity: 100,
+            rotate: 0,
+            align: 'center',
+            bold: false,
+            italic: false,
+            shadow: true,
+            outline: false,
+            behindSubject: false,
+            x: basePhotoCanvas.width * (0.28 + Math.random() * 0.44),
+            y: basePhotoCanvas.height * (0.22 + Math.random() * 0.44)
+        };
+        state.texts.push(item);
+        state.selectedTextId = item.id;
+        renderEditorCanvas();
+        pushHistory(`Stiker ${stk.name || 'Studio'}`, true);
+        flashToast(`✓ Stiker "${stk.name}" ditambahkan — geser di foto / atur di 05 TEXT`, 2200);
+    }
+
     function renderEffectsStrip() {
         const s = document.getElementById('effectsStrip');
         const keep = lastEffectCat === activeEffectCat ? s.scrollLeft : 0;
@@ -3482,6 +3824,11 @@
     function renderEffectsStripInner() {
         const strip = document.getElementById('effectsStrip');
         strip.innerHTML = '';
+
+        let stkCatRow = document.getElementById('stickerSubCatRow');
+        if (activeEffectCat !== 'stamps') {
+            if (stkCatRow) stkCatRow.classList.add('hidden');
+        }
 
         if (activeEffectCat === 'frames') {
             FRAMES.forEach((f) => {
@@ -3508,56 +3855,88 @@
         }
 
         if (activeEffectCat === 'stamps') {
-            const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
-            const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
-            const mono = "'Space Mono', monospace";
-            const stamps = [
-                { label: 'GRAD CREDITS', text: 'GRADUATION\nCREDITS', font: "'Inter', sans-serif", color: '#ffffff', isGradCredits: true },
-                { label: "'98 DATE", text: "'98 11 14", font: mono, color: '#ff7b00' },
-                { label: 'TODAY', text: today, font: mono, color: '#ff7b00' },
-                { label: 'KODAK 400', text: '→ 24A  KODAK PORTRA 400', font: mono, color: '#f59e0b' },
-                { label: 'REC ●', text: 'REC ●', font: mono, color: '#ff3b30' },
-                { label: 'PLAY ▶', text: '▶ PLAY', font: mono, color: '#ffffff' },
-                { label: 'DV TIMER', text: '00:12:04', font: mono, color: '#ffffff' },
-                { label: 'LOW BATT', text: '▯ LOW BATT', font: mono, color: '#ff3b30' },
-                { label: 'FLASH ⚡', text: '⚡ AUTO', font: mono, color: '#fde047' },
-                { label: 'ISO 400', text: 'ISO 400  F1.8', font: mono, color: '#ffffff' },
-                { label: 'POLAROID', text: 'POLAROID 600', font: mono, color: '#f4f1ea' },
-                { label: 'SVN.LENS', text: 'svn.lens', font: "'Playfair Display', serif", color: '#ffffff' },
-                { label: 'GOOD VIBES', text: 'good vibes only', font: "'Caveat', cursive", color: '#ffffff' },
-                { label: 'MEMORIES', text: 'memories', font: "'Dancing Script', cursive", color: '#ffffff' },
-                { label: 'SPARKLE ✨', text: '✨', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'STAR ⭐', text: '⭐', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'HEART 🤍', text: '🤍', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'PINK 💖', text: '💖', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'BUTTERFLY', text: '🦋', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'FLOWER 🌸', text: '🌸', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'RIBBON 🎀', text: '🎀', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'CLOUD ☁️', text: '☁️', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'CD 💿', text: '💿', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'CAMERA 📷', text: '📷', font: 'sans-serif', color: '#ffffff', sticker: true },
-                { label: 'FILM 🎞️', text: '🎞️', font: 'sans-serif', color: '#ffffff', sticker: true }
+            const cats = [
+                ...(window.STUDIO_STICKER_CATS || [{ id: 'all', label: 'SEMUA' }]),
+                { id: 'date', label: 'DATE & FILM' }
             ];
-            stamps.forEach((s) => {
-                const card = document.createElement('div');
-                card.className = 'thumb-card';
-                card.innerHTML = `
-                    <div class="thumb-box" style="display:flex;align-items:center;justify-content:center;color:${s.color};font-family:${s.font};font-size:0.75rem;text-align:center;padding:6px;">
-                        ${s.text.slice(0, 10)}
-                    </div>
-                    <span class="thumb-label">${s.label}</span>
-                `;
-                card.addEventListener('click', () => {
-                    if (s.isGradCredits) {
-                        addGradCreditsOverlay();
-                        return;
-                    }
-                    const px = s.sticker ? basePhotoCanvas.width * (0.25 + Math.random() * 0.5) : basePhotoCanvas.width * 0.72;
-                    const py = s.sticker ? basePhotoCanvas.height * (0.2 + Math.random() * 0.5) : basePhotoCanvas.height * 0.88;
-                    addTextLayerToPhoto(s.text, s.font, s.label, s.color, px, py);
+            if (!stkCatRow) {
+                stkCatRow = document.createElement('div');
+                stkCatRow.id = 'stickerSubCatRow';
+                stkCatRow.className = 'sticker-subcat-row';
+                strip.parentNode.insertBefore(stkCatRow, strip);
+            }
+            stkCatRow.classList.remove('hidden');
+            stkCatRow.innerHTML = '';
+            cats.forEach((c) => {
+                const b = document.createElement('button');
+                b.className = `dark-chip ${activeStickerCat === c.id ? 'active' : ''}`.trim();
+                b.textContent = c.label;
+                b.addEventListener('click', () => {
+                    activeStickerCat = c.id;
+                    renderEffectsStripInner();
                 });
-                strip.appendChild(card);
+                stkCatRow.appendChild(b);
             });
+
+            if (activeStickerCat !== 'date' && Array.isArray(window.STUDIO_STICKERS)) {
+                const stList = activeStickerCat === 'all'
+                    ? window.STUDIO_STICKERS
+                    : window.STUDIO_STICKERS.filter((item) => item.cat === activeStickerCat);
+                stList.forEach((stk) => {
+                    const card = document.createElement('div');
+                    card.className = 'thumb-card';
+                    card.innerHTML = `
+                        <div class="thumb-box sticker-thumb-box">
+                            <img src="${stk.src}" alt="${stk.name}" loading="lazy">
+                        </div>
+                        <span class="thumb-label">${stk.name}</span>
+                    `;
+                    card.addEventListener('click', () => addStickerLayerToPhoto(stk));
+                    strip.appendChild(card);
+                });
+            }
+
+            if (activeStickerCat === 'all' || activeStickerCat === 'date') {
+                const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+                const today = `'${String(d.getFullYear()).slice(2)} ${p2(d.getMonth() + 1)} ${p2(d.getDate())}`;
+                const mono = "'Space Mono', monospace";
+                const stamps = [
+                    { label: 'GRAD CREDITS', text: 'GRADUATION\nCREDITS', font: "'Inter', sans-serif", color: '#ffffff', isGradCredits: true },
+                    { label: "'98 DATE", text: "'98 11 14", font: mono, color: '#ff7b00' },
+                    { label: 'TODAY', text: today, font: mono, color: '#ff7b00' },
+                    { label: 'KODAK 400', text: '→ 24A  KODAK PORTRA 400', font: mono, color: '#f59e0b' },
+                    { label: 'REC ●', text: 'REC ●', font: mono, color: '#ff3b30' },
+                    { label: 'PLAY ▶', text: '▶ PLAY', font: mono, color: '#ffffff' },
+                    { label: 'DV TIMER', text: '00:12:04', font: mono, color: '#ffffff' },
+                    { label: 'LOW BATT', text: '▯ LOW BATT', font: mono, color: '#ff3b30' },
+                    { label: 'FLASH ⚡', text: '⚡ AUTO', font: mono, color: '#fde047' },
+                    { label: 'ISO 400', text: 'ISO 400  F1.8', font: mono, color: '#ffffff' },
+                    { label: 'POLAROID', text: 'POLAROID 600', font: mono, color: '#f4f1ea' },
+                    { label: 'SVN.LENS', text: 'svn.lens', font: "'Playfair Display', serif", color: '#ffffff' },
+                    { label: 'GOOD VIBES', text: 'good vibes only', font: "'Caveat', cursive", color: '#ffffff' },
+                    { label: 'MEMORIES', text: 'memories', font: "'Dancing Script', cursive", color: '#ffffff' }
+                ];
+                stamps.forEach((s) => {
+                    const card = document.createElement('div');
+                    card.className = 'thumb-card';
+                    card.innerHTML = `
+                        <div class="thumb-box" style="display:flex;align-items:center;justify-content:center;color:${s.color};font-family:${s.font};font-size:0.75rem;text-align:center;padding:6px;">
+                            ${s.text.slice(0, 10)}
+                        </div>
+                        <span class="thumb-label">${s.label}</span>
+                    `;
+                    card.addEventListener('click', () => {
+                        if (s.isGradCredits) {
+                            addGradCreditsOverlay();
+                            return;
+                        }
+                        const px = basePhotoCanvas.width * 0.72;
+                        const py = basePhotoCanvas.height * 0.88;
+                        addTextLayerToPhoto(s.text, s.font, s.label, s.color, px, py);
+                    });
+                    strip.appendChild(card);
+                });
+            }
             return;
         }
 
@@ -3690,6 +4069,8 @@
         document.getElementById('btnToggleItalic').classList.toggle('active', !!activeText.italic);
         document.getElementById('btnToggleShadow').classList.toggle('active', !!activeText.shadow);
         document.getElementById('btnToggleOutline').classList.toggle('active', !!activeText.outline);
+        const btnBehind = document.getElementById('btnToggleBehindSubject');
+        if (btnBehind) btnBehind.classList.toggle('active', !!activeText.behindSubject);
 
         renderFontCardsStrip(activeText);
     }
@@ -3934,6 +4315,21 @@
                 applyRelightSliderValue(val);
                 refreshToolDot();
                 drawRelightOverlay();
+            } else if (masterSliderMode === 'retouch') {
+                if (!state.retouch) state.retouch = createDefaultRetouch();
+                state.retouch[retouchAttr] = val;
+                const vTag = document.querySelector(`#beautyToolsStrip [data-retouch-val="${retouchAttr}"]`);
+                if (vTag) vTag.textContent = val;
+                refreshBeautyDots();
+            } else if (masterSliderMode === 'wand') {
+                if (wandMode === 'tap') wandTolerance = val;
+                else wandBrushSize = val;
+            } else if (masterSliderMode === 'colormatch') {
+                if (state.colorMatch && state.colorMatch.profile) {
+                    state.colorMatch.strength = val;
+                    document.getElementById('activeParamValue').textContent = `${val}%`;
+                    refreshToolDot();
+                }
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = val;
             } else if (masterSliderMode === 'mask') {
@@ -3960,7 +4356,8 @@
 
         masterSlider.addEventListener('change', () => {
             isSliderDragging = false;
-            if (masterSliderMode === 'tool' || masterSliderMode === 'focal' || masterSliderMode === 'glitch' || masterSliderMode === 'hsl' || masterSliderMode === 'lensblur' || masterSliderMode === 'relight') renderToolsStrip();
+            if (masterSliderMode === 'tool' || masterSliderMode === 'focal' || masterSliderMode === 'glitch' || masterSliderMode === 'hsl' || masterSliderMode === 'lensblur' || masterSliderMode === 'relight' || masterSliderMode === 'colormatch') renderToolsStrip();
+            if (masterSliderMode === 'retouch') renderBeautyPanel();
             if (masterSliderMode === 'mask') refreshMaskBar();
             scheduleGoodRefine(120);
             pushHistory(`Adjust ${document.getElementById('activeParamTitle').textContent}`, true);
@@ -4008,6 +4405,25 @@
                 masterSlider.value = defVal;
                 drawRelightOverlay();
                 renderToolsStrip();
+            } else if (masterSliderMode === 'retouch') {
+                if (!state.retouch) state.retouch = createDefaultRetouch();
+                state.retouch[retouchAttr] = 0;
+                masterSlider.value = 0;
+                renderBeautyPanel();
+            } else if (masterSliderMode === 'wand') {
+                if (wandMode === 'tap') {
+                    wandTolerance = 26;
+                    masterSlider.value = 26;
+                } else {
+                    wandBrushSize = 36;
+                    masterSlider.value = 36;
+                }
+            } else if (masterSliderMode === 'colormatch') {
+                if (state.colorMatch && state.colorMatch.profile) {
+                    state.colorMatch.strength = 80;
+                    masterSlider.value = 80;
+                    renderToolsStrip();
+                }
             } else if (masterSliderMode === 'wheels') {
                 state.wheelsAmt = 100;
                 masterSlider.value = 100;
@@ -4028,6 +4444,7 @@
             const sv = parseInt(masterSlider.value, 10);
             document.getElementById('activeParamValue').textContent =
                 masterSliderMode === 'glitch' && glitchAttr === 'angle' ? `${sv}°`
+                    : masterSliderMode === 'colormatch' ? `${sv}%`
                     : masterSliderMode === 'relight' && (relightAttr === 'depth' || relightAttr === 'ambient') ? formatSignedVal(sv)
                         : sv;
             renderEditorCanvas();
@@ -4102,6 +4519,20 @@
                 renderEditorCanvas();
             });
         });
+
+        const btnBehindSubject = document.getElementById('btnToggleBehindSubject');
+        if (btnBehindSubject) {
+            btnBehindSubject.addEventListener('click', (e) => {
+                const t = state.texts.find((item) => item.id === state.selectedTextId);
+                if (!t) return;
+                t.behindSubject = !t.behindSubject;
+                e.currentTarget.classList.toggle('active', !!t.behindSubject);
+                if (t.behindSubject) warmLensBlurSubjectMask(false);
+                renderEditorCanvas();
+                pushHistory('Text Behind Subject', true);
+                flashToast(t.behindSubject ? '✓ Teks ditempatkan di belakang subjek' : 'Teks kembali di depan foto', 1800);
+            });
+        }
 
         document.querySelectorAll('#textColorStrip .color-dot').forEach((dot) => {
             dot.addEventListener('click', () => {
@@ -4205,11 +4636,111 @@
             closeFocalUI();
             closeRelightUI();
             resetCanvasZoom();
+            splitCompareActive = false;
+            document.getElementById('btnSplitCompare')?.classList.remove('active');
+            document.getElementById('splitCompareBar')?.classList.add('hidden');
+            histogramActive = false;
+            document.getElementById('btnToggleHistogram')?.classList.remove('active');
+            document.getElementById('histogramHud')?.classList.add('hidden');
             state = createDefaultEditState();
             switchEditorMainTab(activeEditorMainTab);
             renderEditorCanvas();
             pushHistory('Reset All');
         });
+
+        // Pro HUD Toggles: Split-Screen Wipe, Live Histogram, Universal Zoom, & Color Match Upload
+        const btnSplit = document.getElementById('btnSplitCompare');
+        const splitBar = document.getElementById('splitCompareBar');
+        if (btnSplit && splitBar) {
+            btnSplit.addEventListener('click', () => {
+                splitCompareActive = !splitCompareActive;
+                btnSplit.classList.toggle('active', splitCompareActive);
+                renderEditorCanvas();
+                if (splitCompareActive) flashToast('⇄ Geser garis biru untuk bandingkan Before / After', 2200);
+            });
+            let splitDragging = false;
+            const updateSplitPos = (clientX) => {
+                const rect = mainCanvas.getBoundingClientRect();
+                if (!rect || rect.width < 10) return;
+                splitComparePos = Math.max(0.05, Math.min(0.95, (clientX - rect.left) / rect.width));
+                renderEditorCanvas();
+            };
+            splitBar.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                splitDragging = true;
+                if (splitBar.setPointerCapture) try { splitBar.setPointerCapture(e.pointerId); } catch (_) {}
+                updateSplitPos(e.clientX);
+            });
+            window.addEventListener('pointermove', (e) => { if (splitDragging) updateSplitPos(e.clientX); });
+            window.addEventListener('pointerup', () => { splitDragging = false; });
+        }
+
+        const btnHist = document.getElementById('btnToggleHistogram');
+        const histHud = document.getElementById('histogramHud');
+        if (btnHist && histHud) {
+            btnHist.addEventListener('click', () => {
+                histogramActive = !histogramActive;
+                btnHist.classList.toggle('active', histogramActive);
+                histHud.classList.toggle('hidden', !histogramActive);
+                renderEditorCanvas();
+            });
+        }
+
+        const btnZoomHud = document.getElementById('btnToggleZoomHud');
+        if (btnZoomHud) {
+            btnZoomHud.addEventListener('click', () => {
+                universalZoomSticky = !universalZoomSticky;
+                btnZoomHud.classList.toggle('active', universalZoomSticky);
+                enableCanvasZoom(universalZoomSticky || brushModeActive || (magicWandActive && wandMode !== 'tap') || maskUiActive);
+            });
+        }
+
+        const cmInput = document.getElementById('colorMatchFileInput');
+        if (cmInput) {
+            cmInput.addEventListener('change', async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file || !window.ProStudio) return;
+                try {
+                    let bmp = null;
+                    if (window.createImageBitmap) {
+                        bmp = await createImageBitmap(file);
+                    } else {
+                        bmp = await new Promise((res, rej) => {
+                            const img = new Image();
+                            const url = URL.createObjectURL(file);
+                            img.onload = () => { URL.revokeObjectURL(url); res(img); };
+                            img.onerror = (err) => { URL.revokeObjectURL(url); rej(err); };
+                            img.src = url;
+                        });
+                    }
+                    const bw = bmp.width || bmp.naturalWidth;
+                    const bh = bmp.height || bmp.naturalHeight;
+                    const sc = Math.min(1, 512 / Math.max(1, bw, bh));
+                    const cw = Math.max(24, Math.round(bw * sc));
+                    const ch = Math.max(24, Math.round(bh * sc));
+                    const cv = createBlankCanvas(cw, ch);
+                    cv.getContext('2d').drawImage(bmp, 0, 0, cw, ch);
+                    if (bmp.close) bmp.close();
+                    const profile = window.ProStudio.extractColorMatchProfile(cv);
+                    if (profile) {
+                        state.colorMatch = {
+                            profile,
+                            strength: 80,
+                            label: file.name.slice(0, 18)
+                        };
+                        openToolContextBar('colormatch', 'Color Match');
+                        renderEditorCanvas();
+                        renderToolsStrip();
+                        pushHistory('Color Match Reference', true);
+                        flashToast(`✓ Warna disamakan dengan "${file.name.slice(0, 20)}"`, 2400);
+                    }
+                } catch (err) {
+                    console.warn('Color match decode failed:', err);
+                    flashToast('Gagal membaca foto referensi warna', 2400);
+                }
+            });
+        }
 
         // Export & AI Relight Pro Modals
         bindExportModalEvents();
@@ -4256,12 +4787,23 @@
                 return;
             }
 
-            // 1. Magic Wand BG Removal
+            // 1. Magic Wand / Touch-Up BG Removal
             if (magicWandActive) {
-                window.AITools.removeBackgroundAtPoint(basePhotoCanvas, pt.x, pt.y, 34, 16, true);
-                invalidateLensBlurCache();
-                renderEditorCanvas();
-                pushHistory('Magic Wand BG');
+                const sx = basePhotoCanvas.width / Math.max(1, mainCanvas.width);
+                const sy = basePhotoCanvas.height / Math.max(1, mainCanvas.height);
+                const bx = state.flipH ? (basePhotoCanvas.width - pt.x * sx) : (pt.x * sx);
+                const by = state.flipV ? (basePhotoCanvas.height - pt.y * sy) : (pt.y * sy);
+                if (wandMode === 'tap') {
+                    window.AITools.removeBackgroundAtPoint(basePhotoCanvas, bx, by, wandTolerance, 12, true);
+                    invalidateLensBlurCache();
+                    renderEditorCanvas();
+                    pushHistory('Hapus BG Manual');
+                } else {
+                    wandDrawing = true;
+                    lastWandPt = { x: bx, y: by };
+                    applyWandBrushStroke(lastWandPt, lastWandPt);
+                    renderEditorCanvas();
+                }
                 return;
             }
 
@@ -4274,18 +4816,26 @@
                 return;
             }
 
-            // 3. Cek apakah mengklik layer Teks di atas foto (mendukung multi-baris & align kiri/tengah/kanan)
+            // 3. Cek apakah mengklik layer Teks / Stiker di atas foto (mendukung stiker grafis & multi-baris)
             for (let i = state.texts.length - 1; i >= 0; i--) {
                 const t = state.texts[i];
-                ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? '700' : '400'} ${t.size}px ${t.font}`;
-                const lines = String(t.text || '').split('\n');
-                let maxW = 0;
-                lines.forEach((ln) => { const w = ctx.measureText(ln).width; if (w > maxW) maxW = w; });
-                const tw = Math.max(80, maxW + 36);
-                const th = Math.max(t.size * 1.45, lines.length * t.size * (t.lineHeight || 1.28) + 20);
-                let leftX = t.x - tw / 2;
-                if (t.align === 'left') leftX = t.x - 16;
-                else if (t.align === 'right') leftX = t.x - tw + 16;
+                let tw, th, leftX;
+                if (t.imgSrc) {
+                    const maxDim = Math.max(70, (t.size || 56) * 2.2 + 24);
+                    tw = maxDim;
+                    th = maxDim;
+                    leftX = t.x - tw / 2;
+                } else {
+                    ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? '700' : '400'} ${t.size}px ${t.font}`;
+                    const lines = String(t.text || '').split('\n');
+                    let maxW = 0;
+                    lines.forEach((ln) => { const w = ctx.measureText(ln).width; if (w > maxW) maxW = w; });
+                    tw = Math.max(80, maxW + 36);
+                    th = Math.max(t.size * 1.45, lines.length * t.size * (t.lineHeight || 1.28) + 20);
+                    leftX = t.x - tw / 2;
+                    if (t.align === 'left') leftX = t.x - 16;
+                    else if (t.align === 'right') leftX = t.x - tw + 16;
+                }
                 if (
                     pt.x >= leftX &&
                     pt.x <= leftX + tw &&
@@ -4301,12 +4851,27 @@
                 }
             }
 
-            // 4. Jika tidak mengenai teks, aktifkan "Hold the photo to see original"
+            // 4. Jika split compare sedang aktif, jangan timpa dengan hold-compare
+            if (splitCompareActive) return;
+
+            // 5. Jika tidak mengenai teks, aktifkan "Hold the photo to see original"
             isHoldingCompare = true;
             renderEditorCanvas();
         };
 
         const movePointer = (e) => {
+            if (wandDrawing && magicWandActive) {
+                const pt = getCanvasPt(e);
+                const sx = basePhotoCanvas.width / Math.max(1, mainCanvas.width);
+                const sy = basePhotoCanvas.height / Math.max(1, mainCanvas.height);
+                const bx = state.flipH ? (basePhotoCanvas.width - pt.x * sx) : (pt.x * sx);
+                const by = state.flipV ? (basePhotoCanvas.height - pt.y * sy) : (pt.y * sy);
+                const curPt = { x: bx, y: by };
+                applyWandBrushStroke(lastWandPt || curPt, curPt);
+                lastWandPt = curPt;
+                renderEditorCanvas();
+                return;
+            }
             if (brushDrawing && brushModeActive) {
                 const pt = getCanvasPt(e);
                 strokeBrushLine(lastBrushPt, pt);
@@ -4330,6 +4895,12 @@
                 isHoldingCompare = false;
                 renderEditorCanvas();
             }
+            if (wandDrawing) {
+                wandDrawing = false;
+                lastWandPt = null;
+                invalidateLensBlurCache();
+                pushHistory(wandMode === 'erase' ? 'Kuas Hapus BG' : 'Kuas Pulihkan BG');
+            }
             if (brushDrawing) {
                 brushDrawing = false;
                 pushHistory('Brush Doodle');
@@ -4346,6 +4917,47 @@
         window.addEventListener('touchmove', movePointer, { passive: true });
         window.addEventListener('mouseup', endPointer);
         window.addEventListener('touchend', endPointer);
+    }
+
+    function applyWandBrushStroke(from, to) {
+        const bw = basePhotoCanvas.width, bh = basePhotoCanvas.height;
+        if (!bw || !bh) return;
+        const r = Math.max(4, wandBrushSize * (bw / Math.max(1, mainCanvas.width)) * 0.5);
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.hypot(dx, dy);
+        const step = Math.max(2, r * 0.35);
+        const steps = Math.max(1, Math.ceil(dist / step));
+
+        if (wandMode === 'erase') {
+            basePhotoCtx.save();
+            basePhotoCtx.globalCompositeOperation = 'destination-out';
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const cx = from.x + dx * t, cy = from.y + dy * t;
+                const g = basePhotoCtx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
+                g.addColorStop(0, 'rgba(0,0,0,1)');
+                g.addColorStop(1, 'rgba(0,0,0,0)');
+                basePhotoCtx.fillStyle = g;
+                basePhotoCtx.beginPath();
+                basePhotoCtx.arc(cx, cy, r, 0, Math.PI * 2);
+                basePhotoCtx.fill();
+            }
+            basePhotoCtx.restore();
+        } else if (wandMode === 'restore') {
+            const photo = libraryPhotos.find((p) => p.id === currentPhotoId);
+            if (!photo || !photo.originalCanvas) return;
+            basePhotoCtx.save();
+            basePhotoCtx.beginPath();
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const cx = from.x + dx * t, cy = from.y + dy * t;
+                basePhotoCtx.moveTo(cx + r, cy);
+                basePhotoCtx.arc(cx, cy, r, 0, Math.PI * 2);
+            }
+            basePhotoCtx.clip();
+            basePhotoCtx.drawImage(photo.originalCanvas, 0, 0, bw, bh);
+            basePhotoCtx.restore();
+        }
     }
 
     function strokeBrushLine(from, to) {
@@ -5501,7 +6113,7 @@
                 } else if (activeToolKey === 'context_relight') {
                     if (relightActive(state)) renderEditorCanvasSync();
                     flashToast(usedNeural ? '✓ Subjek AI terdeteksi otomatis (RMBG-1.4)' : '✓ Subjek terdeteksi (Mode Offline)', 2400);
-                } else if (relightActive(state) || lensBlurActive(state) || hasFlashPreset()) {
+                } else if (relightActive(state) || lensBlurActive(state) || hasFlashPreset() || retouchActive(state) || (state.texts && state.texts.some((t) => t.behindSubject))) {
                     renderEditorCanvasSync();
                     if (hasFlashPreset()) {
                         flashToast(usedNeural ? '✓ Filter Flash AI aktif (RMBG-1.4)' : '✓ Filter Flash aktif', 2000);
@@ -5512,6 +6124,218 @@
             console.warn('Subject detection error', err);
         } finally {
             lensBlurWarming = false;
+            if (loading) loading.classList.add('hidden');
+        }
+    }
+
+    const RETOUCH_ATTRS = [
+        { key: 'smooth', name: 'Halus Kulit', label: 'HALUS KULIT', icon: `<circle cx="12" cy="12" r="7"/><path d="M9 10c1-1.5 5-1.5 6 0" stroke-opacity="0.7"/>` },
+        { key: 'brighten', name: 'Cerah Wajah', label: 'CERAH WAJAH', icon: `<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>` },
+        { key: 'blemish', name: 'Hapus Noda', label: 'HAPUS NODA', icon: `<circle cx="12" cy="12" r="8" stroke-dasharray="3 2"/><circle cx="12" cy="12" r="2.2"/>` },
+        { key: 'eyePop', name: 'Kilau Mata', label: 'KILAU MATA', icon: `<path d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.8"/>` },
+        { key: 'lipTint', name: 'Rona Bibir', label: 'RONA BIBIR', icon: `<path d="M4 12c2.8-2.6 5.2-2.2 8-.6 2.8-1.6 5.2-2 8 .6-2.5 3.6-5.2 4.6-8 4.6S6.5 15.6 4 12Z"/>` }
+    ];
+
+    function syncMasterSliderForRetouch() {
+        if (!state.retouch) state.retouch = createDefaultRetouch();
+        const meta = RETOUCH_ATTRS.find((a) => a.key === retouchAttr) || RETOUCH_ATTRS[0];
+        const val = state.retouch[meta.key] ?? 0;
+        masterSliderMode = 'retouch';
+        masterSlider.disabled = false;
+        masterSlider.min = 0;
+        masterSlider.max = 100;
+        masterSlider.value = val;
+        document.getElementById('activeParamCategory').textContent = 'STUDIO BEAUTY';
+        document.getElementById('activeParamTitle').textContent = meta.label;
+        document.getElementById('activeParamValue').textContent = val;
+        document.getElementById('masterSliderBlock')?.classList.remove('hidden');
+    }
+
+    function refreshBeautyDots() {
+        if (!state.retouch) return;
+        RETOUCH_ATTRS.forEach((a) => {
+            const card = document.querySelector(`#beautyToolsStrip [data-retouch-card="${a.key}"]`);
+            if (!card) return;
+            const mod = (state.retouch[a.key] ?? 0) > 0;
+            let dot = card.querySelector('.tool-modified-dot');
+            if (mod && !dot) {
+                dot = document.createElement('span');
+                dot.className = 'tool-modified-dot';
+                card.prepend(dot);
+            } else if (!mod && dot) {
+                dot.remove();
+            }
+        });
+    }
+
+    function renderBeautyPanel() {
+        if (!state.retouch) state.retouch = createDefaultRetouch();
+        const rt = state.retouch;
+
+        const presetRow = document.getElementById('beautyPresetRow');
+        const strip = document.getElementById('beautyToolsStrip');
+        if (!presetRow || !strip) return;
+
+        presetRow.innerHTML = '';
+        const mkPreset = (label, cfg) => {
+            const b = document.createElement('button');
+            b.className = 'dark-chip chip-ai';
+            b.textContent = label;
+            b.addEventListener('click', () => {
+                state.retouch = { ...createDefaultRetouch(), ...cfg };
+                warmLensBlurSubjectMask(false);
+                renderBeautyPanel();
+                syncMasterSliderForRetouch();
+                renderEditorCanvas();
+                pushHistory(`Beauty ${label}`, true);
+            });
+            return b;
+        };
+        presetRow.appendChild(mkPreset('✨ NATURAL', { smooth: 36, brighten: 24, blemish: 42, eyePop: 28, lipTint: 18 }));
+        presetRow.appendChild(mkPreset('✦ SOFT GLOW', { smooth: 62, brighten: 46, blemish: 58, eyePop: 48, lipTint: 36 }));
+        presetRow.appendChild(mkPreset('◎ CLEAR SKIN', { smooth: 50, brighten: 18, blemish: 78, eyePop: 24, lipTint: 12 }));
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'dark-chip';
+        resetBtn.textContent = 'RESET';
+        resetBtn.addEventListener('click', () => {
+            state.retouch = createDefaultRetouch();
+            renderBeautyPanel();
+            syncMasterSliderForRetouch();
+            renderEditorCanvas();
+            pushHistory('Reset Beauty', true);
+        });
+        presetRow.appendChild(resetBtn);
+
+        const keepScroll = strip.scrollLeft;
+        strip.innerHTML = '';
+        RETOUCH_ATTRS.forEach((a) => {
+            const val = rt[a.key] ?? 0;
+            const isSel = retouchAttr === a.key;
+            const btn = document.createElement('button');
+            btn.className = `tool-icon-card ${isSel ? 'active' : ''}`;
+            btn.dataset.retouchCard = a.key;
+            btn.innerHTML = `
+                ${val > 0 ? `<span class="tool-modified-dot"></span>` : ''}
+                <div class="tool-svg-wrap">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        ${a.icon}
+                    </svg>
+                </div>
+                <span class="tool-name">${a.name}</span>
+                <span class="tool-val-tag" data-retouch-val="${a.key}">${val}</span>
+            `;
+            btn.addEventListener('click', () => {
+                retouchAttr = a.key;
+                renderBeautyPanel();
+                syncMasterSliderForRetouch();
+            });
+            strip.appendChild(btn);
+        });
+        strip.scrollLeft = keepScroll;
+    }
+
+    function syncMasterSliderForColorMatch() {
+        const cm = state.colorMatch;
+        const val = cm && cm.profile ? (cm.strength ?? 80) : 0;
+        masterSliderMode = 'colormatch';
+        masterSlider.disabled = !(cm && cm.profile);
+        masterSlider.min = 0;
+        masterSlider.max = 100;
+        masterSlider.value = val;
+        document.getElementById('activeParamTitle').textContent = cm && cm.label ? `COLOR MATCH · ${cm.label}` : 'COLOR MATCH';
+        document.getElementById('activeParamValue').textContent = `${val}%`;
+        document.getElementById('masterSliderBlock')?.classList.remove('hidden');
+    }
+
+    function renderColorMatchContextBar(bar) {
+        const panel = document.createElement('div');
+        panel.className = 'lensblur-panel';
+
+        const r1 = document.createElement('div');
+        r1.className = 'lensblur-row';
+
+        const pickBtn = document.createElement('button');
+        pickBtn.className = 'dark-chip chip-ai';
+        pickBtn.textContent = '📷 FOTO REFERENSI';
+        pickBtn.addEventListener('click', () => {
+            document.getElementById('colorMatchFileInput')?.click();
+        });
+        r1.appendChild(pickBtn);
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'dark-chip';
+        resetBtn.textContent = 'RESET';
+        resetBtn.disabled = !(state.colorMatch && state.colorMatch.profile);
+        resetBtn.addEventListener('click', () => {
+            state.colorMatch = null;
+            openToolContextBar('colormatch', 'Color Match');
+            renderEditorCanvas();
+            renderToolsStrip();
+            pushHistory('Reset Color Match', true);
+        });
+        r1.appendChild(resetBtn);
+        panel.appendChild(r1);
+
+        if (libraryPhotos.length > 0 && window.ProStudio) {
+            const libRow = document.createElement('div');
+            libRow.className = 'colormatch-lib-row';
+            libraryPhotos.slice(0, 12).forEach((p) => {
+                if (!p || !p.originalCanvas) return;
+                const btn = document.createElement('button');
+                btn.className = `colormatch-lib-thumb ${state.colorMatch?.sourcePhotoId === p.id ? 'active' : ''}`.trim();
+                btn.title = p.name || 'Samakan Warna';
+                const th = document.createElement('img');
+                th.src = p.thumbUrl || p.originalCanvas.toDataURL('image/jpeg', 0.6);
+                th.alt = p.name || 'Ref';
+                btn.appendChild(th);
+                btn.addEventListener('click', () => {
+                    const prof = window.ProStudio.extractColorMatchProfile(p.originalCanvas);
+                    if (prof) {
+                        state.colorMatch = {
+                            profile: prof,
+                            strength: state.colorMatch?.strength ?? 80,
+                            label: (p.name || 'Library').slice(0, 18),
+                            sourcePhotoId: p.id
+                        };
+                        openToolContextBar('colormatch', 'Color Match');
+                        renderEditorCanvas();
+                        renderToolsStrip();
+                        pushHistory('Color Match Library', true);
+                        flashToast(`✓ Warna disamakan dengan "${(p.name || 'foto').slice(0, 20)}"`, 2200);
+                    }
+                });
+                libRow.appendChild(btn);
+            });
+            panel.appendChild(libRow);
+        }
+
+        bar.appendChild(panel);
+        syncMasterSliderForColorMatch();
+        document.getElementById('gestureHintText').textContent = 'PILIH FOTO REFERENSI / GALERI UNTUK TRANSFER WARNA OTOMATIS';
+    }
+
+    let aiDepthBusy = false;
+    async function triggerAiDepthMapEstimate() {
+        if (aiDepthBusy || !window.AITools || !window.AITools.estimateDepthMapAI) return;
+        aiDepthBusy = true;
+        const nKey = getLensBlurCacheKey();
+        const loading = document.getElementById('loadingBadge');
+        const setMsg = (m) => {
+            if (!loading) return;
+            loading.textContent = m || 'AI DEPTH 3D...';
+            loading.classList.remove('hidden');
+        };
+        setMsg('AI DEPTH 3D...');
+        try {
+            await window.AITools.estimateDepthMapAI(basePhotoCanvas, setMsg, nKey);
+            renderEditorCanvasSync();
+            flashToast('✓ AI Depth Map 3D aktif (Bokeh & Relight akurat)', 2600);
+        } catch (err) {
+            console.warn('AI Depth estimation failed, using multi-cue offline depth:', err);
+            flashToast('Mode Depth 3D Offline aktif (AI Depth butuh koneksi internet)', 2400);
+        } finally {
+            aiDepthBusy = false;
             if (loading) loading.classList.add('hidden');
         }
     }
@@ -5577,6 +6401,13 @@
         });
         r2.appendChild(redetectBtn);
 
+        const aiDepthBtn = document.createElement('button');
+        aiDepthBtn.className = 'dark-chip chip-ai';
+        aiDepthBtn.textContent = '✨ AI DEPTH';
+        aiDepthBtn.title = 'Deteksi Depth Map 3D AI untuk gradasi bokeh lebih presisi';
+        aiDepthBtn.addEventListener('click', () => triggerAiDepthMapEstimate());
+        r2.appendChild(aiDepthBtn);
+
         const resetBtn = document.createElement('button');
         resetBtn.className = 'dark-chip';
         resetBtn.textContent = 'RESET';
@@ -5630,9 +6461,9 @@
         {
             id: 'flash_portrait', label: 'FLASH PORTRAIT',
             cfg: {
-                enabled: true, ambient: -50, shadow: 60, shading: 44,
+                enabled: true, ambient: -44, shadow: 54, shading: 48,
                 lights: [
-                    { on: true, x: 0.48, y: 0.38, color: '#f2f7ff', intensity: 74, size: 80, depth: 86, rim: 0 },
+                    { on: true, x: 0.48, y: 0.36, color: '#f4f8ff', intensity: 74, size: 82, depth: 74, rim: 0 },
                     { on: false, x: 0.82, y: 0.34, color: '#22d3ee', intensity: 58, size: 54, depth: 55, rim: 52 }
                 ]
             }
@@ -5640,9 +6471,9 @@
         {
             id: 'studio_spot', label: 'STUDIO SPOT',
             cfg: {
-                enabled: true, ambient: -52, shadow: 62, shading: 46,
+                enabled: true, ambient: -50, shadow: 58, shading: 58,
                 lights: [
-                    { on: true, x: 0.45, y: 0.38, color: '#fff9f0', intensity: 74, size: 72, depth: 84, rim: 0 },
+                    { on: true, x: 0.32, y: 0.24, color: '#fff8ee', intensity: 78, size: 68, depth: 70, rim: 0 },
                     { on: false, x: 0.82, y: 0.36, color: '#ff9f43', intensity: 52, size: 52, depth: 45, rim: 42 }
                 ]
             }
@@ -5650,9 +6481,9 @@
         {
             id: 'soft_glow', label: 'SOFT GLOW',
             cfg: {
-                enabled: true, ambient: -36, shadow: 40, shading: 38,
+                enabled: true, ambient: -30, shadow: 36, shading: 42,
                 lights: [
-                    { on: true, x: 0.50, y: 0.42, color: '#fff7f2', intensity: 72, size: 86, depth: 78, rim: 0 },
+                    { on: true, x: 0.50, y: 0.40, color: '#fff7f0', intensity: 70, size: 88, depth: 66, rim: 0 },
                     { on: false, x: 0.80, y: 0.32, color: '#ffd59c', intensity: 48, size: 58, depth: 45, rim: 22 }
                 ]
             }
@@ -5660,9 +6491,9 @@
         {
             id: 'ccd_night', label: 'CCD NIGHT',
             cfg: {
-                enabled: true, ambient: -68, shadow: 74, shading: 56,
+                enabled: true, ambient: -64, shadow: 68, shading: 56,
                 lights: [
-                    { on: true, x: 0.50, y: 0.44, color: '#eef6ff', intensity: 82, size: 68, depth: 88, rim: 0 },
+                    { on: true, x: 0.50, y: 0.42, color: '#eef6ff', intensity: 82, size: 70, depth: 80, rim: 0 },
                     { on: false, x: 0.20, y: 0.34, color: '#3b82f6', intensity: 48, size: 50, depth: 40, rim: 44 }
                 ]
             }
@@ -5670,9 +6501,9 @@
         {
             id: 'golden', label: 'GOLDEN HOUR',
             cfg: {
-                enabled: true, ambient: -34, shadow: 56, shading: 46,
+                enabled: true, ambient: -32, shadow: 50, shading: 52,
                 lights: [
-                    { on: true, x: 0.80, y: 0.24, color: '#ffb35c', intensity: 74, size: 66, depth: 55, rim: 46 },
+                    { on: true, x: 0.80, y: 0.24, color: '#ffb866', intensity: 74, size: 70, depth: 56, rim: 36 },
                     { on: false, x: 0.18, y: 0.36, color: '#22d3ee', intensity: 52, size: 52, depth: 45, rim: 50 }
                 ]
             }
@@ -5680,9 +6511,9 @@
         {
             id: 'rembrandt', label: 'REMBRANDT',
             cfg: {
-                enabled: true, ambient: -54, shadow: 68, shading: 58,
+                enabled: true, ambient: -52, shadow: 62, shading: 64,
                 lights: [
-                    { on: true, x: 0.22, y: 0.26, color: '#ffd49b', intensity: 74, size: 52, depth: 72, rim: 28 },
+                    { on: true, x: 0.20, y: 0.24, color: '#ffd8a8', intensity: 78, size: 56, depth: 66, rim: 22 },
                     { on: false, x: 0.82, y: 0.34, color: '#3b82f6', intensity: 46, size: 50, depth: 35, rim: 44 }
                 ]
             }
@@ -6079,6 +6910,13 @@
                 drawRelightOverlay();
             });
             rightCluster.appendChild(guideBtn);
+
+            const depthBtn = document.createElement('button');
+            depthBtn.className = 'dark-chip chip-ai';
+            depthBtn.textContent = '✨ 3D';
+            depthBtn.title = 'Deteksi AI Depth Map 3D';
+            depthBtn.addEventListener('click', () => triggerAiDepthMapEstimate());
+            rightCluster.appendChild(depthBtn);
 
             const resetBtn = document.createElement('button');
             resetBtn.className = 'relight-icon-btn';
@@ -7702,6 +8540,8 @@
             const qual = parseInt(qSlider.value, 10) / 100;
             const ext = fmt === 'image/png' ? 'png' : fmt === 'image/webp' ? 'webp' : 'jpg';
 
+            const prevSplit = splitCompareActive;
+            splitCompareActive = false;
             renderEditorCanvasSync();
             const out = createBlankCanvas(mainCanvas.width, mainCanvas.height);
             const oCtx = out.getContext('2d');
@@ -7710,6 +8550,8 @@
                 oCtx.fillRect(0, 0, out.width, out.height);
             }
             oCtx.drawImage(mainCanvas, 0, 0);
+            splitCompareActive = prevSplit;
+            if (prevSplit) renderEditorCanvas();
 
             const a = document.createElement('a');
             a.download = `${fname}.${ext}`;
@@ -7843,49 +8685,369 @@ const W = 1080, RA = { '4:5': 1.25, '3:2': 2 / 3, '1:1': 1, '3:4': 4 / 3, '9:16'
 const FONTS = ['Playfair Display', 'Cormorant Garamond', 'DM Serif Display', 'Bebas Neue', 'Oswald', 'Inter', 'Space Mono', 'Caveat', 'Great Vibes', 'Dancing Script'];
 const SW = ['#ffffff', '#f4f1ea', '#eaeaea', '#cacaca', '#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#fb923c', '#f43f5e', '#26211e', '#000000'];
 const IMG = {};
-let uid = Date.now() % 1e6, st, hist = [], hi = -1, sel = null, mode = null, cur = 0, pv = false, S = 1, drag = null, pend = null, allSl = false;
+let uid = Date.now() % 1e6, st, hist = [], hi = -1, sel = null, cropId = null, lastTap = { id: null, t: 0 }, mode = null, cur = 0, pv = false, S = 1, drag = null, pend = null, allSl = false;
 const H = (s = st) => Math.round(W * RA[s.ra]), id = () => 'l' + uid++, lay = i => st.L.find(l => l.id === i);
 const esc = s => String(s).replace(/[&<>"]/g, c => '&#' + c.charCodeAt(0) + ';');
 const bgOf = s => s.bg2 ? `linear-gradient(${s.bg} 50%,${s.bg2} 50%)` : s.bg;
+function imgCover(l) {
+  const rec = l && l.src && IMG[l.src];
+  if (!rec || !rec.img || !rec.img.width || !rec.img.height) return null;
+  const im = rec.img, z = Math.max(1, l.zoom || 1);
+  const k = Math.max(l.w / im.width, l.h / im.height) * z;
+  const dw = im.width * k, dh = im.height * k;
+  return { im, k, dw, dh, maxX: Math.max(0, (dw - l.w) / 2), maxY: Math.max(0, (dh - l.h) / 2) };
+}
+function clampCrop(l) {
+  const c = imgCover(l); if (!c) return null;
+  l.ox = Math.max(-c.maxX, Math.min(c.maxX, l.ox || 0));
+  l.oy = Math.max(-c.maxY, Math.min(c.maxY, l.oy || 0));
+  return c;
+}
 
 /* ---------- Template catalogue (x in slide-widths, y in slide-heights, w/h/fs in slide-widths) ---------- */
-const p = (x, y, w, h, o) => ({ t: 'p', x, y, w, h, ...o }), tx = (x, y, s, fs, o) => ({ t: 't', x, y, s, fs, ...o }), sq = (x, y, w, h, c, o) => ({ t: 's', x, y, w, h, c, ...o });
+const stkSrc = idOrSrc => (window.STUDIO_STICKERS && window.STUDIO_STICKERS.find(s => s.id === idOrSrc)?.src) || idOrSrc;
+const p = (x, y, w, h, o) => ({ t: 'p', x, y, w, h, ...o }), tx = (x, y, s, fs, o) => ({ t: 't', x, y, s, fs, ...o }), sq = (x, y, w, h, c, o) => ({ t: 's', x, y, w, h, c, ...o }), sk = (x, y, w, h, src, o) => ({ t: 'g', x, y, w, h, src: stkSrc(src), ...o });
 const pol = (x, y, r) => { const a = r * Math.PI / 180; return [sq(x, y, .52, .62, '#ffffff', { r, sh: 1 }), p(x + .06 * Math.sin(a), (y * 1.25 - .06 * Math.cos(a)) / 1.25, .44, .44, { r })]; };
 const mono = c => ({ f: 'Space Mono', c });
+const TPL_CATS = [
+  { id: 'all', label: 'ALL' },
+  { id: 'story', label: 'STORY 9:16' },
+  { id: 'carousel', label: 'CAROUSEL' },
+  { id: 'collage', label: 'COLLAGE' },
+  { id: 'editorial', label: 'EDITORIAL' },
+  { id: 'film', label: 'FILM & RETRO' }
+];
+let tplCat = 'all', tplStkCat = 'all';
 const T = [
-  { n: 'Grad Editorial', ra: '3:2', sl: [['#1c1e1c']], L: [
+  { n: 'Grad Editorial', cat: 'editorial', ra: '3:2', sl: [['#1c1e1c']], L: [
       p(.5, .5, 1, 2 / 3),
       tx(.62, .16, 'GRADUATION FOR\nLOCATION\n\nPHOTOGRAPHY BY', .0128, { f: 'Inter', c: '#f4f1ea', al: 'left', sh: 1 }),
       tx(.77, .16, 'NAMA WISUDAWAN\nUNIVERSITAS PENDIDIKAN\nINDONESIA\n@STUDIO.ANDA', .0128, { f: 'Inter', c: '#ffffff', al: 'left', sh: 1 })
   ] },
-  { n: 'Split', sl: [['#eaeaea', '#dddddd'], ['#eaeaea', '#dddddd']], L: [0, 1].flatMap(i => [p(i + .5, .2275, .3, .3), p(i + .5, .7225, .3, .3), tx(i + .19, .5, i ? 'two' : 'one', .075, { c: '#6b6b6b', f: 'Inter' }), tx(i + .8, .5, i ? 'worlds' : 'world', .075, { c: '#6b6b6b', f: 'Inter' })]) },
-  { n: 'Panorama', sl: [['#f4f1ea'], ['#f4f1ea'], ['#f4f1ea']], L: [p(1.5, .46, 2.88, 1), tx(.5, .93, 'swipe', .032, mono('#78716c')), tx(2.5, .93, 'fin.', .032, mono('#78716c'))] },
-  { n: 'Triptych', sl: [['#1c1917'], ['#1c1917'], ['#1c1917']], L: [0, 1, 2].flatMap(i => [p(i + .5, .47, .84, 1.05), tx(i + .5, .93, '0' + (i + 1), .036, mono('#a8a29e'))]) },
-  { n: 'Polaroid', sl: [['#e7e0d3']], L: [...pol(.34, .28, -6), ...pol(.66, .66, 5), tx(.5, .955, 'moments', .07, { f: 'Caveat', c: '#57534e' })] },
-  { n: 'Photo dump', sl: [['#f4f1ea']], L: [[.27, .252], [.73, .252], [.27, .628], [.73, .628]].map(([x, y]) => p(x, y, .43, .43)).concat(tx(.5, .9, 'photo dump', .07, { f: 'Caveat', c: '#292524' })) },
-  { n: 'Quote', sl: [['#26211e'], ['#f4f1ea']], L: [p(.5, .5, 1, 1.25), tx(.5, .8, 'Craft the\nlight.', .13, { c: '#ffffff', sh: 1 }), tx(1.5, .45, 'Keep it\nsimple,\nkeep it you.', .1, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }), tx(1.5, .92, '@svn.lens', .035, mono('#78716c'))] },
-  { n: 'Blank', sl: [['#f4f1ea']], L: [] }
+  { n: 'Split', cat: 'carousel', sl: [['#eaeaea', '#dddddd'], ['#eaeaea', '#dddddd']], L: [0, 1].flatMap(i => [p(i + .5, .2275, .3, .3), p(i + .5, .7225, .3, .3), tx(i + .19, .5, i ? 'two' : 'one', .075, { c: '#6b6b6b', f: 'Inter' }), tx(i + .8, .5, i ? 'worlds' : 'world', .075, { c: '#6b6b6b', f: 'Inter' })]) },
+  { n: 'Panorama', cat: 'carousel', sl: [['#f4f1ea'], ['#f4f1ea'], ['#f4f1ea']], L: [p(1.5, .46, 2.88, 1), tx(.5, .93, 'swipe', .032, mono('#78716c')), tx(2.5, .93, 'fin.', .032, mono('#78716c'))] },
+  { n: 'Triptych', cat: 'carousel', sl: [['#1c1917'], ['#1c1917'], ['#1c1917']], L: [0, 1, 2].flatMap(i => [p(i + .5, .47, .84, 1.05), tx(i + .5, .93, '0' + (i + 1), .036, mono('#a8a29e'))]) },
+  { n: 'Polaroid', cat: 'collage', sl: [['#e7e0d3']], L: [...pol(.34, .28, -6), ...pol(.66, .66, 5), tx(.5, .955, 'moments', .07, { f: 'Caveat', c: '#57534e' })] },
+  { n: 'Photo dump', cat: 'collage', sl: [['#f4f1ea']], L: [[.27, .252], [.73, .252], [.27, .628], [.73, .628]].map(([x, y]) => p(x, y, .43, .43)).concat(tx(.5, .9, 'photo dump', .07, { f: 'Caveat', c: '#292524' })) },
+  { n: 'Quote', cat: 'carousel', sl: [['#26211e'], ['#f4f1ea']], L: [p(.5, .5, 1, 1.25), tx(.5, .8, 'Craft the\nlight.', .13, { c: '#ffffff', sh: 1 }), tx(1.5, .45, 'Keep it\nsimple,\nkeep it you.', .1, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }), tx(1.5, .92, '@svn.lens', .035, mono('#78716c'))] },
+  { n: 'Magazine Cover', cat: 'editorial', sl: [['#181513']], L: [
+      p(.5, .5, 1, 1.25),
+      tx(.5, .085, 'SVN.LENS · ISSUE NO. 08', .028, { f: 'Space Mono', c: '#f4f1ea', sh: 1 }),
+      tx(.5, .175, 'ATELIER', .165, { f: 'Playfair Display', c: '#ffffff', b: 1, sh: 1 }),
+      tx(.08, .85, 'LIGHT & FORM\nDIGITAL ARCHIVE', .030, { f: 'Space Mono', c: '#f4f1ea', al: 'left', sh: 1 }),
+      tx(.92, .85, '2026 EDITION\nPORTRAIT SERIES', .026, { f: 'Inter', c: '#fde68a', al: 'right', sh: 1 })
+  ] },
+  { n: 'Photobooth Strip', cat: 'film', ra: '9:16', sl: [['#1c1917']], L: [
+      sq(.5, .5, .62, 1.62, '#f7f5f0', { rad: 16, sh: 1 }),
+      p(.5, .155, .50, .30, { rad: 6 }),
+      p(.5, .350, .50, .30, { rad: 6 }),
+      p(.5, .545, .50, .30, { rad: 6 }),
+      p(.5, .740, .50, .30, { rad: 6 }),
+      tx(.5, .898, 'SVN PHOTOBOOTH', .036, { f: 'Space Mono', c: '#1c1917', b: 1 }),
+      tx(.5, .932, '4 EXPOSURE STRIP · #04', .021, mono('#78716c'))
+  ] },
+  { n: '35mm Contact Sheet', cat: 'film', sl: [['#11100f']], L: [
+      tx(.08, .065, 'PORTRA 400 · CONTACT SHEET', .025, { f: 'Space Mono', c: '#fb923c', al: 'left' }),
+      tx(.92, .065, 'ROLL #14', .025, { f: 'Space Mono', c: '#a8a29e', al: 'right' }),
+      ...[0, 1, 2, 3, 4, 5].flatMap(i => {
+        const col = i % 2, row = Math.floor(i / 2), cx = col ? .725 : .275, cy = .24 + row * .27;
+        return [p(cx, cy, .39, .26, { rad: 4 }), tx(cx, cy + .125, `0${i + 1}A`, .021, { f: 'Space Mono', c: '#fb923c' })];
+      }),
+      tx(.5, .945, 'SVN.LENS DARKROOM ARCHIVE', .023, mono('#78716c'))
+  ] },
+  { n: 'Seamless Bridge', cat: 'carousel', sl: [['#f4f1ea'], ['#e7e0d3'], ['#f4f1ea']], L: [
+      p(.42, .45, .70, .88),
+      p(1.0, .56, .56, .62, { sh: 1 }),
+      p(1.62, .30, .58, .48),
+      p(2.05, .72, .82, .54, { sh: 1 }),
+      p(2.58, .38, .54, .54, { k: 'o', sh: 1 }),
+      tx(.5, .93, 'CONTINUOUS STORIES →', .027, mono('#57534e')),
+      tx(1.5, .10, 'CHAPTER TWO', .048, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }),
+      tx(2.58, .88, 'keep moving.', .055, { f: 'Playfair Display', c: '#26211e' })
+  ] },
+  { n: 'Scrapbook Diary', cat: 'collage', sl: [['#efe9dd']], L: [
+      sq(.5, .5, .86, 1.06, '#f8f5ee', { rad: 20, sh: 1 }),
+      p(.35, .30, .48, .48, { r: -7, rad: 10, sh: 1 }),
+      sq(.35, .11, .16, .045, '#fde68a', { r: -5, op: .85 }),
+      p(.68, .46, .46, .54, { r: 5, rad: 10, sh: 1 }),
+      sq(.68, .24, .16, .045, '#fbcfe8', { r: 8, op: .85 }),
+      p(.36, .71, .46, .42, { r: 3, rad: 10, sh: 1 }),
+      tx(.70, .81, 'little notes\nfrom today.', .066, { f: 'Caveat', c: '#44403c', r: -3 }),
+      tx(.22, .10, 'VOL. 02', .025, mono('#78716c'))
+  ] },
+  { n: 'Lookbook Duo', cat: 'carousel', sl: [['#f7f4ee'], ['#1c1917']], L: [
+      p(.5, .44, .80, .84),
+      tx(.5, .87, 'COLLECTION 04', .055, { f: 'Playfair Display', c: '#1c1917' }),
+      tx(.5, .935, 'AUTUMN SILHOUETTES', .024, mono('#78716c')),
+      p(1.32, .42, .44, .72),
+      p(1.74, .56, .34, .52),
+      tx(1.74, .22, '02 /\nDETAILS', .056, { f: 'Bebas Neue', c: '#f4f1ea', al: 'center' })
+  ] },
+  { n: 'IG Story Polaroid', cat: 'story', ra: '9:16', sl: [['#d6cfc2']], L: [
+      sq(.5, .48, .82, 1.06, '#ffffff', { r: -2, sh: 1, rad: 8 }),
+      p(.5, .44, .72, .80, { r: -2 }),
+      tx(.5, .735, 'Sunday Afternoon', .072, { f: 'Caveat', c: '#292524', r: -2 }),
+      tx(.5, .90, "'26 · CAPTURED ON SVN.LENS", .024, mono('#44403c'))
+  ] },
+  { n: 'Story Magazine', cat: 'story', ra: '9:16', sl: [['#181513']], L: [
+      p(.5, .5, 1, 1.778),
+      tx(.5, .11, 'EDITION NO. 26', .026, mono('#f4f1ea')),
+      tx(.5, .19, 'SILENCE & LIGHT', .092, { f: 'Cormorant Garamond', c: '#ffffff', it: 1, sh: 1 }),
+      tx(.5, .88, 'ANALOG DIARY · SWIPE UP', .026, { f: 'Space Mono', c: '#fde68a', sh: 1 })
+  ] },
+  { n: 'Story 3-Frame', cat: 'story', ra: '9:16', sl: [['#141210']], L: [
+      p(.5, .23, .86, .44, { rad: 12 }),
+      p(.5, .50, .86, .44, { rad: 12 }),
+      p(.5, .77, .86, .44, { rad: 12 }),
+      tx(.5, .06, 'THREE MOMENTS', .028, mono('#a8a29e')),
+      tx(.5, .945, '35MM FILM SEQUENCE', .024, mono('#78716c'))
+  ] },
+  { n: 'Couple / Wedding', cat: 'editorial', sl: [['#f4f1ea'], ['#ebe4d6']], L: [
+      p(.5, .45, .72, .86, { rad: 390, sh: 1 }),
+      tx(.5, .86, 'Forever Begins', .086, { f: 'Great Vibes', c: '#26211e' }),
+      tx(.5, .935, 'SAVE THE DATE · NOVEMBER 2026', .023, mono('#78716c')),
+      p(1.5, .32, .76, .50, { rad: 16 }),
+      p(1.5, .72, .76, .38, { rad: 16 }),
+      tx(1.5, .93, 'CHAPTER ONE', .027, mono('#57534e'))
+  ] },
+  { n: '6-Grid Bento', cat: 'collage', sl: [['#181513']], L: [
+      p(.32, .29, .54, .56, { rad: 22 }),
+      p(.77, .175, .30, .27, { rad: 22 }),
+      p(.77, .405, .30, .27, { rad: 22 }),
+      p(.20, .72, .30, .46, { rad: 22 }),
+      p(.50, .72, .26, .46, { rad: 22 }),
+      p(.785, .72, .27, .46, { rad: 22 }),
+      tx(.5, .955, 'BENTO COLLECTION', .024, mono('#a8a29e'))
+  ] },
+  { n: 'Before & After', cat: 'collage', sl: [['#181513']], L: [
+      p(.275, .48, .43, .92, { rad: 14 }),
+      p(.725, .48, .43, .92, { rad: 14 }),
+      tx(.275, .105, 'BEFORE', .028, { f: 'Space Mono', c: '#a8a29e' }),
+      tx(.725, .105, 'AFTER', .028, { f: 'Space Mono', c: '#fbbf24', b: 1 }),
+      tx(.5, .92, 'COLOR GRADING · SVN.LENS', .025, mono('#f4f1ea'))
+  ] },
+  { n: 'Postcard Travel', cat: 'editorial', ra: '3:2', sl: [['#f5f0e6']], L: [
+      p(.34, .50, .56, .56, { rad: 6, sh: 1 }),
+      sq(.84, .23, .14, .17, '#e7e0d3', { rad: 4 }),
+      tx(.84, .23, 'AIR\nMAIL', .024, mono('#78716c')),
+      tx(.67, .54, 'Wish you\nwere here.', .054, { f: 'Caveat', c: '#292524', al: 'left' }),
+      tx(.67, .78, 'SENT FROM JAVA · 2026', .018, { f: 'Space Mono', c: '#78716c', al: 'left' })
+  ] },
+  { n: 'Cafe Menu / Food', cat: 'collage', sl: [['#f5efe6']], L: [
+      p(.5, .34, .62, .62, { k: 'o', sh: 1 }),
+      p(.29, .73, .38, .32, { rad: 18 }),
+      p(.71, .73, .38, .32, { rad: 18 }),
+      tx(.5, .075, 'MORNING BREW & PASTRIES', .027, mono('#57534e')),
+      tx(.5, .935, 'TABLE FOR TWO · CAFE JOURNAL', .030, { f: 'Cormorant Garamond', c: '#26211e', b: 1 })
+  ] },
+  { n: 'Square Minimal', cat: 'editorial', ra: '1:1', sl: [['#f7f5f0']], L: [
+      p(.5, .45, .74, .72, { sh: 1 }),
+      tx(.5, .89, 'EXHIBITION PRINT · SERIES I', .026, mono('#57534e')),
+      tx(.5, .94, '35MM ARCHIVE', .020, mono('#a8a29e'))
+  ] },
+  { n: 'Carousel Film 4', cat: 'carousel', sl: [['#181513'], ['#181513'], ['#181513'], ['#181513']], L: [
+      p(.5, .46, .84, .94),
+      tx(.5, .91, 'FILM ROLL NO. 09', .034, mono('#fb923c')),
+      p(1.38, .50, .68, .92),
+      tx(1.86, .50, 'FRAME\nBY\nFRAME', .055, { f: 'Oswald', c: '#f4f1ea', al: 'center' }),
+      p(2.5, .30, .78, .46),
+      p(2.5, .72, .78, .46),
+      tx(2.5, .065, 'UNSCRIPTED', .026, mono('#a8a29e')),
+      p(3.5, .45, .64, .64, { k: 'o', sh: 1 }),
+      tx(3.5, .85, 'end of roll.', .060, { f: 'Cormorant Garamond', c: '#f4f1ea', it: 1 })
+  ] },
+  { n: 'December Dump', cat: 'story', ra: '9:16', sl: [['#f5efe6']], L: [
+      tx(.5, .085, 'december dump', .088, { f: 'Playfair Display', c: '#26211e', it: 1 }),
+      tx(.5, .132, '2026 · LITTLE MOMENTS ARCHIVE', .022, mono('#78716c')),
+      p(.28, .295, .41, .40, { r: -2, rad: 14, sh: 1 }),
+      p(.72, .305, .41, .42, { r: 2, rad: 14, sh: 1 }),
+      p(.50, .545, .86, .36, { rad: 16, sh: 1 }),
+      p(.28, .795, .41, .40, { r: 2, rad: 14, sh: 1 }),
+      p(.72, .785, .41, .40, { r: -2, rad: 14, sh: 1 }),
+      sk(.87, .10, .18, .18, 'stk_ribbon_pink', { r: 12, sh: 1 }),
+      sk(.12, .545, .17, .17, 'stk_wc_pink', { r: -10 }),
+      sk(.88, .66, .16, .16, 'stk_dot_daisy', { r: 8, sh: 1 }),
+      tx(.5, .952, 'swipe for highlights · @svn.lens', .022, mono('#78716c'))
+  ] },
+  { n: 'Monthly Recap', cat: 'story', ra: '9:16', sl: [['#f4f1ea']], L: [
+      tx(.5, .068, 'MONTHLY RECAP', .066, { f: 'Bebas Neue', c: '#1c1917' }),
+      tx(.5, .112, 'DECEMBER 2026 · FAVORITES', .022, mono('#78716c')),
+      ...[0, 1, 2, 3, 4, 5].flatMap(i => {
+        const col = i % 2, row = Math.floor(i / 2), cx = col ? .715 : .285, cy = .255 + row * .26;
+        return [p(cx, cy, .40, .36, { rad: 14, sh: 1 }), tx(cx, cy + .122, `0${i + 1}`, .021, mono('#78716c'))];
+      }),
+      sk(.14, .085, .18, .10, 'stk_retro_tape', { r: -6 }),
+      sk(.87, .085, .14, .14, 'stk_dot_star', { sh: 1 }),
+      tx(.5, .948, '@svn.lens · calendar notes', .036, { f: 'Caveat', c: '#44403c' })
+  ] },
+  { n: '2026 Wrapped', cat: 'story', ra: '9:16', sl: [['#141210']], L: [
+      tx(.5, .095, '2026\nWRAPPED', .086, { f: 'Playfair Display', c: '#f4f1ea', b: 1 }),
+      p(.285, .315, .40, .44, { rad: 16 }),
+      p(.715, .315, .40, .44, { rad: 16 }),
+      p(.285, .605, .40, .44, { rad: 16 }),
+      p(.715, .605, .40, .44, { rad: 16 }),
+      sk(.86, .09, .18, .18, 'stk_y2k_sparkle'),
+      sk(.50, .845, .42, .22, 'stk_ticket', { r: -4, sh: 1 }),
+      tx(.5, .945, 'TOP MOMENTS OF THE YEAR', .022, mono('#a8a29e'))
+  ] },
+  { n: 'Coquette Story', cat: 'story', ra: '9:16', sl: [['#faf3f4']], L: [
+      sq(.5, .51, .86, 1.38, '#fffdfd', { rad: 24, sh: 1 }),
+      p(.50, .345, .74, .54, { rad: 18 }),
+      p(.50, .675, .74, .48, { rad: 18 }),
+      sk(.50, .125, .24, .24, 'stk_ribbon_pink', { sh: 1 }),
+      sk(.18, .845, .20, .20, 'stk_rose_real', { r: -8, sh: 1 }),
+      sk(.82, .845, .19, .19, 'stk_ribbon_cream', { r: 8, sh: 1 }),
+      tx(.5, .938, 'soft girl memories', .058, { f: 'Great Vibes', c: '#831843' })
+  ] },
+  { n: 'Watercolor Diary', cat: 'story', ra: '9:16', sl: [['#f8f4ec']], L: [
+      sk(.5, .098, .62, .24, 'stk_wc_wash'),
+      tx(.5, .095, 'Watercolor\nJournal', .066, { f: 'Cormorant Garamond', c: '#292524', it: 1 }),
+      p(.34, .315, .48, .42, { r: -3, rad: 14, sh: 1 }),
+      p(.67, .555, .48, .42, { r: 3, rad: 14, sh: 1 }),
+      p(.36, .795, .50, .38, { r: -2, rad: 14, sh: 1 }),
+      sk(.79, .28, .24, .24, 'stk_wc_pink', { r: 10 }),
+      sk(.19, .56, .22, .22, 'stk_wc_blue', { r: -8 }),
+      sk(.79, .80, .22, .22, 'stk_wc_butterfly', { r: 12 })
+  ] },
+  { n: 'Retro Digicam Dump', cat: 'film', ra: '9:16', sl: [['#181513']], L: [
+      p(.5, .255, .84, .40, { rad: 10 }),
+      p(.5, .515, .84, .40, { rad: 10 }),
+      p(.5, .775, .84, .40, { rad: 10 }),
+      sk(.84, .105, .22, .18, 'stk_retro_digicam', { r: -8, sh: 1 }),
+      sk(.16, .915, .20, .22, 'stk_retro_stamp', { r: -6, sh: 1 }),
+      tx(.5, .062, 'DEC DUMP · DIGICAM ARCHIVE', .023, mono('#fb923c')),
+      tx(.75, .935, "'26 12 01", .034, mono('#ff7b00'))
+  ] },
+  { n: 'Weekend Dump', cat: 'story', ra: '9:16', sl: [['#e7ece4']], L: [
+      tx(.5, .088, 'weekend\ndump', .080, { f: 'Caveat', c: '#292524', b: 1 }),
+      p(.285, .31, .40, .42, { r: -4, rad: 12, sh: 1 }),
+      p(.715, .31, .40, .42, { r: 4, rad: 12, sh: 1 }),
+      p(.285, .635, .40, .42, { r: 3, rad: 12, sh: 1 }),
+      p(.715, .635, .40, .42, { r: -3, rad: 12, sh: 1 }),
+      sk(.285, .192, .21, .10, 'stk_retro_tape'),
+      sk(.715, .192, .21, .10, 'stk_washi_cream'),
+      sk(.50, .875, .22, .22, 'stk_daisy_real', { r: -6, sh: 1 })
+  ] },
+  { n: 'Dot Pop Story', cat: 'story', ra: '9:16', sl: [['#fffdf9']], L: [
+      tx(.5, .078, 'HELLO DECEMBER', .054, { f: 'Bebas Neue', c: '#1c1917' }),
+      p(.5, .325, .80, .56, { rad: 24, sh: 1 }),
+      p(.5, .680, .80, .52, { rad: 24, sh: 1 }),
+      sk(.14, .17, .20, .20, 'stk_dot_daisy', { sh: 1 }),
+      sk(.86, .51, .20, .20, 'stk_dot_blossom', { sh: 1 }),
+      sk(.16, .875, .20, .20, 'stk_dot_bow', { sh: 1 }),
+      tx(.60, .915, 'dot pop aesthetic', .042, { f: 'Caveat', c: '#db2777' })
+  ] },
+  { n: 'Coffee & Matcha', cat: 'story', ra: '9:16', sl: [['#f5efe6']], L: [
+      tx(.5, .092, 'iced matcha\n& slow mornings', .064, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }),
+      p(.5, .365, .64, .64, { k: 'o', sh: 1 }),
+      p(.29, .735, .39, .44, { rad: 18, sh: 1 }),
+      p(.71, .735, .39, .44, { rad: 18, sh: 1 }),
+      sk(.84, .21, .21, .28, 'stk_tulip_real', { r: 10, sh: 1 }),
+      tx(.5, .932, 'CAFE DIARY · DEC 2026', .023, mono('#78716c'))
+  ] },
+  { n: 'Birthday Dump', cat: 'story', ra: '9:16', sl: [['#f9f3eb']], L: [
+      p(.50, .355, .66, .66, { k: 'o', sh: 1 }),
+      p(.295, .735, .39, .40, { r: -4, rad: 12, sh: 1 }),
+      p(.705, .735, .39, .40, { r: 4, rad: 12, sh: 1 }),
+      sk(.50, .115, .22, .22, 'stk_ribbon_red', { sh: 1 }),
+      sk(.50, .878, .17, .17, 'stk_dot_heart', { sh: 1 }),
+      tx(.5, .942, 'another year around the sun', .046, { f: 'Playfair Display', c: '#881337', it: 1 })
+  ] },
+  { n: 'Now Playing', cat: 'story', ra: '9:16', sl: [['#181513']], L: [
+      tx(.5, .105, 'NOW PLAYING', .026, mono('#a8a29e')),
+      sq(.5, .41, .78, .78, '#26211e', { rad: 24, sh: 1 }),
+      p(.5, .41, .70, .70, { rad: 16 }),
+      tx(.5, .695, 'Lover of the Light', .054, { f: 'Playfair Display', c: '#ffffff', b: 1 }),
+      tx(.5, .742, 'DECEMBER SOUNDTRACK', .024, mono('#fb923c')),
+      sq(.5, .805, .70, .008, '#44403c', { rad: 4 }),
+      sq(.36, .805, .42, .008, '#f4f1ea', { rad: 4 }),
+      tx(.5, .875, '◀◀   ▶   ▶▶', .042, mono('#f4f1ea'))
+  ] },
+  { n: 'OOTD Fit Check', cat: 'story', ra: '9:16', sl: [['#ebe5da']], L: [
+      tx(.08, .085, 'FIT\nCHECK', .080, { f: 'Bebas Neue', c: '#1c1917', al: 'left' }),
+      tx(.92, .085, "'26 ARCHIVE", .024, { f: 'Space Mono', c: '#78716c', al: 'right' }),
+      p(.38, .52, .60, 1.06, { rad: 18, sh: 1 }),
+      p(.82, .35, .26, .26, { k: 'o', sh: 1 }),
+      p(.82, .64, .26, .26, { k: 'o', sh: 1 }),
+      sk(.81, .215, .16, .16, 'stk_doodle_arrow'),
+      tx(.5, .918, 'today’s silhouette', .050, { f: 'Cormorant Garamond', c: '#292524', it: 1 })
+  ] },
+  { n: 'Travel Boarding', cat: 'story', ra: '9:16', sl: [['#f5f0e4']], L: [
+      sq(.5, .50, .88, 1.48, '#fffdf8', { rad: 22, sh: 1 }),
+      tx(.12, .135, 'BOARDING PASS · SVN AIR', .022, { f: 'Space Mono', c: '#78716c', al: 'left' }),
+      tx(.12, .185, 'CGK → DPS', .068, { f: 'Space Mono', c: '#1c1917', b: 1, al: 'left' }),
+      sk(.80, .17, .19, .22, 'stk_retro_stamp', { r: 8 }),
+      sq(.5, .235, .76, .004, '#e7e0d3'),
+      p(.5, .42, .76, .52, { rad: 14 }),
+      p(.5, .715, .76, .40, { rad: 14 }),
+      sk(.22, .875, .18, .18, 'stk_postmark'),
+      tx(.86, .875, 'SEAT 12A · DEC', .022, { f: 'Space Mono', c: '#78716c', al: 'right' })
+  ] },
+  { n: 'Love Letters', cat: 'editorial', ra: '9:16', sl: [['#f7f3eb']], L: [
+      tx(.5, .105, 'my favorite chapters', .064, { f: 'Cormorant Garamond', c: '#26211e', it: 1 }),
+      p(.35, .345, .52, .56, { r: -3, rad: 12, sh: 1 }),
+      p(.65, .645, .52, .56, { r: 3, rad: 12, sh: 1 }),
+      sk(.77, .23, .21, .21, 'stk_ribbon_cream', { r: 10, sh: 1 }),
+      sk(.21, .79, .22, .22, 'stk_rose_real', { r: -6, sh: 1 }),
+      tx(.5, .928, 'LETTERS FROM DECEMBER', .022, mono('#78716c'))
+  ] },
+  { n: 'Dump Carousel 3', cat: 'carousel', sl: [['#f5efe6'], ['#ebe4d8'], ['#f5efe6']], L: [
+      tx(.5, .115, 'december dump', .074, { f: 'Playfair Display', c: '#26211e', it: 1 }),
+      p(.48, .54, .76, .82, { rad: 16, sh: 1 }),
+      sk(.84, .17, .22, .22, 'stk_ribbon_pink', { r: 12, sh: 1 }),
+      p(1.06, .58, .54, .64, { rad: 14, sh: 1 }),
+      p(1.66, .34, .54, .50, { rad: 14 }),
+      sk(1.62, .77, .24, .24, 'stk_wc_pink'),
+      p(2.5, .45, .74, .74, { k: 'o', sh: 1 }),
+      sk(2.22, .20, .20, .20, 'stk_dot_daisy', { sh: 1 }),
+      tx(2.5, .90, 'until next month.', .055, { f: 'Caveat', c: '#44403c' })
+  ] },
+  { n: 'Scrapbook Feed 2', cat: 'carousel', sl: [['#f4efe6'], ['#1c1917']], L: [
+      p(.34, .34, .46, .52, { r: -4, rad: 12, sh: 1 }),
+      p(.67, .63, .46, .52, { r: 4, rad: 12, sh: 1 }),
+      sk(.34, .135, .22, .11, 'stk_retro_tape'),
+      sk(.21, .81, .21, .21, 'stk_daisy_real', { r: -8, sh: 1 }),
+      p(1.5, .46, .76, .84, { rad: 16 }),
+      sk(1.80, .18, .20, .20, 'stk_dot_cherry'),
+      tx(1.5, .90, 'LITTLE HIGHLIGHTS', .030, mono('#f4f1ea'))
+  ] },
+  { n: 'Blank', cat: 'editorial', sl: [['#f4f1ea']], L: [] }
 ];
 function fromT(t) {
   const s = { ra: t.ra || '4:5', sl: t.sl.map(([bg, bg2]) => ({ bg, bg2 })), L: [] }, h = H(s);
-  s.L = t.L.map(o => { const l = { id: id(), r: 0, rad: 0, zoom: 1, op: 1, k: 'r', c: '#ffffff', f: 'Playfair Display', ...o }; l.x *= W; l.y *= h; if (l.t === 't') l.fs *= W; else { l.w *= W; l.h *= W; } return l; });
+  s.L = t.L.map(o => { const l = { id: id(), r: 0, rad: 0, zoom: 1, ox: 0, oy: 0, op: 1, k: 'r', c: '#ffffff', f: 'Playfair Display', ...o }; if (l.t === 'g' && l.src) l.src = stkSrc(l.src); l.x *= W; l.y *= h; if (l.t === 't') l.fs *= W; else { l.w *= W; l.h *= W; } return l; });
   return s;
 }
 
 /* ---------- Rendering (shared by gallery thumbnails and the editor) ---------- */
 function mk(l) {
   const e = document.createElement('div'); e.className = 'tl tl-' + l.t; e.dataset.id = l.id;
-  e.innerHTML = l.t === 'p' ? '<div class="in"><img alt=""><i class="plus">+</i></div>' : '<div class="in"></div>'; return e;
+  e.innerHTML = l.t === 'p' ? '<div class="in"><img alt=""><i class="plus">+</i></div>' : l.t === 'g' ? '<div class="in"><img alt="" style="width:100%;height:100%;object-fit:contain;pointer-events:none;"></div>' : '<div class="in"></div>'; return e;
 }
 function up(e, l) {
   const s = e.style, n = e.firstChild, q = n.style;
   const txOff = l.t === 't' && l.al === 'left' ? '0' : l.t === 't' && l.al === 'right' ? '-100%' : '-50%';
   s.left = l.x + 'px'; s.top = l.y + 'px'; s.opacity = l.op; s.transform = `translate(${txOff},-50%) rotate(${l.r}deg)`;
   if (l.t === 't') { n.textContent = l.s; q.textAlign = l.al || 'center'; q.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px/1.32 "${l.f}",sans-serif`; q.color = l.c; q.textShadow = l.sh ? '0 4px 24px rgba(0,0,0,.45)' : 'none'; return; }
-  s.width = l.w + 'px'; s.height = l.h + 'px'; q.borderRadius = l.k === 'o' ? '50%' : l.rad + 'px'; q.boxShadow = l.sh ? '0 14px 44px rgba(0,0,0,.28)' : 'none';
+  s.width = l.w + 'px'; s.height = l.h + 'px';
+  if (l.t === 'g') {
+    q.background = 'none'; q.borderRadius = '0'; q.boxShadow = 'none';
+    q.filter = l.sh ? 'drop-shadow(0 8px 18px rgba(0,0,0,.32))' : 'none';
+    const im = n.firstChild; if (im.dataset.k !== l.src) { im.src = l.src; im.dataset.k = l.src; }
+    return;
+  }
+  q.borderRadius = l.k === 'o' ? '50%' : l.rad + 'px'; q.boxShadow = l.sh ? '0 14px 44px rgba(0,0,0,.28)' : 'none';
   if (l.t === 's') { q.background = l.c; return; }
   const [im, pl] = n.children, ok = l.src && IMG[l.src]; q.background = ok ? 'none' : '#cacaca'; im.hidden = !ok; pl.hidden = !!ok;
-  if (ok) { if (im.dataset.k !== l.src) { im.src = IMG[l.src].url; im.dataset.k = l.src; } im.style.transform = `scale(${l.zoom})`; }
+  if (ok) {
+    if (im.dataset.k !== l.src) { im.src = IMG[l.src].url; im.dataset.k = l.src; }
+    const c = clampCrop(l);
+    if (c) {
+      im.style.width = c.dw + 'px';
+      im.style.height = c.dh + 'px';
+      im.style.transform = `translate(calc(-50% + ${l.ox}px), calc(-50% + ${l.oy}px))`;
+    }
+  }
   const z = Math.min(l.w, l.h) * .38; pl.style.cssText = `width:${z}px;height:${z}px;font-size:${z * .7}px`;
 }
 function build(root, s) {
@@ -7917,17 +9079,39 @@ window.svnLensTemplates = { renderGallery: gallery };
 $('#btnHomeTemplates')?.addEventListener('click', () => window.svnLens.showView('viewTemplates'));
 
 function gallery() {
+  const catBar = $('#tplCatBar');
+  if (catBar) {
+    catBar.innerHTML = '';
+    TPL_CATS.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = `subcat-btn ${tplCat === c.id ? 'active' : ''}`.trim();
+      btn.textContent = c.label;
+      btn.onclick = () => { tplCat = c.id; gallery(); };
+      catBar.append(btn);
+    });
+  }
+  const list = tplCat === 'all' ? T : T.filter(t => t.cat === tplCat);
+  const badge = $('#tplCountBadge');
+  if (badge) {
+    const tot = String(T.length).padStart(2, '0');
+    badge.textContent = tplCat === 'all' ? `/ ${tot}` : `${String(list.length).padStart(2, '0')} / ${tot}`;
+  }
   const g = $('#tplGrid'); g.innerHTML = '';
-  T.forEach(t => {
-    const s = fromT(t), b = document.createElement('button'); b.className = 'tpl-card'; if (s.sl.length > 2) b.style.gridColumn = '1/-1';
+  list.forEach(t => {
+    const s = fromT(t), b = document.createElement('button'); b.className = 'tpl-card'; if (s.sl.length > 2) b.classList.add('tpl-wide');
     b.innerHTML = `<div class="tpl-thumb"><div class="tpl-world"></div></div><strong>${t.n}</strong><span>${s.sl.length} slide · ${s.ra}</span>`; g.append(b);
     const th = $('.tpl-thumb', b), w = $('.tpl-world', b); build(w, s);
-    w.style.setProperty('--s', Math.min((th.clientWidth - 24) / (s.sl.length * W), (th.clientHeight - 24) / H(s)));
+    const scaleThumb = () => {
+      const tw = th.clientWidth || 160, thh = th.clientHeight || 228;
+      w.style.setProperty('--s', Math.max(0.02, Math.min((tw - 16) / (s.sl.length * W), (thh - 16) / H(s))));
+    };
+    scaleThumb();
+    if (!th.clientWidth) requestAnimationFrame(scaleThumb);
     b.onclick = () => openT(t);
   });
 }
 function openT(t) {
-  st = fromT(t); sel = null; mode = null; cur = 0; pv = false; hist = []; hi = -1; commit();
+  st = fromT(t); sel = null; cropId = null; lastTap = { id: null, t: 0 }; mode = null; cur = 0; pv = false; hist = []; hi = -1; commit();
   $('#studioShell')?.classList.add('hidden'); shell.classList.remove('hidden', 'pv'); draw(); sheet(); stage.scrollLeft = 0;
 }
 
@@ -7939,15 +9123,38 @@ function fit() {
   stage.style.paddingInline = Math.max(12, (sw - W * S) / 2) + 'px'; world.style.setProperty('--s', S);
 }
 const el = i => world.querySelector(`.tl[data-id="${i}"]`);
+function enterCrop(i) {
+  const l = lay(i); if (!l || l.t !== 'p' || !l.src || !IMG[l.src]) return;
+  sel = i; cropId = i; mode = 'crop'; markSel(); ind(); sheet();
+}
+function exitCrop(toEdit = false) {
+  if (!cropId) return;
+  const keep = toEdit ? cropId : null;
+  cropId = null; sel = keep;
+  mode = keep ? 'edit' : null;
+  markSel(); ind(); sheet();
+}
 function markSel() {
+  world.classList.toggle('is-cropping', !!cropId);
   $$('.tl', world).forEach(e => {
-    const on = e.dataset.id === sel, h = $('.tl-h', e); e.classList.toggle('sel', on);
-    if (on && !h) { const d = document.createElement('b'); d.className = 'tl-h'; e.append(d); } if (!on && h) h.remove();
+    const on = e.dataset.id === sel, isCrop = e.dataset.id === cropId, h = $('.tl-h', e);
+    e.classList.toggle('sel', on && !isCrop);
+    e.classList.toggle('cropping', isCrop);
+    if (on && !isCrop && !h) { const d = document.createElement('b'); d.className = 'tl-h'; e.append(d); }
+    else if ((!on || isCrop) && h) h.remove();
   });
 }
-function ind() { $('#tplHint').textContent = `Slide ${cur + 1} dari ${st.sl.length}. Ketuk + untuk isi foto, tarik titik kuning untuk ubah ukuran dan putar.`; }
+function ind() {
+  $('#tplHint').textContent = cropId
+    ? 'Mode Sesuaikan Foto: geser foto di dalam bingkai, scroll/slider untuk zoom. Ketuk di luar atau ✓ Selesai.'
+    : `Slide ${cur + 1} dari ${st.sl.length}. Ketuk + isi foto · ketuk 2× foto untuk geser & zoom di dalam bingkai.`;
+}
 function draw() { build(world, st); fit(); markSel(); ind(); }
-function select(i) { if (sel === i) return; sel = i; markSel(); if (i) mode = 'edit'; else if (mode === 'edit') mode = null; sheet(); }
+function select(i) {
+  if (cropId && cropId !== i) { cropId = null; ind(); }
+  if (sel === i) return;
+  sel = i; markSel(); if (i) mode = 'edit'; else if (mode === 'edit') mode = null; sheet();
+}
 function commit() {
   const j = JSON.stringify(st); if (hist[hi] === j) return;
   hist = hist.slice(Math.max(0, hi - 58), hi + 1); hist.push(j); hi = hist.length - 1; btns();
@@ -7978,23 +9185,34 @@ function sheet() {
   } else if (mode === 'slides') {
     h = `<div class="tpl-row">${st.sl.map((_, i) => chip('go', i, i + 1, i === cur)).join('')}</div><div class="tpl-row">${chip('sladd', '', '+ Tambah slide')}${chip('sldup', '', 'Duplikat')}${chip('sldel', '', 'Hapus slide')}</div>`;
   } else if (mode === 'layers') {
-    const nm = { p: 'Foto', s: 'Bentuk' };
-    h = st.L.length ? [...st.L].reverse().map(l => `<div class="tpl-ly${l.id === sel ? ' on' : ''}" data-a="pick" data-v="${l.id}"><span>${l.t === 't' ? 'Teks · ' + esc(l.s.split('\n')[0].slice(0, 18)) : nm[l.t]}</span><span><button data-a="up" data-v="${l.id}" aria-label="Ke depan">▲</button><button data-a="dn" data-v="${l.id}" aria-label="Ke belakang">▼</button><button data-a="rm" data-v="${l.id}" aria-label="Hapus">✕</button></span></div>`).join('') : '<p class="tpl-note">Belum ada layer. Tekan + untuk menambah.</p>';
+    const nm = { p: 'Foto', s: 'Bentuk', g: 'Stiker' };
+    h = st.L.length ? [...st.L].reverse().map(l => `<div class="tpl-ly${l.id === sel ? ' on' : ''}" data-a="pick" data-v="${l.id}"><span>${l.t === 't' ? 'Teks · ' + esc(l.s.split('\n')[0].slice(0, 18)) : l.t === 'g' ? 'Stiker · ' + esc(l.name || 'Grafis') : nm[l.t]}</span><span><button data-a="up" data-v="${l.id}" aria-label="Ke depan">▲</button><button data-a="dn" data-v="${l.id}" aria-label="Ke belakang">▼</button><button data-a="rm" data-v="${l.id}" aria-label="Hapus">✕</button></span></div>`).join('') : '<p class="tpl-note">Belum ada layer. Tekan + untuk menambah.</p>';
   } else if (mode === 'ratio') {
     h = `<div class="tpl-row">${Object.keys(RA).map(k => chip('ratio', k, k, k === st.ra)).join('')}</div>`;
   } else if (mode === 'add') {
-    h = `<div class="tpl-row">${chip('add', 'p', 'Foto')}${chip('add', 't', 'Teks')}${chip('add', 'r', 'Kotak')}${chip('add', 'o', 'Lingkaran')}</div><div class="tpl-row">${chip('fill', '', 'Isi slot kosong dengan foto')}</div>`;
+    h = `<div class="tpl-row">${chip('add', 'p', 'Foto')}${chip('add', 't', 'Teks')}${chip('add', 'g', 'Stiker')}${chip('add', 'r', 'Kotak')}${chip('add', 'o', 'Lingkaran')}</div><div class="tpl-row">${chip('fill', '', 'Isi slot kosong dengan foto')}</div>`;
+  } else if (mode === 'stk') {
+    const cats = window.STUDIO_STICKER_CATS || [{ id: 'all', label: 'SEMUA' }];
+    const allStk = window.STUDIO_STICKERS || [];
+    const listStk = tplStkCat === 'all' ? allStk : allStk.filter(s => s.cat === tplStkCat);
+    h = `<div class="tpl-row">${cats.map(c => chip('stkcat', c.id, c.label, tplStkCat === c.id)).join('')}</div>
+    <div class="tpl-stk-grid">${listStk.map(s => `<button class="tpl-stk-btn" data-a="addstk" data-v="${s.id}"><img src="${s.src}" alt="${esc(s.name)}"><span>${esc(s.name)}</span></button>`).join('')}</div>`;
   } else if (mode === 'export') {
     h = `<div class="tpl-row">${chip('x1', '', n > 1 ? 'Per slide (JPG)' : 'Simpan JPG')}${chip('x3', '', 'Simpan ke Library')}${n > 1 ? chip('x2', '', 'Satu gambar panorama') : ''}</div><p class="tpl-note">Slot foto yang masih kosong tidak ikut diekspor.</p>`;
   } else if (mode === 'src') {
     const ps = window.svnLens.photos();
     h = `<div class="tpl-lab"><span>Dari Library</span></div><div class="tpl-row">${ps.map(q => `<button class="tpl-lib" data-a="lib" data-v="${q.id}" aria-label="${esc(q.title || 'Foto')}"><img src="${q.editedThumbUrl || q.thumbUrl}" alt=""></button>`).join('') || '<span class="tpl-note">Library masih kosong.</span>'}</div><div class="tpl-row">${chip('dev', '', 'Dari galeri perangkat')}${chip('shut', '', 'Tutup')}</div>`;
+  } else if (mode === 'crop' && cropId && lay(cropId)) {
+    const l = lay(cropId);
+    h = rg('zoom', 'Zoom Foto', 1, 3.5, l.zoom || 1, .01) + `<div class="tpl-row">${chip('cropreset', '', '↺ Pusatkan')}${chip('replace', '', 'Ganti foto')}${chip('cropdone', '', '✓ Selesai', true)}</div>`;
   } else if (mode === 'edit' && sel && lay(sel)) {
     const l = lay(sel), cols = `<div class="tpl-row">${SW.map(c => swb('col', c, l.c === c)).join('')}<input type="color" data-k="c" value="${l.c}"></div>`;
     if (l.t === 't') h = `<textarea class="tpl-in" data-k="s" rows="2">${esc(l.s)}</textarea><div class="tpl-row">${FONTS.map(f => `<button class="tpl-chip${l.f === f ? ' on' : ''}" data-a="font" data-v="${f}" style="font-family:'${f}'">${f}</button>`).join('')}</div>${rg('fs', 'Ukuran', 20, 400, Math.round(l.fs))}${cols}<div class="tpl-row">${chip('tg', 'b', 'Tebal', l.b)}${chip('tg', 'it', 'Miring', l.it)}${chip('tg', 'sh', 'Bayangan', l.sh)}</div>`;
-    else {
+    else if (l.t === 'g') {
+      h = rg('w', 'Lebar', 60, 1200, Math.round(l.w)) + rg('h', 'Tinggi', 60, 1200, Math.round(l.h)) + `<div class="tpl-row">${chip('tg', 'sh', 'Bayangan', l.sh)}</div>`;
+    } else {
       h = rg('w', 'Lebar', 60, 3300, Math.round(l.w)) + rg('h', 'Tinggi', 60, 2000, Math.round(l.h));
-      if (l.t === 'p') h += `<div class="tpl-row">${chip('replace', '', l.src ? 'Ganti foto' : 'Pilih foto')}</div>${rg('zoom', 'Zoom', 1, 3, l.zoom, .01)}`; else h += cols;
+      if (l.t === 'p') h += `<div class="tpl-row">${chip('replace', '', l.src ? 'Ganti foto' : 'Pilih foto')}${l.src ? chip('crop', '', 'Sesuaikan Posisi') : ''}</div>${rg('zoom', 'Zoom', 1, 3.5, l.zoom, .01)}`; else h += cols;
       if (l.k !== 'o') h += rg('rad', 'Sudut', 0, 540, Math.round(l.rad)); h += `<div class="tpl-row">${chip('tg', 'sh', 'Bayangan', l.sh)}</div>`;
     }
     h += rg('op', 'Opasitas', .1, 1, l.op, .01) + `<div class="tpl-row">${chip('dup', '', 'Duplikat')}${chip('up', sel, 'Ke depan')}${chip('dn', sel, 'Ke belakang')}${chip('rm', sel, 'Hapus')}</div>`;
@@ -8015,28 +9233,39 @@ function setBg(k, v) {
   $$('.tpl-slide', world).forEach((d, i) => d.style.background = bgOf(st.sl[i]));
 }
 function add(t) {
-  const x = cur * W + W / 2, y = H() / 2, b = { id: id(), x, y, r: 0, op: 1, rad: 0, zoom: 1, k: 'r' };
+  if (t === 'g') { mode = 'stk'; sheet(); return; }
+  const x = cur * W + W / 2, y = H() / 2, b = { id: id(), x, y, r: 0, op: 1, rad: 0, zoom: 1, ox: 0, oy: 0, k: 'r' };
   const l = t === 'p' ? { ...b, t: 'p', w: W * .5, h: W * .5 } : t === 't' ? { ...b, t: 't', s: 'Teks', fs: W * .1, f: 'Playfair Display', c: '#26211e' } : { ...b, t: 's', w: W * .3, h: W * .3, c: '#26211e', k: t === 'o' ? 'o' : 'r' };
   st.L.push(l); draw(); sel = null; select(l.id); commit();
 }
 function mv(i, d) { const a = st.L.findIndex(l => l.id === i), b = a + d; if (b < 0 || b >= st.L.length) return; [st.L[a], st.L[b]] = [st.L[b], st.L[a]]; draw(); commit(); sheet(); }
-function rm(i) { st.L = st.L.filter(l => l.id !== i); if (sel === i) sel = null; if (mode === 'edit') mode = null; draw(); commit(); sheet(); }
+function rm(i) { st.L = st.L.filter(l => l.id !== i); if (sel === i) sel = null; if (cropId === i) cropId = null; if (mode === 'edit' || mode === 'crop') mode = null; draw(); commit(); sheet(); }
 const sIdx = l => Math.floor(l.x / W);
 function act(a, v) {
   const n = st.sl.length;
   switch (a) {
-    case 'back': if (hist.length > 1 && !confirm('Keluar dari template? Perubahan belum disimpan.')) return; shell.classList.add('hidden'); window.svnLens.showView('viewTemplates'); return;
-    case 'undo': case 'redo': { const j = hi + (a === 'undo' ? -1 : 1); if (j < 0 || j >= hist.length) return; hi = j; st = JSON.parse(hist[hi]); sel = null; if (mode === 'edit') mode = null; cur = Math.min(cur, st.sl.length - 1); draw(); sheet(); return; }
-    case 'prev': pv = !pv; shell.classList.toggle('pv', pv); if (pv) { mode = null; sel = null; markSel(); sheet(); } fit(); return;
-    case 'export': mode = mode === 'export' ? null : 'export'; sel = null; markSel(); break;
+    case 'back': if (hist.length > 1 && !confirm('Keluar dari template? Perubahan belum disimpan.')) return; cropId = null; shell.classList.add('hidden'); window.svnLens.showView('viewTemplates'); return;
+    case 'undo': case 'redo': { const j = hi + (a === 'undo' ? -1 : 1); if (j < 0 || j >= hist.length) return; hi = j; st = JSON.parse(hist[hi]); sel = null; cropId = null; if (mode === 'edit' || mode === 'crop') mode = null; cur = Math.min(cur, st.sl.length - 1); draw(); sheet(); return; }
+    case 'prev': pv = !pv; shell.classList.toggle('pv', pv); if (pv) { mode = null; sel = null; cropId = null; markSel(); ind(); sheet(); } fit(); return;
+    case 'export': mode = mode === 'export' ? null : 'export'; sel = null; cropId = null; markSel(); ind(); break;
     case 'bg': case 'bg2': setBg(a, v); commit(); break;
     case 'allsl': allSl = !allSl; break;
     case 'go': cur = +v; goSlide(cur); ind(); break;
     case 'sladd': if (n >= 10) return toast('Maksimal 10 slide'); st.sl.push({ ...st.sl[n - 1] }); cur = n; draw(); goSlide(cur); commit(); break;
     case 'sldup': { if (n >= 10) return toast('Maksimal 10 slide'); const cp = st.L.filter(l => sIdx(l) === cur).map(l => ({ ...l, id: id(), x: l.x + W })); st.L.forEach(l => { if (sIdx(l) > cur) l.x += W; }); st.L.push(...cp); st.sl.splice(cur + 1, 0, { ...st.sl[cur] }); cur++; draw(); goSlide(cur); commit(); break; }
     case 'sldel': if (n < 2) return toast('Minimal satu slide'); st.L = st.L.filter(l => sIdx(l) !== cur); st.L.forEach(l => { if (sIdx(l) > cur) l.x -= W; }); st.sl.splice(cur, 1); cur = Math.min(cur, n - 2); draw(); commit(); break;
-    case 'ratio': { const o = H(); st.ra = v; const f = H() / o; st.L.forEach(l => l.y *= f); draw(); commit(); break; }
-    case 'pick': sel = null; select(v); return;
+    case 'ratio': { const o = H(); st.ra = v; const f = H() / o; st.L.forEach(l => l.y *= f); cropId = null; draw(); commit(); break; }
+    case 'pick': sel = null; cropId = null; select(v); return;
+    case 'crop': enterCrop(sel); return;
+    case 'cropdone': exitCrop(true); return;
+    case 'cropreset': { const l = lay(cropId || sel); if (l) { l.ox = 0; l.oy = 0; l.zoom = 1; up(el(l.id), l); commit(); sheet(); } return; }
+    case 'stkcat': tplStkCat = v; break;
+    case 'addstk': {
+      const sk = window.STUDIO_STICKERS && window.STUDIO_STICKERS.find(s => s.id === v);
+      if (!sk) return;
+      const nl = { id: id(), t: 'g', name: sk.name, src: sk.src, x: cur * W + W / 2, y: H() / 2, w: W * .28, h: W * .28, r: 0, op: 1, rad: 0, sh: 1 };
+      st.L.push(nl); draw(); sel = null; select(nl.id); commit(); return;
+    }
     case 'up': mv(v, 1); return; case 'dn': mv(v, -1); return; case 'rm': rm(v); return;
     case 'dup': { const c = { ...lay(sel), id: id() }; c.x += 40; c.y += 40; st.L.push(c); sel = null; draw(); select(c.id); commit(); return; }
     case 'add': add(v); return;
@@ -8050,13 +9279,22 @@ function act(a, v) {
 }
 shell.addEventListener('click', e => {
   const b = e.target.closest('[data-a],[data-m]'); if (!b || !shell.contains(b)) return;
-  if (b.dataset.m) { const m = b.dataset.m; mode = mode === m ? null : m; if (mode) { sel = null; markSel(); } sheet(); } else act(b.dataset.a, b.dataset.v);
+  if (b.dataset.m) { const m = b.dataset.m; mode = mode === m ? null : m; if (mode) { sel = null; cropId = null; markSel(); ind(); } sheet(); } else act(b.dataset.a, b.dataset.v);
 });
 
 /* ---------- Dragging, resizing & rotating layers ---------- */
 const snap = (v, t) => { for (const c of t) if (Math.abs(v - c) < 8 / S) return c; return v; };
 world.addEventListener('pointerdown', e => {
-  if (pv) return; const le = e.target.closest('.tl'); if (!le) { select(null); return; }
+  if (pv) return;
+  const le = e.target.closest('.tl');
+  if (cropId) {
+    if (!le || le.dataset.id !== cropId) { exitCrop(false); return; }
+    const l = lay(cropId); if (!l) { exitCrop(false); return; }
+    drag = { l, crop: true, px: e.clientX, py: e.clientY, ox: l.ox || 0, oy: l.oy || 0, moved: false };
+    e.preventDefault();
+    return;
+  }
+  if (!le) { select(null); return; }
   const l = lay(le.dataset.id), hd = !!e.target.closest('.tl-h'); if (sel !== l.id) select(l.id);
   const r = le.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   drag = { l, hd, px: e.clientX, py: e.clientY, x: l.x, y: l.y, cx, cy, d0: Math.hypot(e.clientX - cx, e.clientY - cy) || 1, a0: Math.atan2(e.clientY - cy, e.clientX - cx), w: l.w, h: l.h, fs: l.fs, r: l.r, moved: false };
@@ -8065,6 +9303,14 @@ world.addEventListener('pointerdown', e => {
 addEventListener('pointermove', e => {
   if (!drag) return; const d = drag, l = d.l, dx = e.clientX - d.px, dy = e.clientY - d.py;
   if (!d.moved && Math.hypot(dx, dy) < 5) return; d.moved = true;
+  if (d.crop) {
+    const ang = -(l.r || 0) * Math.PI / 180, cos = Math.cos(ang), sin = Math.sin(ang);
+    const lx = (dx / S) * cos - (dy / S) * sin;
+    const ly = (dx / S) * sin + (dy / S) * cos;
+    l.ox = d.ox + lx; l.oy = d.oy + ly;
+    clampCrop(l); up(el(l.id), l);
+    return;
+  }
   if (d.hd) {
     const k = Math.hypot(e.clientX - d.cx, e.clientY - d.cy) / d.d0;
     if (l.t === 't') l.fs = Math.max(16, d.fs * k); else { l.w = Math.max(40, d.w * k); l.h = Math.max(40, d.h * k); }
@@ -8077,12 +9323,42 @@ addEventListener('pointermove', e => {
 });
 addEventListener('pointerup', () => {
   if (!drag) return; const d = drag; drag = null;
-  if (d.moved) { commit(); if (mode === 'edit') sheet(); } else if (d.l.t === 'p' && !d.l.src && !d.hd) pick(d.l.id);
+  if (d.crop) { if (d.moved) commit(); return; }
+  if (d.moved) { commit(); if (mode === 'edit') sheet(); }
+  else if (d.l.t === 'p' && !d.hd) {
+    if (!d.l.src) { lastTap = { id: null, t: 0 }; pick(d.l.id); }
+    else {
+      const now = Date.now();
+      if (lastTap.id === d.l.id && now - lastTap.t < 360) {
+        lastTap = { id: null, t: 0 };
+        enterCrop(d.l.id);
+      } else {
+        lastTap = { id: d.l.id, t: now };
+      }
+    }
+  }
 });
 addEventListener('pointercancel', () => { drag = null; });
+world.addEventListener('dblclick', e => {
+  if (pv || cropId) return;
+  const le = e.target.closest('.tl'); if (!le) return;
+  const l = lay(le.dataset.id);
+  if (l && l.t === 'p' && l.src && IMG[l.src]) { e.preventDefault(); enterCrop(l.id); }
+});
+let wheelTimer = null;
+stage.addEventListener('wheel', e => {
+  if (!cropId || pv) return;
+  const l = lay(cropId); if (!l) return;
+  e.preventDefault();
+  l.zoom = Math.max(1, Math.min(3.5, (l.zoom || 1) + (e.deltaY < 0 ? .12 : -.12)));
+  up(el(l.id), l);
+  const rng = sheetEl.querySelector('input[data-k="zoom"]');
+  if (rng) { rng.value = l.zoom; rng.previousElementSibling.lastChild.textContent = Math.round(l.zoom * 100) / 100; }
+  clearTimeout(wheelTimer); wheelTimer = setTimeout(commit, 220);
+}, { passive: false });
 
 /* ---------- Photos ---------- */
-function pick(i) { pend = i; sel = null; markSel(); mode = 'src'; sheet(); }
+function pick(i) { pend = i; sel = null; cropId = null; markSel(); ind(); mode = 'src'; sheet(); }
 function devPick() { fi.value = ''; fi.click(); }
 const KEYS = new WeakMap();
 async function libKey(q) {
@@ -8094,7 +9370,7 @@ async function useLib(pid) {
   if (!slots.length) return toast('Tidak ada slot kosong. Tambah foto lewat tombol +');
   const q = window.svnLens.photos().find(x => x.id === pid); if (!q) return;
   try { await window.svnLens.hydrate(q); } catch (e) { return toast('Foto gagal dimuat'); }
-  try { slots[0].src = await libKey(q); pend = null; if (!st.L.some(l => l.t === 'p' && !l.src)) mode = null; draw(); commit(); sheet(); }
+  try { slots[0].src = await libKey(q); slots[0].ox = 0; slots[0].oy = 0; slots[0].zoom = 1; pend = null; if (!st.L.some(l => l.t === 'p' && !l.src)) mode = null; draw(); commit(); sheet(); }
   catch (e) { toast('Foto gagal dimuat'); }
 }
 async function load(f) {
@@ -8112,7 +9388,7 @@ fi.onchange = async () => {
   const slots = st.L.filter(l => l.t === 'p' && (!l.src || l.id === pend)).sort((a, b) => (b.id === pend) - (a.id === pend));
   if (!slots.length) return toast('Tidak ada slot kosong. Tambah foto lewat tombol +');
   toast('Memuat foto…');
-  try { for (let i = 0; i < Math.min(fs.length, slots.length); i++) slots[i].src = await load(fs[i]); mode = null; draw(); commit(); sheet(); toast('Foto ditambahkan'); }
+  try { for (let i = 0; i < Math.min(fs.length, slots.length); i++) { slots[i].src = await load(fs[i]); slots[i].ox = 0; slots[i].oy = 0; slots[i].zoom = 1; } mode = null; draw(); commit(); sheet(); toast('Foto ditambahkan'); }
   catch (e) { toast('Foto gagal dimuat'); }
 };
 
@@ -8127,10 +9403,18 @@ async function paint() {
     if (l.t === 't') {
       x.font = `${l.it ? 'italic ' : ''}${l.b ? 700 : 400} ${l.fs}px "${l.f}",sans-serif`; x.fillStyle = l.c; x.textAlign = l.al || 'center'; x.textBaseline = 'middle'; if (l.sh) shd(24, 4, .45);
       const ls = l.s.split('\n'); ls.forEach((t, i) => x.fillText(t, 0, (i - (ls.length - 1) / 2) * l.fs * 1.32));
+    } else if (l.t === 'g' && l.src) {
+      const gi = new Image(); gi.src = l.src; await gi.decode().catch(() => 0);
+      if (gi.naturalWidth) {
+        if (l.sh) shd(20, 6, .32);
+        const k = Math.min(l.w / gi.naturalWidth, l.h / gi.naturalHeight);
+        const dw = gi.naturalWidth * k, dh = gi.naturalHeight * k;
+        x.drawImage(gi, -dw / 2, -dh / 2, dw, dh);
+      }
     } else {
       x.beginPath(); if (l.k === 'o') x.ellipse(0, 0, l.w / 2, l.h / 2, 0, 0, 7); else x.roundRect(-l.w / 2, -l.h / 2, l.w, l.h, l.rad);
       if (l.t === 's') { if (l.sh) shd(44, 14, .28); x.fillStyle = l.c; x.fill(); }
-      else if (IMG[l.src]) { if (l.sh) { shd(44, 14, .28); x.fillStyle = '#000'; x.fill(); x.shadowColor = 'transparent'; } x.clip(); const im = IMG[l.src].img, k = Math.max(l.w / im.width, l.h / im.height) * l.zoom; x.drawImage(im, -im.width * k / 2, -im.height * k / 2, im.width * k, im.height * k); }
+      else if (IMG[l.src]) { if (l.sh) { shd(44, 14, .28); x.fillStyle = '#000'; x.fill(); x.shadowColor = 'transparent'; } x.clip(); const rc = clampCrop(l); if (rc) x.drawImage(rc.im, -rc.dw / 2 + l.ox, -rc.dh / 2 + l.oy, rc.dw, rc.dh); }
     }
     x.restore();
   }
@@ -8155,7 +9439,7 @@ async function exportAll(pano) {
    Geser strip horizontal dengan mouse (drag) & scroll wheel
    ========================================== */
 (() => {
-  const SEL = '.subcat-bar,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,.mask-layers-scroll,.mask-manual-row,.mask-params-row,.mask-manage-row,.mask-group-tabs,.glitch-row,.hsl-swatch-row,.hsl-param-row,.lensblur-row,.relight-row,.cam-tray-scroll,.cam-lcd-strip,.cam-top-pills,#fontCatRow';
+  const SEL = '.subcat-bar,.tpl-cat-bar,.beauty-preset-row,.sticker-subcat-row,.thumb-strip,.tools-icon-strip,.font-cards-strip,.text-pills-row,.tool-context-extras,.color-palette-strip,.mask-row,.mask-layers-scroll,.mask-manual-row,.mask-params-row,.mask-manage-row,.mask-group-tabs,.glitch-row,.hsl-swatch-row,.hsl-param-row,.lensblur-row,.relight-row,.cam-tray-scroll,.cam-lcd-strip,.cam-top-pills,#fontCatRow';
   let el = null, sx = 0, sl = 0, moved = false;
   document.addEventListener('pointerdown', e => {
     moved = false; if (e.pointerType !== 'mouse' || e.button !== 0) return;

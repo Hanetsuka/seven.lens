@@ -13,13 +13,13 @@
     <title>svn.lens — Craft the light.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bodoni+Moda&family=Lora&family=Libre+Baskerville&family=Fraunces&family=Yeseva+One&family=Cinzel&family=Italiana&family=Marcellus&family=Prata&family=Gloock&family=Rozha+One&family=Young+Serif&family=Montserrat&family=Poppins&family=Raleway&family=Josefin+Sans&family=DM+Sans&family=Space+Grotesk&family=Syne&family=League+Spartan&family=Archivo+Black&family=Anton&family=Unbounded&family=Lexend&family=Outfit&family=Monoton&family=Bungee&family=Righteous&family=Rubik+Mono+One&family=Shrikhand&family=Lobster&family=Bowlby+One&family=Alfa+Slab+One&family=Fredoka&family=Pacifico&family=Satisfy&family=Sacramento&family=Allura&family=Parisienne&family=Yellowtail&family=Kaushan+Script&family=Mrs+Saint+Delafield&family=Alex+Brush&family=Tangerine&family=Shadows+Into+Light&family=Permanent+Marker&family=Rock+Salt&family=Reenie+Beanie&family=Gloria+Hallelujah&family=Indie+Flower&family=Amatic+SC&family=Nanum+Pen+Script&family=Covered+By+Your+Grace&family=Homemade+Apple&family=VT323&family=Press+Start+2P&family=Special+Elite&family=Courier+Prime&family=IBM+Plex+Mono&family=Major+Mono+Display&family=Orbitron&family=Audiowide&family=Silkscreen&family=DotGothic16&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Caveat:wght@500;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,400;1,600&family=DM+Serif+Display:ital@0;1&family=Dancing+Script:wght@500;700&family=Great+Vibes&family=Inter:wght@300;400;500;600&family=Oswald:wght@400;600&family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <!-- Hidden Global Inputs (visually hidden instead of display:none for full mobile/desktop compatibility) -->
     <input type="file" id="photoFileInput" class="visually-hidden-input" accept="image/*,.heic,.heif,.HEIC,.HEIF" multiple>
+    <input type="file" id="colorMatchFileInput" class="visually-hidden-input" accept="image/*,.heic,.heif,.HEIC,.HEIF">
     <input type="file" id="nativeCameraInput" class="visually-hidden-input" accept="image/*" capture="environment">
     <input type="file" id="lutFileInput" class="visually-hidden-input" accept=".cube" multiple>
     <input type="file" id="customFontInput" class="visually-hidden-input" accept=".ttf,.otf,.woff,.woff2">
@@ -160,7 +160,7 @@
             <section id="viewTemplates" class="studio-view">
                 <header class="studio-topbar">
                     <span class="meta-label">STUDIO / TEMPLATES</span>
-                    <span class="meta-label">/ 08</span>
+                    <span id="tplCountBadge" class="meta-label">/ 40</span>
                 </header>
 
                 <div class="editorial-header">
@@ -168,6 +168,7 @@
                     <p>Susun foto dan teks jadi carousel. Satu foto bisa menyambung antar slide, lalu ekspor per slide.</p>
                 </div>
 
+                <div id="tplCatBar" class="subcat-bar tpl-cat-bar"></div>
                 <div id="tplGrid" class="tpl-grid"></div>
             </section>
         </div>
@@ -229,6 +230,15 @@
                 <button id="btnResetPhoto" class="hist-icon-btn" title="Reset Semua Editan">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 </button>
+                <button id="btnSplitCompare" class="hist-icon-btn" title="Bandingkan Geser Sebelum/Sesudah">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><path d="m8 9-3 3 3 3M16 9l3 3-3 3"/></svg>
+                </button>
+                <button id="btnToggleHistogram" class="hist-icon-btn" title="Live RGB Histogram">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M4 17c2 0 3-8 5-8s3 6 5 6 2-11 4-11 2 9 3 9"/></svg>
+                </button>
+                <button id="btnToggleZoomHud" class="hist-icon-btn" title="Zoom & Geser Foto">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v6M8 11h6"/></svg>
+                </button>
             </div>
 
             <button id="btnOpenExport" class="editor-export-link">EXPORT</button>
@@ -249,6 +259,13 @@
                     <!-- Masking Interactive Overlay -->
                     <canvas id="maskOverlay" class="mask-overlay hidden"></canvas>
 
+                    <!-- Split-Screen Before/After Wipe Bar -->
+                    <div id="splitCompareBar" class="split-compare-bar hidden">
+                        <span class="split-tag split-tag-l">ASLI</span>
+                        <span class="split-tag split-tag-r">EDIT</span>
+                        <div class="split-handle" id="splitHandle">⇄</div>
+                    </div>
+
                     <!-- Crop Interactive Box Overlay -->
                     <div id="cropOverlay" class="crop-overlay hidden">
                         <div id="cropBox" class="crop-box">
@@ -266,6 +283,12 @@
                             <div class="crop-handle w" data-handle="w"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Floating Live RGB Histogram HUD -->
+                <div id="histogramHud" class="histogram-hud hidden">
+                    <canvas id="histogramCanvas" width="180" height="68"></canvas>
+                    <div id="histogramMeta" class="histogram-meta"></div>
                 </div>
 
                 <!-- Floating Quick Mask Actions HUD (Active when editing a mask) -->
@@ -387,7 +410,19 @@
             </div>
 
             <!-- ==========================================
-                 PANEL 03: EFFECTS (Light Leaks, Film Burns, Grain/Dust, Date Stamp)
+                 PANEL 03: BEAUTY (Dedicated Portrait Retouch)
+                 ========================================== -->
+            <div id="panelBeauty" class="deck-panel">
+                <div id="beautyPresetRow" class="beauty-preset-row">
+                    <!-- Populated dynamically: Natural, Soft Glow, Clear Skin, Reset -->
+                </div>
+                <div id="beautyToolsStrip" class="tools-icon-strip">
+                    <!-- Populated dynamically: Smooth, Brighten, Blemish, Eye Pop, Lip Tint -->
+                </div>
+            </div>
+
+            <!-- ==========================================
+                 PANEL 04: EFFECTS (Light Leaks, Film Burns, Grain/Dust, Date Stamp)
                  ========================================== -->
             <div id="panelEffects" class="deck-panel">
                 <div class="subcat-bar" id="effectCatBar">
@@ -459,6 +494,7 @@
                             <button id="btnToggleItalic" class="dark-chip">ITALIC</button>
                             <button id="btnToggleShadow" class="dark-chip active">SHADOW</button>
                             <button id="btnToggleOutline" class="dark-chip">OUTLINE</button>
+                            <button id="btnToggleBehindSubject" class="dark-chip chip-ai">BELAKANG SUBJEK</button>
                         </div>
                     </div>
 
@@ -492,7 +528,7 @@
                 </div>
             </div>
 
-            <!-- Editor Bottom Primary Tabs (01 PRESETS | 02 TOOLS | 03 EFFECTS | 04 TEXT) -->
+            <!-- Editor Bottom Primary Tabs (01 PRESETS | 02 TOOLS | 03 BEAUTY | 04 EFFECTS | 05 TEXT) -->
             <nav class="editor-bottom-tabs">
                 <button class="ed-tab-btn active" data-edtab="Presets">
                     <span class="ed-num">01</span>
@@ -502,12 +538,16 @@
                     <span class="ed-num">02</span>
                     <span>TOOLS</span>
                 </button>
-                <button class="ed-tab-btn" data-edtab="Effects">
+                <button class="ed-tab-btn" data-edtab="Beauty">
                     <span class="ed-num">03</span>
+                    <span>BEAUTY</span>
+                </button>
+                <button class="ed-tab-btn" data-edtab="Effects">
+                    <span class="ed-num">04</span>
                     <span>EFFECTS</span>
                 </button>
                 <button class="ed-tab-btn" data-edtab="Text">
-                    <span class="ed-num">04</span>
+                    <span class="ed-num">05</span>
                     <span>TEXT</span>
                 </button>
             </nav>
@@ -631,6 +671,8 @@
     <script src="js/sample-photos.js"></script>
     <script src="js/lut-presets.js"></script>
     <script src="js/ai-tools.js"></script>
+    <script src="js/pro-studio.js"></script>
+    <script src="js/stickers.js"></script>
     <script src="js/app.js"></script>
     <script src="js/camera-studio.js"></script>
     <script>

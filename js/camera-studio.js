@@ -78,6 +78,7 @@
 
     const CAM_FILTERS = [
         { id: 'original', code: 'ORIGINAL', swatch: 'linear-gradient(135deg,#e5e0d8,#a8a29e)', css: 'none', tint: null, blend: 'normal', vig: 0 },
+        { id: 'fl_dusk', code: '⚡ DUSK FLASH', swatch: 'radial-gradient(circle at 50% 56%,#fff8ec 0%,#c9937e 38%,#2a3b47 68%,#0c1714 100%)', css: 'contrast(1.14) saturate(0.96) brightness(1.06)', tint: 'radial-gradient(circle at 50% 48%, rgba(255,248,236,0.46) 0%, rgba(255,240,220,0.14) 40%, rgba(12,24,21,0.22) 80%)', blend: 'screen', vig: 0.74 },
         { id: 'fl_ccd', code: '⚡ NIGHT CCD', swatch: 'radial-gradient(circle at 46% 42%,#f4f9ff 0%,#7892b0 48%,#0d1118 100%)', css: 'contrast(1.22) saturate(1.08) brightness(1.06)', tint: 'radial-gradient(circle at 50% 42%, rgba(242,247,255,0.46) 0%, rgba(232,244,255,0.16) 44%, rgba(0,0,0,0) 76%)', blend: 'screen', vig: 0.64 },
         { id: 'fl_rim', code: '⚡ STUDIO RIM', swatch: 'radial-gradient(circle at 50% 42%,#fff4de 0%,#4e453b 42%,#070708 100%)', css: 'contrast(1.30) saturate(0.96) brightness(1.04)', tint: 'radial-gradient(circle at 50% 42%, rgba(255,246,232,0.42) 0%, rgba(255,240,214,0.14) 40%, rgba(0,0,0,0) 72%)', blend: 'screen', vig: 0.82 },
         { id: 'fl_disp', code: '⚡ FUJI 98', swatch: 'radial-gradient(circle at 46% 42%,#ffefd2 0%,#5f8878 48%,#10201a 100%)', css: 'contrast(1.22) saturate(1.10) brightness(1.04) sepia(0.08) hue-rotate(-4deg)', tint: 'radial-gradient(circle at 48% 42%, rgba(255,239,210,0.42) 0%, rgba(205,240,224,0.14) 46%, rgba(0,0,0,0) 76%)', blend: 'screen', vig: 0.62 },

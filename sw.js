@@ -4,7 +4,7 @@
  * dan fallback ke Cache perangkat saat offline 100%.
  */
 
-const CACHE_NAME = 'svnlens-studio-offline-v43';
+const CACHE_NAME = 'svnlens-studio-offline-v51';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -15,8 +15,22 @@ const ASSETS_TO_CACHE = [
     './js/sample-photos.js',
     './js/lut-presets.js',
     './js/ai-tools.js',
+    './js/pro-studio.js',
+    './js/stickers.js',
     './js/app.js',
     './js/camera-studio.js',
+    './assets/stickers/ribbon_pink.png',
+    './assets/stickers/ribbon_cream.png',
+    './assets/stickers/ribbon_red.png',
+    './assets/stickers/flower_rose_real.png',
+    './assets/stickers/flower_daisy_real.png',
+    './assets/stickers/flower_tulip_real.png',
+    './assets/stickers/flower_frangipani_real.png',
+    './assets/stickers/flower_sakura_real.png',
+    './assets/stickers/flower_hibiscus_real.png',
+    './assets/stickers/flower_sunflower_real.png',
+    './assets/stickers/flower_peony_real.png',
+    './assets/stickers/flower_hydrangea_real.png',
     './sample-luts/Cinematic-Teal-Gold.cube',
     './sample-luts/Vintage-Creamy-Film.cube'
 ];

@@ -1116,8 +1116,28 @@ function applyCubeLUTToImageData(imgData, cubeLut, intensity = 1.0) {
     ['x_ac17', 'ROLLEI', 'Pocket Rollei 35', 'analogcam', 'ANALOG CAM', { contrast: 18, saturation: 4, warmth: 2, fade: 6, grain: 12 }]
 ].forEach(([id, code, name, category, subLabel, params]) => FILM_PRESETS.push({ id, code, name, category, subLabel, params }));
 
-// FLASH — Optical Direct-Flash Presets (Night CCD, Studio Rim, Fuji 98, Contax T2, Paparazzi, Soft, Warm, Club, Y2K Pink, Polaroid, B&W)
+// FLASH — Optical Direct-Flash Presets (Dusk Flash, Night CCD, Studio Rim, Fuji 98, Contax T2, Paparazzi, Soft, Warm, Club, Y2K Pink, Polaroid, B&W)
 [
+    ['fl_dusk', 'DUSK FLASH', 'Direct Dusk Flash', 'flash', 'REAL FLASH', {
+        exposure: 2, contrast: 8, highlights: -6, shadows: -12, blacks: 4, fade: 8,
+        warmth: 3, tint: -3, saturation: -4, vibrance: 8, clarity: 2, grain: 22,
+        shadowsTint: [10, 24, 21], highlightsTint: [255, 249, 238], splitStrength: 0.24,
+        hsl: {
+            red: { h: 4, s: 8, l: 2 },
+            orange: { h: -2, s: -6, l: 6 },
+            yellow: { h: -6, s: -14, l: -2 },
+            blue: { h: -6, s: -8, l: -6 }
+        },
+        curve: { rgb: [[0, 12], [52, 46], [196, 206], [255, 248]] },
+        flash: {
+            power: 0.76, bgDark: 0.78, skyKeep: 0.50, duskSky: 0.55,
+            keepLights: 0.94, skinGlow: 0.44, flashSpec: 0.68, shadow: 0.22,
+            matteFloor: [10, 22, 19], matteStr: 0.85,
+            bgTint: [0.76, 1.02, 0.96], bgTintStr: 0.52,
+            radius: 0.58, falloff: 0.74, color: '#fff8ec',
+            bloom: 0.24, bloomThresh: 0.80, halation: 0.14, cx: 0.50, cy: 0.46
+        }
+    }],
     ['fl_ccd', 'NIGHT CCD', 'Night Street CCD Flash', 'flash', 'CCD FLASH', {
         exposure: 1, contrast: 8, highlights: -6, shadows: -10, blacks: -4,
         warmth: -5, tint: 2, saturation: 4, vibrance: 8, clarity: 2, grain: 8,
